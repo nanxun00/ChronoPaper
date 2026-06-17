@@ -1,0 +1,111 @@
+-- ChronoPaper 建表脚本（兼容 MySQL 5.7 / 8.0）
+--
+-- DataGrip 用法：
+--   1. 左侧选中 chronopaper 库（或先执行下面两行建库）
+--   2. 不要全选整文件一次执行；按「-- [1]」～「-- [6]」分段选中，逐段 Run
+--
+-- 命令行：mysql -u root -p chronopaper < sql/init_chronopaper.sql
+
+CREATE DATABASE IF NOT EXISTS `chronopaper`
+  DEFAULT CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+
+USE `chronopaper`;
+
+-- [1] 用户表
+CREATE TABLE IF NOT EXISTS `users` (
+  `userid`     VARCHAR(255) NOT NULL,
+  `username`   VARCHAR(255) NOT NULL,
+  `email`      VARCHAR(255) NULL,
+  `full_name`  VARCHAR(255) NULL,
+  `password`   VARCHAR(255) NOT NULL,
+  `roleid`     INT NULL DEFAULT 0,
+  PRIMARY KEY (`userid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- [2] 论文元数据（TEXT 不可写 DEFAULT，默认值由应用层写入）
+CREATE TABLE IF NOT EXISTS `papers` (
+  `arxiv_id`     VARCHAR(64)  NOT NULL,
+  `title`        LONGTEXT     NOT NULL,
+  `authors`      LONGTEXT     NOT NULL,
+  `abstract`     LONGTEXT     NOT NULL,
+  `categories`   LONGTEXT     NOT NULL,
+  `published_at` DATETIME     NULL,
+  `abs_url`      VARCHAR(512) NULL,
+  `pdf_url`      VARCHAR(512) NULL,
+  `pdf_path`     VARCHAR(512) NULL,
+  `parse_status` VARCHAR(32)  NOT NULL DEFAULT 'pending',
+  `created_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`arxiv_id`),
+  KEY `ix_papers_published_at` (`published_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- [3] 抓取任务
+CREATE TABLE IF NOT EXISTS `crawl_tasks` (
+  `id`                  INT          NOT NULL AUTO_INCREMENT,
+  `user_id`             VARCHAR(255) NOT NULL,
+  `name`                VARCHAR(255) NOT NULL,
+  `intent_text`         LONGTEXT     NOT NULL,
+  `categories`          VARCHAR(512) NOT NULL DEFAULT '',
+  `keywords`            VARCHAR(512) NOT NULL DEFAULT '',
+  `visibility`          VARCHAR(16)  NOT NULL DEFAULT 'public',
+  `schedule_time`       VARCHAR(8)   NULL,
+  `min_match_score`     FLOAT        NOT NULL DEFAULT 40,
+  `max_papers_per_run`  INT          NOT NULL DEFAULT 50,
+  `enabled`             TINYINT(1)   NOT NULL DEFAULT 1,
+  `last_run_at`         DATETIME     NULL,
+  `created_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `ix_crawl_tasks_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- [4] 抓取执行记录
+CREATE TABLE IF NOT EXISTS `crawl_task_runs` (
+  `id`           INT          NOT NULL AUTO_INCREMENT,
+  `task_id`      INT          NOT NULL,
+  `status`       VARCHAR(32)  NOT NULL DEFAULT 'waiting',
+  `trigger_type` VARCHAR(16)  NOT NULL DEFAULT 'manual',
+  `progress`     INT          NOT NULL DEFAULT 0,
+  `stats_json`   LONGTEXT     NOT NULL,
+  `log_text`     LONGTEXT     NOT NULL,
+  `started_at`   DATETIME     NULL,
+  `finished_at`  DATETIME     NULL,
+  PRIMARY KEY (`id`),
+  KEY `ix_crawl_task_runs_task_id` (`task_id`),
+  CONSTRAINT `fk_crawl_task_runs_task_id`
+    FOREIGN KEY (`task_id`) REFERENCES `crawl_tasks` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- [5] 文献列表
+CREATE TABLE IF NOT EXISTS `literature_entries` (
+  `id`          INT          NOT NULL AUTO_INCREMENT,
+  `arxiv_id`    VARCHAR(64)  NOT NULL,
+  `user_id`     VARCHAR(255) NOT NULL DEFAULT '',
+  `visibility`  VARCHAR(16)  NOT NULL,
+  `match_score` FLOAT        NULL,
+  `task_id`     INT          NULL,
+  `run_id`      INT          NULL,
+  `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_literature_scope` (`arxiv_id`, `user_id`, `visibility`),
+  KEY `ix_literature_entries_arxiv_id` (`arxiv_id`),
+  KEY `ix_literature_entries_user_id` (`user_id`),
+  CONSTRAINT `fk_literature_entries_arxiv_id`
+    FOREIGN KEY (`arxiv_id`) REFERENCES `papers` (`arxiv_id`),
+  CONSTRAINT `fk_literature_entries_task_id`
+    FOREIGN KEY (`task_id`) REFERENCES `crawl_tasks` (`id`),
+  CONSTRAINT `fk_literature_entries_run_id`
+    FOREIGN KEY (`run_id`) REFERENCES `crawl_task_runs` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- [6] 默认管理员 admin / 123456
+INSERT INTO `users` (`userid`, `username`, `password`, `roleid`)
+VALUES ('admin', 'admin', '$2b$12$XbGyrM6BlwUSENpc0lXxIOlFsNSXJIrN/dCoa2LVOZS/SMXXIkPri', 1)
+ON DUPLICATE KEY UPDATE
+  `username` = VALUES(`username`),
+  `password` = VALUES(`password`),
+  `roleid`   = VALUES(`roleid`);
+
+SHOW TABLES;

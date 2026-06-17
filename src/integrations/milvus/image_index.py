@@ -1,0 +1,1 @@
+"""Image vector index (placeholder)."""

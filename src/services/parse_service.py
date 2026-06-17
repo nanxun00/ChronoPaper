@@ -1,0 +1,1 @@
+"""PDF parsing pipeline (placeholder)."""

@@ -1,0 +1,1 @@
+"""LaTeX compile worker (placeholder)."""

@@ -65,66 +65,51 @@ def create_access_token(data: dict, encrypted_text: str = None, expire_minutes: 
         to_encode["sign"] = sign  # 直接将字节串添加到字典中
     to_encode["exp"] = int(expire.timestamp())
 
-    print("to_encode:",to_encode)
-
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
 
 # 解析并校验JWT。
-def decode_access_token(token: str):
-
-    print(token)
-
+def decode_access_token(token: str) -> str:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except ExpiredSignatureError as exc:
+        raise ExpiredSignatureError("登录已过期，请重新登录") from exc
+    except InvalidTokenError as exc:
+        raise InvalidTokenError("无效的登录凭证") from exc
 
-        print(payload)
+    sub: str = payload.get("sub")
+    if not sub:
+        raise InvalidTokenError("Token 缺少用户信息")
+    sign: str = payload.get("sign")
+    if not sign:
+        raise InvalidTokenError("Token 缺少签名")
+    exp: int = payload.get("exp")
+    if not exp:
+        raise InvalidTokenError("Token 缺少过期时间")
 
-        # 校验JWT完整性
-        sub: str = payload.get("sub")
-        if sub is None or sub == "":
-            raise InvalidTokenError
-        sign: str = payload.get("sign")
-        if sign is None or sign == "":
-            raise InvalidTokenError
-        exp: int = payload.get("exp")
-        if exp is None or exp == 0:
-            raise InvalidTokenError
+    now = math.floor(datetime.now(timezone.utc).timestamp())
+    if now > exp:
+        raise ExpiredSignatureError("登录已过期，请重新登录")
 
-        print("exp:",exp)
-
-        # 判断JWT是否过期
-        now = math.floor(datetime.now(timezone.utc).timestamp())
-        if now > exp:
-            raise ExpiredSignatureError
-
-        # 校验加密的签名
+    try:
         decrypted_data = base64.b64decode(sign)
-        # 解密字节数据
-        plain_sign, _ = decrypt(decrypted_data, R)  # 解密元组
-        plain_sign = plain_sign.decode('utf-8')
+        plain_sign, _ = decrypt(decrypted_data, R)
+        plain_sign = plain_sign.decode("utf-8")
+    except Exception as exc:
+        raise InvalidTokenError("Token 签名校验失败") from exc
 
-        print(plain_sign)
-
-        if plain_sign is None:
-            raise InvalidTokenError
-        arr = plain_sign.split("‖")
-
-        print(arr)
-
-
-        if len(arr) != 2:
-            raise InvalidTokenError
-        userid = arr[0]
-        print("userid:",userid)
-        timestamp = int(arr[1])
-        print("timestamp:",timestamp)
-        if timestamp != exp:
-            raise InvalidTokenError
-        return userid
-    except Exception:
-        raise InvalidTokenError
+    arr = plain_sign.split(separator)
+    if len(arr) != 2:
+        raise InvalidTokenError("Token 签名格式错误")
+    userid, timestamp_str = arr[0], arr[1]
+    try:
+        timestamp = int(timestamp_str)
+    except ValueError as exc:
+        raise InvalidTokenError("Token 签名时间戳无效") from exc
+    if timestamp != exp:
+        raise InvalidTokenError("Token 签名与过期时间不一致")
+    return userid
 
 
 if __name__ == '__main__':

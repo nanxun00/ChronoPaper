@@ -1,0 +1,1 @@
+"""TimeRAG timeline generation (placeholder)."""

@@ -1,0 +1,36 @@
+# ChronoPaper backend dependencies
+# Install: pip install -r requirements.txt
+
+fastapi
+uvicorn
+pydantic-settings
+python-dotenv
+sqlalchemy
+pymysql
+passlib[bcrypt]
+pyjwt
+httpx
+pyyaml
+requests
+
+# arXiv crawl
+arxiv>=2.1.0
+feedparser>=6.0.0
+apscheduler>=3.10.0
+
+# RAG / vectors (knowledge base stack)
+pymilvus
+neo4j
+openai
+zhipuai
+dashscope
+
+# PDF / documents
+pymupdf
+python-docx
+pandas
+numpy
+
+# Optional: OCR, images
+# pytesseract
+# pillow
