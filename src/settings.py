@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     mysql_user: str = "root"
     mysql_password: str = ""
     mysql_host: str = "localhost"
+    mysql_port: int = 3306
     mysql_db: str = "chronopaper"
 
     # --- Neo4j（主库，graphbase 使用）---
@@ -81,9 +82,12 @@ class Settings(BaseSettings):
         return self.neo4j_legacy_password or self.neo4j_password
 
     def mysql_url(self) -> str:
+        from urllib.parse import quote_plus
+        user = quote_plus(self.mysql_user)
+        password = quote_plus(self.mysql_password)
         return (
-            f"mysql+pymysql://{self.mysql_user}:{self.mysql_password}"
-            f"@{self.mysql_host}/{self.mysql_db}?charset=utf8"
+            f"mysql+pymysql://{user}:{password}"
+            f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_db}?charset=utf8"
         )
 
     def milvus_config(self) -> dict:

@@ -31,6 +31,7 @@ config = {
     "time_out": _yaml.get("time_out", _settings.gateway_time_out),
     "mysql": {
         "host": _settings.mysql_host,
+        "port": _settings.mysql_port,
         "user": _settings.mysql_user,
         "password": _settings.mysql_password,
         "database": _settings.mysql_db,
