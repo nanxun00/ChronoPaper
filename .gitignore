@@ -1,0 +1,43 @@
+### python gitignore
+__pycache__/
+*.pyc
+
+### Vue gitignore
+dist
+node_modules
+
+### common gitignore
+.DS_Store
+.env
+.env.local
+.env.*.local
+src/.env
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+log
+logs
+*.log.*
+*.db
+*.lock
+tmp
+cache
+
+### IDE
+.vscode
+.idea
+*.nogit.*
+
+*.pdf
+src/data
+*/package-lock.json
+web/package-lock.json
+notebooks
+graphrag
+docker/volumes
+
+src/routers/saves
+src/saves/data/uploads
+uploads
+local
