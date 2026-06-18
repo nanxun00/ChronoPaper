@@ -271,16 +271,21 @@ const opts = reactive({
   databases: [],
 })
 
-const meta = reactive(JSON.parse(localStorage.getItem('meta')) || {
+const DEFAULT_CHAT_META = {
   enable_retrieval: false,
   use_graph: false,
   use_web: false,
-  graph_name: "neo4j",
-  rewriteQuery: "off",
+  graph_name: 'neo4j',
+  rewriteQuery: 'off',
   selectedKB: null,
   stream: true,
   summary_title: true,
-  history_round: 5,
+  history_round: 10,
+}
+
+const meta = reactive({
+  ...DEFAULT_CHAT_META,
+  ...JSON.parse(localStorage.getItem('meta') || '{}'),
 })
 
 const marked = new Marked(
@@ -868,12 +873,7 @@ async function processRecording() {
 onMounted(() => {
   scrollToBottom()
   loadDatabases()
-  const storedMeta = localStorage.getItem('meta');
-  if (storedMeta) {
-    const parsedMeta = JSON.parse(storedMeta)
-    Object.assign(meta, parsedMeta)
-  }
-  if (meta.stream === undefined) {
+  if (meta.stream === undefined || meta.stream === null) {
     meta.stream = true
   }
 })
