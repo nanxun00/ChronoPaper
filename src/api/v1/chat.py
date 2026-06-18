@@ -3,6 +3,8 @@ import asyncio
 from fastapi import APIRouter, Body
 from fastapi.responses import StreamingResponse, Response
 from concurrent.futures import ThreadPoolExecutor
+from src.models.base import SessionLocal
+from src.services import literature_service
 from src.services.rag import HistoryManager
 from src.services.rag.startup import startup
 from src.utils.logging_config import setup_logger
@@ -15,6 +17,25 @@ logger = setup_logger("server-chat")
 executor = ThreadPoolExecutor()
 
 refs_pool = {}
+
+
+def _build_cited_literature_context(cited: list) -> str:
+    if not cited:
+        return ""
+    parts = []
+    for i, item in enumerate(cited, 1):
+        title = item.get("title") or "未知标题"
+        paper_id = item.get("arxiv_id") or item.get("paper_id") or ""
+        authors = item.get("authors") or ""
+        abstract = (item.get("abstract") or "")[:3000]
+        parts.append(
+            f"[引用文献 {i}] {title}\n"
+            f"ID: {paper_id}\n"
+            f"作者: {authors}\n"
+            f"摘要: {abstract}"
+        )
+    return "以下为用户明确引用的文献（已附摘要），请结合这些内容回答，不要声称未看到文献：\n\n" + "\n\n".join(parts)
+
 
 @chat.get("/")
 async def chat_get():
@@ -36,7 +57,16 @@ def chat_post(
         返回：
             - StreamingResponse: 实时生成的聊天响应
     '''
-    print(meta)
+    meta = meta or {}
+    cited_raw = meta.get("cited_literature") or []
+    if cited_raw:
+        db = SessionLocal()
+        try:
+            meta = {**meta, "cited_literature": literature_service.enrich_cited_literature(db, cited_raw)}
+        finally:
+            db.close()
+    logger.debug("chat meta cited_literature count=%s", len(meta.get("cited_literature") or []))
+
     # 检查 meta 中是否包含 OCR 识别的 session_id
     # session_id = meta.get("session_id") if meta else None
     # if session_id and session_id in ocr_cache:
@@ -71,6 +101,9 @@ def chat_post(
             然后使用模型生成响应，生成的响应被切分为块，以便实时推送到客户端
         '''
 
+        cited = meta.get("cited_literature") or []
+        literature_context = _build_cited_literature_context(cited)
+
         # 如果采用了检索功能，他会首先进行检索
         if meta.get("enable_retrieval"):
             chunk = make_chunk("", "searching", history=None)
@@ -80,6 +113,9 @@ def chat_post(
             refs_pool[cur_res_id] = refs
         else:
             new_query = query
+
+        if literature_context:
+            new_query = f"{literature_context}\n\n用户问题：{new_query}"
 
         # 提那件带有新查询的历史记录，并添加用户查询到历史记录中
         messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get('history_round'))

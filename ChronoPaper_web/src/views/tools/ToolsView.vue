@@ -24,7 +24,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 
@@ -43,38 +43,28 @@ const BUILTIN_TOOLS = [
     description: '智能分析数据并生成可视化图表。',
     builtin: true,
   },
+  {
+    id: 'builtin-text-chunking',
+    name: 'text-chunking',
+    title: '文本分块',
+    description: '将文本分块以更好地理解。可以输入文本或者上传文件。',
+    builtin: true,
+  },
+  {
+    id: 'builtin-pdf2txt',
+    name: 'pdf2txt',
+    title: 'PDF转文本',
+    description: '将 PDF 文件转换为文本。',
+    builtin: true,
+  },
 ]
 
 const router = useRouter()
-const tools = ref([])
 
-const state = reactive({
-  loadingTools: true,
-})
-
-const allTools = computed(() => [...BUILTIN_TOOLS, ...tools.value])
-
-const getTools = () => {
-  state.loadingTools = true
-  fetch('/api/tool/')
-    .then((response) => response.json())
-    .then((data) => {
-      tools.value = Array.isArray(data) ? data : []
-      state.loadingTools = false
-    })
-    .catch((error) => {
-      console.error('Error fetching tools:', error)
-      state.loadingTools = false
-    })
-}
-
+const allTools = computed(() => BUILTIN_TOOLS)
 const navigateToTool = (tool) => {
   router.push(`/tools/${tool.name}`)
 }
-
-onMounted(() => {
-  getTools()
-})
 </script>
 
 <style scoped lang="less">

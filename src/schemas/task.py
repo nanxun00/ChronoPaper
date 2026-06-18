@@ -27,7 +27,7 @@ class CrawlPlanResponse(BaseModel):
 
 
 class CrawlTaskCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
+    name: str = Field(default="", max_length=255, description="可选；留空则创建后自动命名为「抓取任务 #ID」")
     intent_text: str = Field(default="")
     sources: str = Field(default="arxiv", description="逗号分隔: arxiv,openreview,openalex")
     categories: str = Field(default="")
@@ -40,11 +40,13 @@ class CrawlTaskCreate(BaseModel):
     keywords: str = Field(default="")
     visibility: Literal["public", "private"] = Field(default="public")
     schedule_time: str | None = None
+    auto_run: bool = Field(default=False, description="创建后立即执行；智能规划任务则在规划完成后执行")
     min_match_score: float = Field(default=50.0, ge=0, le=100, description="兼容旧字段，等同 min_semantic_score")
     min_semantic_score: float = Field(default=50.0, ge=0, le=100)
     min_quality_score: float = Field(default=0.0, ge=0, le=100)
     enable_quality_filter: bool = Field(default=False)
     enable_smart_planning: bool = Field(default=False)
+    crawl_mode: Literal["latest", "explore", "smart", "manual"] = Field(default="latest")
     plan_summary: str = Field(default="")
     verified_suggestions_json: str = Field(default="")
     max_papers_per_run: int = Field(default=50, ge=1, le=200)
@@ -70,6 +72,7 @@ class CrawlTaskUpdate(BaseModel):
     min_quality_score: float | None = None
     enable_quality_filter: bool | None = None
     enable_smart_planning: bool | None = None
+    crawl_mode: Literal["latest", "explore", "smart", "manual"] | None = None
     plan_summary: str | None = None
     max_papers_per_run: int | None = None
     enabled: bool | None = None

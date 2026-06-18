@@ -48,6 +48,13 @@ def run_smart_plan_for_task(task_id: int) -> None:
         session.commit()
         logger.info("Smart planning ready for task %s", task_id)
         refresh_scheduler()
+        if getattr(task, "auto_run_on_ready", False):
+            task.auto_run_on_ready = False
+            session.add(task)
+            session.commit()
+            if not is_task_running(task_id):
+                run_task_async(task_id, trigger_type="manual")
+                logger.info("Auto-run triggered after smart planning for task %s", task_id)
     except Exception as exc:
         logger.exception("Smart planning failed task_id=%s", task_id)
         session.rollback()
@@ -74,6 +81,7 @@ def cancel_smart_planning(task_id: int) -> bool:
             return False
         task.planning_status = "cancelled"
         task.planning_error = "用户已取消"
+        task.auto_run_on_ready = False
         session.add(task)
         session.commit()
         return True

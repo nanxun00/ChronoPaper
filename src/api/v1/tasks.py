@@ -11,12 +11,25 @@ from src.api.deps import UserInDB, get_current_active_user, get_db
 from src.models.crawl import CrawlTask, CrawlTaskRun
 from src.schemas.task import CrawlPlanRequest, CrawlTaskCreate, CrawlTaskUpdate
 from src.services.crawl_planner import generate_crawl_plan
+from src.services.crawl_mode_presets import CRAWL_MODE_LABELS
 from src.services.crawl_planning_job import cancel_smart_planning, is_smart_planning, schedule_smart_planning
 from src.services.crawl_service import is_task_running, request_cancel_task, run_task_async
 from src.services.scheduler_service import refresh_scheduler
 from src.utils.datetime_fmt import format_display_datetime
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+
+def _default_task_name(task_id: int) -> str:
+    return f"抓取任务 #{task_id}"
+
+
+def _ensure_task_name(row: CrawlTask, db: Session) -> None:
+    if not (row.name or "").strip():
+        row.name = _default_task_name(row.id)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
 
 
 def _task_to_dict(t: CrawlTask, db: Session) -> dict:
@@ -42,6 +55,10 @@ def _task_to_dict(t: CrawlTask, db: Session) -> dict:
         progress = 0
     visibility_label = "公开文献" if t.visibility == "public" else "私有文献"
     sources = getattr(t, "sources", None) or "arxiv"
+    execution_mode = "daily" if t.schedule_time else "once"
+    execution_mode_label = (
+        f"每日定时 {t.schedule_time}" if t.schedule_time else "单次执行"
+    )
     return {
         "id": t.id,
         "name": t.name,
@@ -59,11 +76,18 @@ def _task_to_dict(t: CrawlTask, db: Session) -> dict:
         "visibility": t.visibility,
         "visibility_label": visibility_label,
         "schedule_time": t.schedule_time,
+        "execution_mode": execution_mode,
+        "execution_mode_label": execution_mode_label,
         "min_match_score": getattr(t, "min_semantic_score", None) or t.min_match_score,
         "min_semantic_score": getattr(t, "min_semantic_score", None) or t.min_match_score,
         "min_quality_score": getattr(t, "min_quality_score", None) or 0.0,
         "enable_quality_filter": bool(getattr(t, "enable_quality_filter", False)),
         "enable_smart_planning": bool(getattr(t, "enable_smart_planning", False)),
+        "crawl_mode": getattr(t, "crawl_mode", None) or ("smart" if t.enable_smart_planning else "latest"),
+        "crawl_mode_label": CRAWL_MODE_LABELS.get(
+            getattr(t, "crawl_mode", None) or ("smart" if t.enable_smart_planning else "latest"),
+            "最新文献跟踪",
+        ),
         "planning_status": planning_status,
         "planning_error": getattr(t, "planning_error", None) or "",
         "max_papers_per_run": t.max_papers_per_run,
@@ -94,12 +118,14 @@ def _validate_crawl_sources(body: CrawlTaskCreate) -> None:
     sources = [s.strip() for s in (body.sources or "arxiv").split(",") if s.strip()]
     if not sources:
         raise HTTPException(status_code=400, detail="请至少选择一种抓取数据源")
-    if "arxiv" in sources and not body.categories.strip():
-        raise HTTPException(status_code=400, detail="已选择 arXiv，请填写分类")
-    if "openreview" in sources and not body.openreview_venues.strip():
-        raise HTTPException(status_code=400, detail="已选择 OpenReview，请选择会议/venue")
-    if "openalex" in sources and not (body.intent_text.strip() or body.keywords.strip()):
-        raise HTTPException(status_code=400, detail="已选择 OpenAlex，请填写兴趣描述或关键词作为检索词")
+    needs_query = {"arxiv", "openreview", "openalex"} & set(sources)
+    if needs_query and not (body.intent_text.strip() or body.keywords.strip()):
+        raise HTTPException(status_code=400, detail="请填写研究兴趣描述或关键词，用于文献检索")
+    if "openalex" in sources:
+        if not body.openalex_venue_types.strip():
+            raise HTTPException(status_code=400, detail="OpenAlex 请至少选择一种文献类型")
+        if not body.openalex_ccf_ranks.strip():
+            raise HTTPException(status_code=400, detail="OpenAlex 请至少选择一种 CCF 分级")
 
 
 @router.post("/crawl-plan")
@@ -127,13 +153,18 @@ def create_crawl_task(
     db: Session = Depends(get_db),
 ):
     async_smart_plan = bool(body.enable_smart_planning)
+    crawl_mode = body.crawl_mode or ("smart" if async_smart_plan else "latest")
+    if body.auto_run and body.schedule_time:
+        raise HTTPException(status_code=400, detail="单次执行与每日定时不能同时开启")
+    if not body.auto_run and not body.schedule_time:
+        raise HTTPException(status_code=400, detail="请选择单次执行或设置每日定时时间")
     if not async_smart_plan:
         _validate_crawl_sources(body)
 
     semantic_threshold = body.min_semantic_score if body.min_semantic_score is not None else body.min_match_score
     row = CrawlTask(
         user_id=current_user.userid,
-        name=body.name,
+        name=(body.name or "").strip(),
         intent_text=body.intent_text,
         sources="" if async_smart_plan else (body.sources or "arxiv"),
         categories="" if async_smart_plan else body.categories,
@@ -145,12 +176,14 @@ def create_crawl_task(
         openalex_venue_names="" if async_smart_plan else body.openalex_venue_names,
         keywords="" if async_smart_plan else body.keywords,
         visibility=body.visibility,
-        schedule_time=body.schedule_time,
+        schedule_time=body.schedule_time if not body.auto_run else None,
+        auto_run_on_ready=bool(body.auto_run and async_smart_plan),
         min_match_score=semantic_threshold,
         min_semantic_score=semantic_threshold,
         min_quality_score=body.min_quality_score,
         enable_quality_filter=body.enable_quality_filter,
         enable_smart_planning=body.enable_smart_planning,
+        crawl_mode=crawl_mode,
         plan_summary="" if async_smart_plan else (body.plan_summary or "").strip(),
         verified_suggestions_json=None if async_smart_plan else ((body.verified_suggestions_json or "").strip() or None),
         planning_status="planning" if async_smart_plan else "none",
@@ -161,16 +194,22 @@ def create_crawl_task(
     db.add(row)
     db.commit()
     db.refresh(row)
+    _ensure_task_name(row, db)
 
     if async_smart_plan:
         schedule_smart_planning(row.id)
         refresh_scheduler()
         return {
-            "message": "任务已创建，智能规划正在后台进行",
+            "message": "任务已创建，智能规划正在后台进行"
+            + ("，完成后将自动执行" if body.auto_run else ""),
             "task": _task_to_dict(row, db),
         }
 
     refresh_scheduler()
+    if body.auto_run:
+        run_task_async(row.id, trigger_type="manual")
+        return {"message": "任务已创建并已开始执行", "task": _task_to_dict(row, db)}
+
     return {"message": "任务创建成功", "task": _task_to_dict(row, db)}
 
 

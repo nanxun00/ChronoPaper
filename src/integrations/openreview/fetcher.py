@@ -9,6 +9,7 @@ from typing import Any
 import requests
 
 OPENREVIEW_API = "https://api2.openreview.net/notes"
+OPENREVIEW_SEARCH_API = "https://api2.openreview.net/notes/search"
 OPENREVIEW_BASE = "https://openreview.net"
 RATING_RE = re.compile(r"^(\d+(?:\.\d+)?)")
 
@@ -156,6 +157,135 @@ def _note_to_candidate(note: dict, invitation: str) -> dict[str, Any]:
         "review_rating": None,
         "citation_count": None,
     }
+
+
+def _forum_content_to_candidate(forum: str, content: dict, invitation_hint: str = "") -> dict[str, Any] | None:
+    title = str(_content_value(content, "title", "")).strip()
+    if not title:
+        return None
+    abstract = str(_content_value(content, "abstract", "")).strip()
+    authors_raw = _content_value(content, "authors", [])
+    if isinstance(authors_raw, str):
+        authors = [a.strip() for a in authors_raw.split(",") if a.strip()]
+    elif isinstance(authors_raw, list):
+        authors = [str(a).strip() for a in authors_raw if str(a).strip()]
+    else:
+        authors = []
+
+    venue = str(_content_value(content, "venue", "")).strip()
+    invitation = invitation_hint or ""
+    if not invitation:
+        venueid = str(_content_value(content, "venueid", "")).strip()
+        if venueid and "/" in venueid:
+            invitation = venueid.rsplit("/", 1)[0] + "/-/Submission"
+
+    published_at = None
+    tcdate = content.get("tcdate") or content.get("cdate")
+    if tcdate:
+        try:
+            published_at = datetime.fromtimestamp(int(tcdate) / 1000, tz=timezone.utc).replace(tzinfo=None)
+        except (TypeError, ValueError, OSError):
+            published_at = None
+
+    paper_id = f"or:{forum}"
+    for key in ("arxiv", "arxiv_id", "arXiv"):
+        val = _content_value(content, key, "")
+        if val:
+            m = re.search(r"(\d{4}\.\d{4,5})", str(val))
+            if m:
+                paper_id = m.group(1)
+                break
+
+    venue_display = venue or (invitation.split("/")[0].replace(".cc", "").upper() if invitation else "OpenReview")
+
+    return {
+        "paper_id": paper_id,
+        "source": "openreview",
+        "title": title,
+        "authors": authors,
+        "abstract": abstract,
+        "categories": [invitation.split("/")[0]] if invitation else [],
+        "published_at": published_at,
+        "abs_url": f"{OPENREVIEW_BASE}/forum?id={forum}",
+        "pdf_url": resolve_openreview_pdf_url(_content_value(content, "pdf", ""), forum),
+        "venue": venue_display,
+        "venue_display": venue_display,
+        "venue_type": parse_venue_type(venue),
+        "acceptance_status": parse_acceptance_status(venue),
+        "openreview_id": forum,
+        "openreview_invitation": invitation,
+        "review_rating": None,
+        "citation_count": None,
+    }
+
+
+def _search_note_to_candidate(note: dict) -> dict[str, Any] | None:
+    forum = note.get("forum") or ""
+    if not forum:
+        return None
+    content = note.get("forumContent") or {}
+    if not content:
+        return None
+    invitation_hint = ""
+    for inv in note.get("invitations") or []:
+        if isinstance(inv, str) and "Submission" in inv:
+            invitation_hint = inv.split("/Submission")[0] + "/-/Submission"
+            break
+    return _forum_content_to_candidate(forum, content, invitation_hint)
+
+
+def fetch_openreview_by_keywords(
+    search_query: str,
+    *,
+    max_results: int = 300,
+    only_accepted: bool = True,
+) -> list[dict[str, Any]]:
+    """按关键词检索 OpenReview（全局 search API，不再按 venue 拉全量）。"""
+    query = (search_query or "").strip()
+    if not query:
+        raise ValueError("OpenReview 关键词检索需要兴趣描述或检索关键词")
+
+    results: list[dict[str, Any]] = []
+    seen_forums: set[str] = set()
+    offset = 0
+    page_size = min(100, max_results)
+
+    while len(results) < max_results:
+        resp = requests.get(
+            OPENREVIEW_SEARCH_API,
+            params={
+                "term": query,
+                "source": "all",
+                "limit": page_size,
+                "offset": offset,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        notes = payload.get("notes") or []
+        if not notes:
+            break
+        for note in notes:
+            candidate = _search_note_to_candidate(note)
+            if not candidate:
+                continue
+            forum = candidate.get("openreview_id") or ""
+            if not forum or forum in seen_forums:
+                continue
+            seen_forums.add(forum)
+            results.append(candidate)
+            if len(results) >= max_results:
+                break
+        if len(notes) < page_size:
+            break
+        offset += len(notes)
+        time.sleep(0.3)
+
+    if only_accepted:
+        results = [m for m in results if is_openreview_accepted_candidate(m)]
+
+    return results
 
 
 def fetch_review_rating(forum_id: str) -> float | None:

@@ -102,7 +102,51 @@ def score_llm_pair(innovation: float | None, experiment: float | None) -> float:
     return inv * 0.5 + exp * 0.5
 
 
-def compute_quality_score(meta: dict[str, Any], paper: Any | None = None) -> float:
+def _parse_csv_field(value: str) -> list[str]:
+    return [v.strip() for v in (value or "").replace("，", ",").split(",") if v.strip()]
+
+
+def score_arxiv_category_match(meta: dict[str, Any], preferred_categories: list[str]) -> float:
+    """任务配置了 arXiv 分类偏好时，用于质量分加权（不参与检索）。"""
+    if not preferred_categories:
+        return 50.0
+    paper_cats = meta.get("categories") or []
+    if isinstance(paper_cats, str):
+        paper_cats = _parse_csv_field(paper_cats)
+    pref = set(preferred_categories)
+    overlap = sum(1 for c in paper_cats if c in pref)
+    if overlap:
+        return min(100.0, 68.0 + overlap * 12.0)
+    return 38.0
+
+
+def score_openreview_venue_match(meta: dict[str, Any], preferred_venues: list[str]) -> float:
+    """任务配置了 OpenReview 会议偏好时，用于质量分加权（不参与检索）。"""
+    if not preferred_venues:
+        return 50.0
+    invitation = (meta.get("openreview_invitation") or "").lower()
+    venue = (meta.get("venue") or "").lower()
+    for pv in preferred_venues:
+        head = pv.lower().split("/-/")[0].split("/")[0]
+        if head and (head in invitation or head.replace(".cc", "") in venue):
+            return 92.0
+    return 42.0
+
+
+def compute_source_preference_score(meta: dict[str, Any], task: Any | None = None) -> float:
+    if task is None:
+        return 50.0
+    source = meta.get("source") or "arxiv"
+    if source == "arxiv":
+        return score_arxiv_category_match(meta, _parse_csv_field(getattr(task, "categories", "") or ""))
+    if source == "openreview":
+        return score_openreview_venue_match(
+            meta, _parse_csv_field(getattr(task, "openreview_venues", "") or "")
+        )
+    return 50.0
+
+
+def compute_quality_score(meta: dict[str, Any], paper: Any | None = None, *, task: Any | None = None) -> float:
     """多维度加权质量分。"""
     source = meta.get("source") or (getattr(paper, "source", None) if paper else None) or "arxiv"
     if source == "openalex":
@@ -135,8 +179,16 @@ def compute_quality_score(meta: dict[str, Any], paper: Any | None = None) -> flo
         if llm_exp is None:
             llm_exp = getattr(paper, "llm_experiment_score", None)
     llm = score_llm_pair(llm_inv, llm_exp)
+    preference = compute_source_preference_score(meta, task)
 
-    total = acceptance * 0.25 + citation * 0.25 + review * 0.20 + llm * 0.20 + author * 0.10
+    total = (
+        acceptance * 0.22
+        + citation * 0.22
+        + review * 0.18
+        + llm * 0.18
+        + author * 0.10
+        + preference * 0.10
+    )
     return round(min(100.0, max(0.0, total)), 1)
 
 

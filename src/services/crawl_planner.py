@@ -91,9 +91,9 @@ Given a user's research domain description, output a JSON crawl plan. Do NOT inv
 {source_hint}
 
 Data source roles:
-- arxiv: latest preprints; needs arXiv categories from the allowed list
-- openreview: top conference accepted papers; needs exact venue invitation IDs
-- openalex: journals/conferences with CCF rank and citations; uses intent+keywords search
+- arxiv: keyword search on preprints; categories are quality preferences only (optional)
+- openreview: keyword search across venues; openreview_venues are quality preferences only (optional)
+- openalex: journals/conferences with CCF rank; uses intent+keywords search
 
 Allowed arXiv categories (use exact codes only): {arxiv_list}
 
@@ -126,8 +126,8 @@ Output ONLY valid JSON with these keys:
 Rules:
 - Choose sources from arxiv, openreview, openalex (1-3 items); combine when useful e.g. arxiv+openreview for fast-moving ML topics, add openalex for journals/CCF coverage
 - suggested_papers: 3-6 REAL, well-known papers in this field (exact official English titles only); we will verify via API — do NOT invent titles
-- categories: 1-4 items, only if arxiv in sources
-- openreview_venues: 1-3 items, only if openreview in sources
+- categories: 0-4 arXiv category codes as quality preferences (optional), only if arxiv in sources
+- openreview_venues: 0-3 venue invitation IDs as quality preferences (optional), only if openreview in sources
 - keywords: 5-12 English terms, include synonyms and method names
 - intent_text must be English even if user writes Chinese
 - reasoning must be Chinese"""

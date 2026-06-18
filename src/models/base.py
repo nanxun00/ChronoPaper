@@ -135,6 +135,10 @@ def migrate_schema(engine, log) -> None:
             alters.append("ALTER TABLE crawl_tasks ADD COLUMN planning_status VARCHAR(16) NOT NULL DEFAULT 'none'")
         if "planning_error" not in task_cols:
             alters.append("ALTER TABLE crawl_tasks ADD COLUMN planning_error VARCHAR(512) NOT NULL DEFAULT ''")
+        if "crawl_mode" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN crawl_mode VARCHAR(16) NOT NULL DEFAULT 'latest'")
+        if "auto_run_on_ready" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN auto_run_on_ready TINYINT(1) NOT NULL DEFAULT 0")
 
     if "literature_entries" in inspector.get_table_names():
         entry_cols = {c["name"] for c in inspector.get_columns("literature_entries")}

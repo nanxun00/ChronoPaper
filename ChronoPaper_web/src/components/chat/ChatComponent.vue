@@ -103,6 +103,11 @@
           <img v-for="(imageUrl, index) in message.images" :key="index" :src="imageUrl" alt="Uploaded Image"
             class="message-image" />
         </div>
+        <div v-if="message.citations && message.citations.length" class="message-citations">
+          <span v-for="cite in message.citations" :key="cite.arxiv_id" class="cite-tag">
+            <FileTextOutlined /> {{ cite.title }}
+          </span>
+        </div>
         <p v-if="message.role == 'sent'" style="white-space: pre-line" class="message-text">{{ message.text }}</p>
         <div v-else-if="message.text.length == 0 && message.status == 'init'" class="loading-dots">
           <div></div>
@@ -127,6 +132,18 @@
             <span class="remove-icon" @click="handleRemove(file)" v-if="fileList.length > 0">×</span>
           </div>
         </div>
+        <!-- 已引用文献 -->
+        <div v-if="citedLiterature.length" class="box-citations">
+          <a-tag
+            v-for="cite in citedLiterature"
+            :key="cite.arxiv_id"
+            closable
+            class="cite-chip"
+            @close.prevent="removeCitation(cite.arxiv_id)"
+          >
+            <FileTextOutlined /> {{ truncateTitle(cite.title) }}
+          </a-tag>
+        </div>
         <div class="box-bottom">
           <a-textarea class="user-input" v-model:value="conv.inputText" @keydown="handleKeyDown" placeholder="输入问题……"
             :auto-size="{ minRows: 1, maxRows: 10 }" />
@@ -148,12 +165,21 @@
             </el-tooltip>
           </div>
 
-          <a-button size="large" @click="sendMessage" :disabled="(!conv.inputText && !isStreaming)" type="link">
+          <a-button size="large" @click="sendMessage" :disabled="(!canSend && !isStreaming)" type="link">
             <template #icon>
               <SendOutlined v-if="!isStreaming" />
               <LoadingOutlined v-else />
             </template>
           </a-button>
+        </div>
+        <div class="input-toolbar">
+          <LiteratureCitePicker v-model="citedLiterature">
+            <button type="button" class="tool-chip" :class="{ 'tool-chip--active': citedLiterature.length }">
+              <FileTextOutlined />
+              <span>文献</span>
+              <span v-if="citedLiterature.length" class="tool-chip__count">{{ citedLiterature.length }}</span>
+            </button>
+          </LiteratureCitePicker>
         </div>
 
       </div>
@@ -166,7 +192,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted, toRefs, nextTick, computed, watch } from 'vue'
+import { reactive, ref, onMounted, toRefs, nextTick, computed, watch, toRaw } from 'vue'
 import {
   SendOutlined,
   MenuOutlined,
@@ -192,6 +218,7 @@ import { markedHighlight } from 'marked-highlight';
 import { useConfigStore } from '@/stores'
 import { message } from 'ant-design-vue'
 import RefsComponent from '@/components/chat/RefsComponent.vue'
+import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 // import login from '@/components/login.vue'
@@ -212,6 +239,19 @@ const configStore = useConfigStore()
 const { conv, state } = toRefs(props)
 const chatContainer = ref(null)
 const isStreaming = ref(false)
+const citedLiterature = ref([])
+const canSend = computed(() => {
+  return Boolean(conv.value.inputText?.trim()) || citedLiterature.value.length > 0
+})
+
+const truncateTitle = (title, max = 36) => {
+  if (!title || title.length <= max) return title
+  return `${title.slice(0, max)}…`
+}
+
+const removeCitation = (arxivId) => {
+  citedLiterature.value = citedLiterature.value.filter((p) => p.arxiv_id !== arxivId)
+}
 const panel = ref(null)
 const modelCard = ref(null)
 const examples = ref([
@@ -336,12 +376,13 @@ const generateRandomHash = (length) => {
   return hash;
 }
 
-const appendUserMessage = (message, images = []) => {
+const appendUserMessage = (message, images = [], citations = []) => {
   conv.value.messages.push({
     id: generateRandomHash(16),
     role: 'sent',
     text: message,
-    images: images, // 添加图片 URL
+    images: images,
+    citations,
     status: 'finished'
   })
   scrollToBottom()
@@ -444,14 +485,20 @@ const loadDatabases = () => {
     })
 }
 
+const buildRequestMeta = (citedLiteraturePayload = []) => ({
+  ...structuredClone(toRaw(meta)),
+  cited_literature: citedLiteraturePayload,
+})
+
 // 新函数用于处理 fetch 请求
-const fetchChatResponse = (user_input, cur_res_id) => {
+const fetchChatResponse = (user_input, cur_res_id, citedLiteraturePayload = []) => {
+  const requestMeta = buildRequestMeta(citedLiteraturePayload)
   fetch('/api/chat/', {
     method: 'POST',
     body: JSON.stringify({
       query: user_input,
       history: conv.value.history,
-      meta: meta,
+      meta: requestMeta,
       cur_res_id: cur_res_id,
     }),
     headers: {
@@ -611,26 +658,27 @@ const fetchRefs = (cur_res_id) => {
 
 // 更新后的 sendMessage 函数
 const sendMessage = () => {
-  // 文本内容
   const user_input = conv.value.inputText.trim();
   const dbName = opts.databases.length > 0 ? opts.databases[meta.selectedKB]?.metaname : null;
-
-  // 获取图片列表
   const images = fileList.value.map(file => file.url);
-
-  // 如果有 ocr_text，则将其添加到 user_input 中，但不显示在文本框中
+  const citations = citedLiterature.value.map((p) => ({ ...p }));
   const finalInput = ocrText.value ? `${user_input} ${ocrText.value}` : user_input;
 
-  if (user_input) {
+  if (user_input || citations.length) {
     isStreaming.value = true;
-    appendUserMessage(user_input, images);
+    appendUserMessage(user_input || '请结合引用的文献回答', images, citations);
     appendAiMessage("", null);
     const cur_res_id = conv.value.messages[conv.value.messages.length - 1].id;
     conv.value.inputText = '';
-    fileList.value = []; // 清空图片列表，避免重复上传
+    fileList.value = [];
     meta.db_name = dbName;
 
-    fetchChatResponse(finalInput, cur_res_id)
+    fetchChatResponse(
+      finalInput || '请结合引用的文献进行总结或回答',
+      cur_res_id,
+      citations,
+    );
+    citedLiterature.value = [];
   } else {
     console.log('请输入消息');
   }
@@ -818,14 +866,15 @@ onMounted(() => {
   }
 });
 
-// 监听 meta 对象的变化，并保存到本地存储
+// 监听 meta 对象的变化，并保存到本地存储（不持久化临时引用）
 watch(
   () => meta,
   (newMeta) => {
-    localStorage.setItem('meta', JSON.stringify(newMeta));
+    const { cited_literature, ...persistMeta } = structuredClone(toRaw(newMeta))
+    localStorage.setItem('meta', JSON.stringify(persistMeta))
   },
   { deep: true }
-);
+)
 </script>
 
 <style lang="less" scoped>
@@ -1074,10 +1123,9 @@ watch(
       padding: 0.5rem 0.5rem;
       background-color: transparent;
       border: none;
-      font-size: 1.2rem;
+      font-size: 16px;
       margin: 0 0.6rem;
       color: #111111;
-      font-size: 16px;
       font-variation-settings: 'wght' 400, 'opsz' 10.5;
       outline: none;
       resize: none;
@@ -1089,6 +1137,67 @@ watch(
 
       &:active {
         outline: none;
+      }
+    }
+
+    .box-citations {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      width: 100%;
+      padding: 4px 10px 0;
+    }
+
+    .cite-chip {
+      max-width: 100%;
+      margin: 0;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    .input-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      padding: 4px 8px 6px;
+      border-top: 1px solid #f0f0f0;
+      margin-top: 2px;
+    }
+
+    .tool-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border: none;
+      border-radius: 999px;
+      background: transparent;
+      color: #555;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+
+      &:hover {
+        background: #f3f5f7;
+        color: #222;
+      }
+
+      &--active {
+        background: #eef5ff;
+        color: var(--main-700, #1677ff);
+      }
+
+      &__count {
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        border-radius: 8px;
+        background: var(--main-600, #1677ff);
+        color: #fff;
+        font-size: 11px;
+        line-height: 16px;
+        text-align: center;
       }
     }
   }
@@ -1412,13 +1521,31 @@ watch(
 
 .message-image {
   max-width: 150px;
-  /* 设置最大宽度为 50px */
   height: auto;
-  /* 保持高度自适应 */
   border-radius: 4px;
-  /* 可选：添加圆角效果 */
   margin: 5px;
-  /* 可选：添加一些外边距 */
+}
+
+.message-citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.cite-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #eef5ff;
+  color: #3366aa;
+  font-size: 12px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
 

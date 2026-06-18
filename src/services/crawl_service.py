@@ -4,16 +4,17 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 from sqlalchemy.orm import Session
 
-from src.integrations.arxiv.fetcher import arxiv_result_to_dict, fetch_arxiv_candidates
+from src.integrations.arxiv.fetcher import arxiv_result_to_dict, fetch_arxiv_by_keywords
 from src.integrations.citations import fetch_citation_count
 from src.integrations.openreview.fetcher import (
-    fetch_openreview_candidates,
+    fetch_openreview_by_keywords,
     fetch_review_rating,
     resolve_openreview_pdf_url,
 )
@@ -22,6 +23,10 @@ from src.models.base import SessionLocal
 from src.models.crawl import CrawlTask, CrawlTaskRun
 from src.models.literature import LiteratureEntry
 from src.models.paper import Paper
+from src.services.crawl_keyword_planner import fallback_keyword_profile, generate_search_keywords
+from src.services.crawl_reranker import rerank_candidates
+from src.services.crawl_relevance_filter import apply_keyword_and_llm_filter
+from src.services.crawl_mode_presets import CRAWL_MODE_LABELS
 from src.services.literature_service import resolve_paper_pdf_path
 from src.services.paper_quality_assessment import schedule_quality_assessment
 from src.services.quality_scorer import compute_quality_score, merge_paper_quality_signals
@@ -33,8 +38,12 @@ from src.utils.logging_config import setup_logger
 
 logger = setup_logger("CrawlService")
 
+RUN_TIMEOUT_MINUTES = 30
+RUN_TIMEOUT_SECONDS = RUN_TIMEOUT_MINUTES * 60
+
 _running_tasks: set[int] = set()
 _cancel_requested: set[int] = set()
+_timeout_requested: set[int] = set()
 _lock = threading.Lock()
 
 
@@ -42,10 +51,90 @@ class TaskCancelledError(Exception):
     """用户主动取消抓取任务。"""
 
 
+class TaskTimeoutError(Exception):
+    """抓取任务执行超时。"""
+
+
 def _check_cancelled(task_id: int) -> None:
     with _lock:
         if task_id in _cancel_requested:
             raise TaskCancelledError("用户已取消任务")
+
+
+def _check_runtime_limits(task_id: int, run: CrawlTaskRun) -> None:
+    _check_cancelled(task_id)
+    with _lock:
+        if task_id in _timeout_requested:
+            raise TaskTimeoutError(f"任务执行超过 {RUN_TIMEOUT_MINUTES} 分钟")
+    started = run.started_at
+    if started and (datetime.utcnow() - started).total_seconds() > RUN_TIMEOUT_SECONDS:
+        raise TaskTimeoutError(f"任务执行超过 {RUN_TIMEOUT_MINUTES} 分钟")
+
+
+def _arm_run_timeout(task_id: int) -> None:
+    def _watch() -> None:
+        time.sleep(RUN_TIMEOUT_SECONDS)
+        with _lock:
+            if task_id in _running_tasks:
+                _timeout_requested.add(task_id)
+
+    threading.Thread(target=_watch, daemon=True, name=f"crawl-timeout-{task_id}").start()
+
+
+def expire_stale_tasks() -> dict[str, int]:
+    """将超时仍未结束的抓取执行 / 智能规划标记为失败。
+
+    调用时机：抓取任务执行完成后（execute_crawl_run finally）。
+    """
+    cutoff = datetime.utcnow() - timedelta(seconds=RUN_TIMEOUT_SECONDS)
+    runs_failed = 0
+    planning_failed = 0
+    session = SessionLocal()
+    try:
+        stale_runs = (
+            session.query(CrawlTaskRun)
+            .filter(
+                CrawlTaskRun.status == "running",
+                CrawlTaskRun.started_at.isnot(None),
+                CrawlTaskRun.started_at < cutoff,
+            )
+            .all()
+        )
+        for run in stale_runs:
+            run.status = "failed"
+            run.finished_at = datetime.utcnow()
+            _append_log(run, f"执行超时（{RUN_TIMEOUT_MINUTES} 分钟），已自动标记为失败", session)
+            runs_failed += 1
+            with _lock:
+                _running_tasks.discard(run.task_id)
+                _cancel_requested.discard(run.task_id)
+                _timeout_requested.discard(run.task_id)
+
+        stale_planning = (
+            session.query(CrawlTask)
+            .filter(
+                CrawlTask.planning_status == "planning",
+                CrawlTask.created_at < cutoff,
+            )
+            .all()
+        )
+        for task in stale_planning:
+            task.planning_status = "failed"
+            task.planning_error = f"智能规划超时（{RUN_TIMEOUT_MINUTES} 分钟）"
+            task.auto_run_on_ready = False
+            session.add(task)
+            planning_failed += 1
+
+        if runs_failed or planning_failed:
+            session.commit()
+            logger.info(
+                "expired stale tasks: runs_failed=%s planning_failed=%s",
+                runs_failed,
+                planning_failed,
+            )
+    finally:
+        session.close()
+    return {"runs_failed": runs_failed, "planning_failed": planning_failed}
 
 
 def _append_log(run: CrawlTaskRun, line: str, session: Session) -> None:
@@ -146,40 +235,96 @@ def _quality_filter_enabled(task: CrawlTask) -> bool:
     return bool(getattr(task, "enable_quality_filter", False))
 
 
-def _collect_candidate_pools(task: CrawlTask, run: CrawlTaskRun, session: Session) -> dict[str, list[dict]]:
+def _resolve_keyword_profile(
+    task: CrawlTask,
+    run: CrawlTaskRun,
+    session: Session,
+) -> dict:
+    """所有模式：执行前由 LLM 根据兴趣描述生成检索关键词。"""
+    intent = (task.intent_text or "").strip()
+    existing_kw = (task.keywords or "").strip()
+    if not intent and not existing_kw:
+        raise ValueError("请填写研究兴趣描述或关键词")
+
+    try:
+        profile = generate_search_keywords(intent, existing_kw)
+        _append_log(run, "LLM 已生成检索关键词：", session)
+        _append_log(run, f"  精炼兴趣: {profile['intent_text'][:200]}", session)
+        _append_log(run, f"  检索关键词: {profile['keywords'][:300]}", session)
+        if profile.get("negative_keywords"):
+            _append_log(
+                run,
+                f"  排除主题词: {', '.join(profile['negative_keywords'][:8])}",
+                session,
+            )
+    except Exception as exc:
+        profile = fallback_keyword_profile(intent, existing_kw)
+        _append_log(run, f"LLM 关键词生成失败，使用任务原文（{exc}）", session)
+
+    return profile
+
+
+def _collect_candidate_pools(
+    task: CrawlTask,
+    run: CrawlTaskRun,
+    session: Session,
+    *,
+    search_profile: dict | None = None,
+) -> dict[str, list[dict]]:
     """分层候选池：arxiv=前沿预印本，openreview=顶会录用。"""
     sources = _parse_sources(task)
     _append_log(run, f"抓取数据源: {', '.join(sources)}", session)
     pools: dict[str, list[dict]] = {"arxiv": [], "openreview": [], "openalex": []}
 
     if "arxiv" in sources:
-        categories = task.categories or ""
-        if not categories.strip():
-            raise ValueError("已选择 arXiv 源，请填写 arXiv 分类")
-        raw_list = fetch_arxiv_candidates(categories)
+        profile = search_profile or {}
+        search_text = build_interest_text(
+            profile.get("intent_text") or task.intent_text or "",
+            profile.get("keywords") or task.keywords or "",
+        )
+        keyword_list = profile.get("keyword_list") or []
+        raw_list = fetch_arxiv_by_keywords(
+            search_text,
+            keyword_list=keyword_list,
+            max_results=task.max_papers_per_run * 8,
+        )
         pools["arxiv"] = [_meta_from_arxiv(raw) for raw in raw_list]
-        _append_log(run, f"[预印本池] 从 arXiv 获取候选 {len(pools['arxiv'])} 篇", session)
+        pref_cats = _parse_csv_field(task.categories or "")
+        cat_hint = f"，分类偏好(质量): {', '.join(pref_cats)}" if pref_cats else ""
+        _append_log(
+            run,
+            f"[预印本池] 关键词检索 arXiv 候选 {len(pools['arxiv'])} 篇{cat_hint}",
+            session,
+        )
 
     if "openreview" in sources:
-        venues = getattr(task, "openreview_venues", None) or ""
-        if not venues.strip():
-            raise ValueError("已选择 OpenReview 源，请选择会议/venue")
-        or_list = fetch_openreview_candidates(
-            venues,
-            max_per_venue=task.max_papers_per_run * 3,
+        profile = search_profile or {}
+        search_text = build_interest_text(
+            profile.get("intent_text") or task.intent_text or "",
+            profile.get("keywords") or task.keywords or "",
+        )
+        or_list = fetch_openreview_by_keywords(
+            search_text,
+            max_results=task.max_papers_per_run * 8,
             only_accepted=True,
         )
         for meta in or_list:
             meta["pool_type"] = "openreview"
         pools["openreview"] = or_list
+        pref_venues = _parse_csv_field(getattr(task, "openreview_venues", None) or "")
+        venue_hint = f"，会议偏好(质量): {len(pref_venues)} 个" if pref_venues else ""
         _append_log(
             run,
-            f"[顶会池] 从 OpenReview 获取已接收候选 {len(or_list)} 篇",
+            f"[顶会池] 关键词检索 OpenReview 候选 {len(or_list)} 篇{venue_hint}",
             session,
         )
 
     if "openalex" in sources:
-        search_q = build_interest_text(task.intent_text or "", task.keywords or "")
+        profile = search_profile or {}
+        search_q = build_interest_text(
+            profile.get("intent_text") or task.intent_text or "",
+            profile.get("keywords") or task.keywords or "",
+        )
         year_from = getattr(task, "openalex_year_from", None)
         year_to = getattr(task, "openalex_year_to", None)
         if year_to is None:
@@ -223,21 +368,27 @@ def _merge_existing_paper_signals(session: Session, meta: dict) -> dict:
     return merge_paper_quality_signals(meta, paper)
 
 
-def _score_candidate_pool(
+def _filter_candidate_pool(
     pool_name: str,
     candidates: list[dict],
     *,
     interest_vec: list[float],
+    match_query_text: str,
+    keyword_profile: dict,
     task: CrawlTask,
     session: Session,
     run: CrawlTaskRun,
 ) -> list[tuple[float, float, dict]]:
+    """Embedding 粗筛 → Reranker 重排 → 关键词命中 / 批量 LLM 精过滤 → 质量分。"""
     if not candidates:
         return []
 
     min_sem = _task_semantic_threshold(task)
     min_qual = _task_quality_threshold(task)
     use_quality_filter = _quality_filter_enabled(task)
+    keyword_list = keyword_profile.get("keyword_list") or []
+    negative_keywords = keyword_profile.get("negative_keywords") or []
+    intent_for_filter = keyword_profile.get("intent_text") or match_query_text
 
     for meta in candidates:
         if meta.get("source") == "openreview":
@@ -245,31 +396,65 @@ def _score_candidate_pool(
         meta.update(_merge_existing_paper_signals(session, meta))
 
     semantic_scores = batch_semantic_scores(interest_vec, candidates)
-    scored: list[tuple[float, float, dict]] = []
+    embedding_passed: list[dict] = []
     rejected_sem = 0
-    rejected_qual = 0
 
     for meta, sem in zip(candidates, semantic_scores):
         meta["semantic_score"] = sem
-        qual = compute_quality_score(meta)
-        meta["quality_score"] = qual
         if sem < min_sem:
             rejected_sem += 1
             continue
+        embedding_passed.append(meta)
+
+    _append_log(
+        run,
+        f"[{pool_name}] Embedding 语义≥{min_sem} → {len(embedding_passed)} 篇（未通过 {rejected_sem}）",
+        session,
+    )
+
+    if not embedding_passed:
+        return []
+
+    reranked = rerank_candidates(match_query_text, embedding_passed)
+    _append_log(run, f"[{pool_name}] Reranker 重排 {len(reranked)} 篇", session)
+
+    ranked_metas = [m for _, m in reranked]
+    relevance_kept, rel_stats = apply_keyword_and_llm_filter(
+        intent_text=intent_for_filter,
+        keyword_list=keyword_list,
+        negative_keywords=negative_keywords,
+        ranked_candidates=ranked_metas,
+    )
+    _append_log(
+        run,
+        f"[{pool_name}] 关键词直通 {rel_stats['keyword_pass']} 篇，"
+        f"LLM 过滤保留 {rel_stats['llm_pass']} / 拒绝 {rel_stats['llm_reject']} 篇，"
+        f"排除主题词剔除 {rel_stats['negative_reject']} 篇",
+        session,
+    )
+
+    scored: list[tuple[float, float, dict]] = []
+    rejected_qual = 0
+    for meta in relevance_kept:
+        qual = compute_quality_score(meta, task=task)
+        meta["quality_score"] = qual
         if use_quality_filter and qual < min_qual:
             rejected_qual += 1
             continue
+        sem = float(meta.get("semantic_score") or 0)
         scored.append((sem, qual, meta))
 
-    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    scored.sort(
+        key=lambda x: (x[2].get("rerank_score") or x[0], x[1]),
+        reverse=True,
+    )
     scored = scored[: task.max_papers_per_run]
+
     qual_hint = f"，质量≥{min_qual}" if use_quality_filter else "（未启用质量过滤）"
-    reject_detail = f"语义未通过 {rejected_sem} 篇"
-    if use_quality_filter:
-        reject_detail += f"，质量未通过 {rejected_qual} 篇"
     _append_log(
         run,
-        f"[{pool_name}] 门槛: 语义≥{min_sem}{qual_hint} → 入选 {len(scored)} 篇（{reject_detail}）",
+        f"[{pool_name}] 最终入选 {len(scored)} 篇{qual_hint}"
+        + (f"（质量未通过 {rejected_qual} 篇）" if rejected_qual else ""),
         session,
     )
     return scored
@@ -279,6 +464,7 @@ def _score_verified_suggestions(
     candidates: list[dict],
     *,
     interest_vec: list[float],
+    task: CrawlTask,
     session: Session,
     run: CrawlTaskRun,
 ) -> list[tuple[float, float, dict]]:
@@ -295,7 +481,7 @@ def _score_verified_suggestions(
     scored: list[tuple[float, float, dict]] = []
     for meta, sem in zip(candidates, semantic_scores):
         meta["semantic_score"] = sem
-        qual = compute_quality_score(meta)
+        qual = compute_quality_score(meta, task=task)
         meta["quality_score"] = qual
         scored.append((sem, qual, meta))
 
@@ -338,7 +524,7 @@ def _merge_verified_suggestions(
         return scored
 
     verified_scored = _score_verified_suggestions(
-        verified_metas, interest_vec=interest_vec, session=session, run=run,
+        verified_metas, interest_vec=interest_vec, task=task, session=session, run=run,
     )
     seen = {item[2]["paper_id"] for item in scored}
     for sem, qual, meta in verified_scored:
@@ -434,6 +620,7 @@ def execute_crawl_run(task_id: int, trigger_type: str = "manual") -> int:
     session.commit()
     session.refresh(run)
     run_id = run.id
+    _arm_run_timeout(task_id)
 
     try:
         _run_crawl(session, task_id, run)
@@ -443,6 +630,10 @@ def execute_crawl_run(task_id: int, trigger_type: str = "manual") -> int:
         run.status = "cancelled"
         run.progress = run.progress or 0
         _append_log(run, "任务已被用户取消", session)
+    except TaskTimeoutError as exc:
+        logger.warning("crawl run timeout task_id=%s", task_id)
+        run.status = "failed"
+        _append_log(run, str(exc), session)
     except Exception as exc:
         logger.exception("crawl run failed task_id=%s", task_id)
         run.status = "failed"
@@ -460,6 +651,8 @@ def execute_crawl_run(task_id: int, trigger_type: str = "manual") -> int:
         with _lock:
             _running_tasks.discard(task_id)
             _cancel_requested.discard(task_id)
+            _timeout_requested.discard(task_id)
+        expire_stale_tasks()
 
     return run_id
 
@@ -489,24 +682,31 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
     }
 
     _append_log(run, f"开始执行任务: {task.name}（入库目标: {'公开文献' if task.visibility == 'public' else '私有文献'}）", session)
+    mode = getattr(task, "crawl_mode", None) or ("smart" if task.enable_smart_planning else "latest")
+    _append_log(run, f"抓取模式: {CRAWL_MODE_LABELS.get(mode, mode)}", session)
     if getattr(task, "enable_smart_planning", False) and getattr(task, "plan_summary", ""):
         _append_log(run, f"智能规划摘要: {task.plan_summary}", session)
-    _append_log(run, "匹配模式: Embedding 语义相关分 + 独立质量分", session)
+    _append_log(run, "匹配模式: LLM 关键词 → Embedding → Reranker → 关键词/LLM 精过滤 + 质量分", session)
 
-    _check_cancelled(task_id)
+    _check_runtime_limits(task_id, run)
 
-    run.progress = 10
+    keyword_profile = _resolve_keyword_profile(task, run, session)
+
+    run.progress = 8
     session.add(run)
     session.commit()
 
-    pools = _collect_candidate_pools(task, run, session)
+    pools = _collect_candidate_pools(task, run, session, search_profile=keyword_profile)
     stats["candidates"] = sum(len(v) for v in pools.values())
 
-    _check_cancelled(task_id)
+    _check_runtime_limits(task_id, run)
 
     except_translation = False
     try:
-        match_query = prepare_crawl_match_query(task.intent_text or "", task.keywords or "")
+        match_query = prepare_crawl_match_query(
+            keyword_profile.get("intent_text") or task.intent_text or "",
+            keyword_profile.get("keywords") or task.keywords or "",
+        )
     except Exception as exc:
         except_translation = True
         match_query = {
@@ -531,29 +731,33 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
             _append_log(run, f"  关键词译文: {keywords_for_match}", session)
 
     interest_vec = encode_interest_vector(intent_for_match, keywords_for_match)
+    match_query_text = build_interest_text(intent_for_match, keywords_for_match)
     _append_log(run, "已预计算兴趣+关键词联合 Embedding 向量", session)
 
     run.progress = 25
     session.add(run)
     session.commit()
 
+    pool_filter_kwargs = dict(
+        interest_vec=interest_vec,
+        match_query_text=match_query_text,
+        keyword_profile=keyword_profile,
+        task=task,
+        session=session,
+        run=run,
+    )
+
     scored: list[tuple[float, float, dict]] = []
     if pools.get("arxiv"):
-        arxiv_scored = _score_candidate_pool(
-            "预印本池", pools["arxiv"], interest_vec=interest_vec, task=task, session=session, run=run,
-        )
+        arxiv_scored = _filter_candidate_pool("预印本池", pools["arxiv"], **pool_filter_kwargs)
         stats["arxiv_matched"] = len(arxiv_scored)
         scored.extend(arxiv_scored)
     if pools.get("openreview"):
-        or_scored = _score_candidate_pool(
-            "顶会池", pools["openreview"], interest_vec=interest_vec, task=task, session=session, run=run,
-        )
+        or_scored = _filter_candidate_pool("顶会池", pools["openreview"], **pool_filter_kwargs)
         stats["openreview_matched"] = len(or_scored)
         scored.extend(or_scored)
     if pools.get("openalex"):
-        oa_scored = _score_candidate_pool(
-            "综合期刊/会议池", pools["openalex"], interest_vec=interest_vec, task=task, session=session, run=run,
-        )
+        oa_scored = _filter_candidate_pool("综合期刊/会议池", pools["openalex"], **pool_filter_kwargs)
         stats["openalex_matched"] = len(oa_scored)
         scored.extend(oa_scored)
 
@@ -569,7 +773,7 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
     )
     stats["matched"] = len(scored)
 
-    _check_cancelled(task_id)
+    _check_runtime_limits(task_id, run)
 
     run.progress = 40
     session.add(run)
@@ -579,7 +783,7 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
     new_paper_ids: list[str] = []
 
     for idx, (sem_score, qual_score, meta) in enumerate(scored):
-        _check_cancelled(task_id)
+        _check_runtime_limits(task_id, run)
         paper_id = meta["paper_id"]
         pool_type = meta.get("pool_type") or meta.get("source", "arxiv")
 

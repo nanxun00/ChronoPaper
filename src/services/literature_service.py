@@ -304,6 +304,40 @@ def list_private_papers(
     return {"total": total, "page": page, "page_size": page_size, "papers": papers}
 
 
+def enrich_cited_literature(db: Session, cited: list[dict] | None) -> list[dict]:
+    """补全引用文献字段，确保标题/摘要等可用于对话注入。"""
+    if not cited:
+        return []
+    enriched: list[dict] = []
+    for item in cited:
+        data = dict(item)
+        paper_id = data.get("arxiv_id") or data.get("paper_id")
+        if not paper_id:
+            enriched.append(data)
+            continue
+        paper = db.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+        if not paper:
+            enriched.append(data)
+            continue
+        full = paper.to_dict()
+        for key in (
+            "title",
+            "abstract",
+            "authors",
+            "arxiv_id",
+            "source",
+            "categories",
+            "published_at",
+            "venue",
+        ):
+            current = data.get(key)
+            if current is None or (isinstance(current, str) and not current.strip()):
+                if full.get(key) is not None:
+                    data[key] = full[key]
+        enriched.append(data)
+    return enriched
+
+
 def get_paper_detail(db: Session, arxiv_id: str, user_id: str) -> dict | None:
     paper = db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
     if not paper:

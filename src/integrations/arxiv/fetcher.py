@@ -37,6 +37,65 @@ def _normalize_categories(categories: list[str] | str | None) -> list[str]:
     return [c.strip() for c in categories if c and c.strip()]
 
 
+def build_arxiv_search_query(search_text: str, keyword_list: list[str] | None = None) -> str:
+    """将 LLM 关键词/兴趣描述转为 arXiv API 查询（OR 组合）。"""
+    terms: list[str] = []
+    if keyword_list:
+        terms.extend(keyword_list)
+    if search_text:
+        terms.extend(
+            t.strip()
+            for t in search_text.replace("，", ",").replace(",", " ").split()
+            if t.strip()
+        )
+    seen: set[str] = set()
+    unique: list[str] = []
+    for term in terms:
+        key = term.lower().strip()
+        if len(key) < 2 or key in seen:
+            continue
+        seen.add(key)
+        unique.append(term.strip())
+    if not unique:
+        raise ValueError("arXiv 关键词检索需要兴趣描述或检索关键词")
+    clauses: list[str] = []
+    for term in unique[:12]:
+        safe = term.replace('"', " ").strip()
+        if " " in safe:
+            clauses.append(f'all:"{safe}"')
+        else:
+            clauses.append(f"all:{safe}")
+    return " OR ".join(clauses)
+
+
+def fetch_arxiv_by_keywords(
+    search_text: str,
+    *,
+    keyword_list: list[str] | None = None,
+    max_results: int = 300,
+) -> list[ArxivResult]:
+    """按关键词检索 arXiv（不再按分类 RSS 拉全量）。"""
+    query = build_arxiv_search_query(search_text, keyword_list)
+    client = arxiv.Client(num_retries=5, delay_seconds=5, page_size=50)
+    search = arxiv.Search(
+        query=query,
+        max_results=max_results,
+        sort_by=arxiv.SortCriterion.SubmittedDate,
+        sort_order=arxiv.SortOrder.Descending,
+    )
+    results: list[ArxivResult] = []
+    for attempt in range(3):
+        try:
+            results = list(client.results(search))
+            break
+        except arxiv.HTTPError as exc:
+            if exc.status == 429 and attempt < 2:
+                sleep(15 * (attempt + 1))
+            else:
+                raise
+    return results
+
+
 def fetch_arxiv_candidates(categories: list[str] | str, *, debug_limit: int | None = None) -> list[ArxivResult]:
     cats = _normalize_categories(categories)
     if not cats:

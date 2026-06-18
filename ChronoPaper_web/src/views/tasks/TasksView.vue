@@ -90,174 +90,250 @@
       @ok="handleCreate"
     >
       <a-form layout="vertical">
-        <a-form-item label="智能规划">
-          <a-switch
-            v-model:checked="createForm.enable_smart_planning"
-            checked-children="开启"
-            un-checked-children="关闭"
+        <a-form-item label="抓取模式" required>
+          <a-radio-group
+            v-model:value="createForm.crawl_mode"
+            class="crawl-mode-group"
+            @change="onCrawlModeChange"
+          >
+            <a-radio
+              v-for="opt in CRAWL_MODE_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
+              class="crawl-mode-option"
+            >
+              <span class="crawl-mode-label">{{ opt.label }}</span>
+              <span class="crawl-mode-desc">{{ opt.description }}</span>
+            </a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item label="任务名称">
+          <a-input
+            v-model:value="createForm.name"
+            placeholder="可选，留空将自动命名为「抓取任务 #ID」"
           />
-          <span class="field-hint">开启后由大模型从 arXiv / OpenReview / OpenAlex 中自动选择数据源并规划参数</span>
         </a-form-item>
-        <a-form-item label="任务名称" required>
-          <a-input v-model:value="createForm.name" placeholder="例如：多模态医疗影像每日抓取" />
-        </a-form-item>
-        <a-form-item :label="createForm.enable_smart_planning ? '研究领域描述' : '研究兴趣描述'" required>
+        <a-form-item :label="createForm.crawl_mode === 'smart' ? '研究领域描述' : '研究兴趣描述'" required>
           <a-textarea
             v-model:value="createForm.intent_text"
             :rows="4"
             :placeholder="
-              createForm.enable_smart_planning
+              createForm.crawl_mode === 'smart'
                 ? '用自然语言描述你想跟踪的研究领域，例如：大模型 Agent 的长期记忆与检索增强'
                 : '用一段话描述你希望抓取的文章领域、方向与细节，例如：关注多模态大模型在医疗影像诊断中的应用'
             "
-            @blur="!createForm.enable_smart_planning && refreshCrawlTranslationPreview()"
+            @blur="createForm.crawl_mode !== 'smart' && refreshCrawlTranslationPreview()"
           />
         </a-form-item>
-        <template v-if="!createForm.enable_smart_planning">
-        <a-alert
-          v-if="crawlTranslatePreview.translated"
-          type="info"
-          show-icon
-          class="translate-preview-alert"
-          message="已检测到中文，执行时将使用以下英文进行匹配"
-        >
-          <template #description>
-            <p v-if="crawlTranslatePreview.intent_text">
-              <strong>兴趣译文：</strong>{{ crawlTranslatePreview.intent_text }}
-            </p>
-            <p v-if="crawlTranslatePreview.keywords">
-              <strong>关键词译文：</strong>{{ crawlTranslatePreview.keywords }}
-            </p>
-          </template>
-        </a-alert>
-        <a-form-item label="抓取数据源" required>
-          <a-checkbox-group v-model:value="createForm.sources" style="width: 100%">
-            <a-row :gutter="[8, 8]">
-              <a-col v-for="opt in CRAWL_SOURCE_OPTIONS" :key="opt.value" :span="24">
-                <a-checkbox :value="opt.value">
-                  <span>{{ opt.label }}</span>
-                  <span class="source-hint"> — {{ opt.description }}</span>
-                </a-checkbox>
-              </a-col>
-            </a-row>
-          </a-checkbox-group>
-        </a-form-item>
-        <a-form-item v-if="createForm.sources.includes('arxiv')" label="arXiv 分类" required>
-          <a-select
-            v-model:value="createForm.categories"
-            mode="multiple"
-            placeholder="请选择 arXiv 分类（可多选）"
-            style="width: 100%"
-            show-search
-            :filter-option="filterArxivCategory"
-            :max-tag-count="4"
-          >
-            <a-select-opt-group
-              v-for="group in ARXIV_CATEGORY_GROUPS"
-              :key="group.label"
-              :label="group.label"
-            >
-              <a-select-option
-                v-for="opt in group.options"
-                :key="opt.value"
-                :value="opt.value"
-              >
-                {{ opt.label }}
-              </a-select-option>
-            </a-select-opt-group>
-          </a-select>
-        </a-form-item>
-        <a-form-item v-if="createForm.sources.includes('openreview')" label="OpenReview 会议" required>
-          <a-select
-            v-model:value="createForm.openreview_venues"
-            mode="multiple"
-            placeholder="请选择会议（可多选）"
-            style="width: 100%"
-            show-search
-            :filter-option="filterOpenReviewVenue"
-            :max-tag-count="3"
-          >
-            <a-select-opt-group
-              v-for="group in OPENREVIEW_VENUE_GROUPS"
-              :key="group.label"
-              :label="group.label"
-            >
-              <a-select-option
-                v-for="opt in group.options"
-                :key="opt.value"
-                :value="opt.value"
-              >
-                {{ opt.label }}
-              </a-select-option>
-            </a-select-opt-group>
-          </a-select>
-        </a-form-item>
-        <a-form-item v-if="createForm.sources.includes('openalex')" label="OpenAlex 综合抓取" required>
-          <a-form-item label="文献类型" :style="{ marginBottom: '12px' }">
-            <a-checkbox-group v-model:value="createForm.openalex_venue_types">
-              <a-checkbox v-for="opt in OPENALEX_VENUE_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
-                {{ opt.label }}
-              </a-checkbox>
-            </a-checkbox-group>
-          </a-form-item>
-          <a-form-item label="CCF 分级" :style="{ marginBottom: '12px' }">
-            <a-checkbox-group v-model:value="createForm.openalex_ccf_ranks">
-              <a-checkbox v-for="opt in OPENALEX_CCF_RANK_OPTIONS" :key="opt.value" :value="opt.value">
-                {{ opt.label }}
-              </a-checkbox>
-            </a-checkbox-group>
-          </a-form-item>
-          <a-row :gutter="12">
-            <a-col :span="12">
-              <a-form-item label="起始年份">
-                <a-input-number v-model:value="createForm.openalex_year_from" :min="1990" :max="CURRENT_YEAR" style="width: 100%" />
-              </a-form-item>
-            </a-col>
-            <a-col :span="12">
-              <a-form-item label="结束年份">
-                <a-input-number v-model:value="createForm.openalex_year_to" :min="1990" :max="CURRENT_YEAR" style="width: 100%" />
-              </a-form-item>
-            </a-col>
-          </a-row>
-          <a-form-item label="会议/期刊名称（可选）">
-            <a-input
-              v-model:value="createForm.openalex_venue_names"
-              placeholder="逗号分隔，如 NeurIPS, IEEE TPAMI"
-            />
-          </a-form-item>
-          <p class="field-hint">按兴趣描述+关键词检索 OpenAlex，自动匹配 CCF 分级与期刊指标参与质量打分</p>
-        </a-form-item>
-        <a-form-item label="关键词（可选）">
-          <a-input
-            v-model:value="createForm.keywords"
-            placeholder="逗号分隔，用于加强匹配"
-            @blur="refreshCrawlTranslationPreview"
-          />
-        </a-form-item>
-        </template>
         <a-form-item label="入库位置" required>
           <a-radio-group v-model:value="createForm.visibility">
             <a-radio value="public">公开文献列表（全员可见）</a-radio>
             <a-radio value="private">私有文献列表（仅自己可见）</a-radio>
           </a-radio-group>
         </a-form-item>
-        <a-form-item label="语义相关分阈值">
-          <a-slider v-model:value="createForm.min_semantic_score" :min="0" :max="100" />
-          <span class="field-hint">Embedding 余弦相似度映射，建议 55–65</span>
+        <a-form-item label="执行方式" required>
+          <a-radio-group v-model:value="createForm.execution_mode" class="execution-mode-group">
+            <a-radio value="once">单次执行（创建后立即运行一次）</a-radio>
+            <a-radio value="daily">每日定时执行</a-radio>
+          </a-radio-group>
         </a-form-item>
-        <a-form-item label="质量分过滤">
-          <a-switch v-model:checked="createForm.enable_quality_filter" checked-children="开启" un-checked-children="关闭" />
-          <span class="field-hint">关闭时仅按语义相关排序（适合追最新预印本）</span>
-        </a-form-item>
-        <a-form-item v-if="createForm.enable_quality_filter" label="质量分阈值">
-          <a-slider v-model:value="createForm.min_quality_score" :min="0" :max="100" />
-        </a-form-item>
-        <a-form-item label="单次最多入选">
-          <a-input-number v-model:value="createForm.max_papers_per_run" :min="1" :max="200" style="width: 100%" />
-        </a-form-item>
-        <a-form-item label="每日定时执行（可选）">
+        <a-form-item v-if="createForm.execution_mode === 'daily'" label="每日执行时间" required>
           <a-time-picker v-model:value="createForm.schedule" format="HH:mm" style="width: 100%" />
+          <span class="field-hint">任务将在每天该时刻自动运行（Asia/Shanghai）</span>
         </a-form-item>
+
+        <a-collapse v-model:activeKey="advancedOpenKeys" class="advanced-collapse">
+          <a-collapse-panel key="advanced" header="高级设置 / 手动设计">
+            <p class="field-hint advanced-intro">
+              可在此自定义数据源与阈值；修改后将记为「手动设计」配置。
+            </p>
+            <template v-if="createForm.crawl_mode !== 'smart'">
+              <a-alert
+                v-if="crawlTranslatePreview.translated"
+                type="info"
+                show-icon
+                class="translate-preview-alert"
+                message="已检测到中文，执行时将使用以下英文进行匹配"
+              >
+                <template #description>
+                  <p v-if="crawlTranslatePreview.intent_text">
+                    <strong>兴趣译文：</strong>{{ crawlTranslatePreview.intent_text }}
+                  </p>
+                  <p v-if="crawlTranslatePreview.keywords">
+                    <strong>关键词译文：</strong>{{ crawlTranslatePreview.keywords }}
+                  </p>
+                </template>
+              </a-alert>
+              <a-form-item label="抓取数据源" required>
+                <a-checkbox-group
+                  v-model:value="createForm.sources"
+                  style="width: 100%"
+                  @change="markManualMode"
+                >
+                  <a-row :gutter="[8, 8]">
+                    <a-col v-for="opt in CRAWL_SOURCE_OPTIONS" :key="opt.value" :span="24">
+                      <a-checkbox :value="opt.value">
+                        <span>{{ opt.label }}</span>
+                        <span class="source-hint"> — {{ opt.description }}</span>
+                      </a-checkbox>
+                    </a-col>
+                  </a-row>
+                </a-checkbox-group>
+              </a-form-item>
+              <a-form-item v-if="createForm.sources.includes('arxiv')" label="arXiv 分类偏好（质量过滤）">
+                <a-select
+                  v-model:value="createForm.categories"
+                  mode="multiple"
+                  placeholder="可选：偏好分类，用于质量分加权（不参与检索）"
+                  style="width: 100%"
+                  show-search
+                  :filter-option="filterArxivCategory"
+                  :max-tag-count="4"
+                  @change="markManualMode"
+                >
+                  <a-select-opt-group
+                    v-for="group in ARXIV_CATEGORY_GROUPS"
+                    :key="group.label"
+                    :label="group.label"
+                  >
+                    <a-select-option
+                      v-for="opt in group.options"
+                      :key="opt.value"
+                      :value="opt.value"
+                    >
+                      {{ opt.label }}
+                    </a-select-option>
+                  </a-select-opt-group>
+                </a-select>
+              </a-form-item>
+              <a-form-item v-if="createForm.sources.includes('openreview')" label="OpenReview 会议偏好（质量过滤）">
+                <a-select
+                  v-model:value="createForm.openreview_venues"
+                  mode="multiple"
+                  placeholder="可选：偏好顶会，用于质量分加权（不参与检索）"
+                  style="width: 100%"
+                  show-search
+                  :filter-option="filterOpenReviewVenue"
+                  :max-tag-count="3"
+                  @change="markManualMode"
+                >
+                  <a-select-opt-group
+                    v-for="group in OPENREVIEW_VENUE_GROUPS"
+                    :key="group.label"
+                    :label="group.label"
+                  >
+                    <a-select-option
+                      v-for="opt in group.options"
+                      :key="opt.value"
+                      :value="opt.value"
+                    >
+                      {{ opt.label }}
+                    </a-select-option>
+                  </a-select-opt-group>
+                </a-select>
+              </a-form-item>
+              <a-form-item v-if="createForm.sources.includes('openalex')" label="OpenAlex 综合抓取" required>
+                <a-form-item label="文献类型" :style="{ marginBottom: '12px' }">
+                  <a-checkbox-group
+                    v-model:value="createForm.openalex_venue_types"
+                    @change="markManualMode"
+                  >
+                    <a-checkbox v-for="opt in OPENALEX_VENUE_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </a-checkbox>
+                  </a-checkbox-group>
+                </a-form-item>
+                <a-form-item label="CCF 分级" :style="{ marginBottom: '12px' }">
+                  <a-checkbox-group
+                    v-model:value="createForm.openalex_ccf_ranks"
+                    @change="markManualMode"
+                  >
+                    <a-checkbox v-for="opt in OPENALEX_CCF_RANK_OPTIONS" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </a-checkbox>
+                  </a-checkbox-group>
+                </a-form-item>
+                <a-row :gutter="12">
+                  <a-col :span="12">
+                    <a-form-item label="起始年份">
+                      <a-input-number
+                        v-model:value="createForm.openalex_year_from"
+                        :min="1990"
+                        :max="CURRENT_YEAR"
+                        style="width: 100%"
+                        @change="markManualMode"
+                      />
+                    </a-form-item>
+                  </a-col>
+                  <a-col :span="12">
+                    <a-form-item label="结束年份">
+                      <a-input-number
+                        v-model:value="createForm.openalex_year_to"
+                        :min="1990"
+                        :max="CURRENT_YEAR"
+                        style="width: 100%"
+                        @change="markManualMode"
+                      />
+                    </a-form-item>
+                  </a-col>
+                </a-row>
+                <a-form-item label="会议/期刊名称（可选）">
+                  <a-input
+                    v-model:value="createForm.openalex_venue_names"
+                    placeholder="逗号分隔，如 NeurIPS, IEEE TPAMI"
+                    @change="markManualMode"
+                  />
+                </a-form-item>
+                <p class="field-hint">按兴趣描述+关键词检索 OpenAlex，自动匹配 CCF 分级与期刊指标参与质量打分</p>
+              </a-form-item>
+              <a-form-item label="关键词（可选）">
+                <a-input
+                  v-model:value="createForm.keywords"
+                  placeholder="逗号分隔，用于加强匹配"
+                  @blur="refreshCrawlTranslationPreview"
+                />
+              </a-form-item>
+            </template>
+            <a-form-item v-if="createForm.crawl_mode !== 'smart'" label="语义相关分阈值">
+              <a-slider
+                v-model:value="createForm.min_semantic_score"
+                :min="0"
+                :max="100"
+                @change="markManualMode"
+              />
+              <span class="field-hint">Embedding 余弦相似度映射，建议 55–65</span>
+            </a-form-item>
+            <a-form-item v-if="createForm.crawl_mode !== 'smart'" label="质量分过滤">
+              <a-switch
+                v-model:checked="createForm.enable_quality_filter"
+                checked-children="开启"
+                un-checked-children="关闭"
+                @change="markManualMode"
+              />
+              <span class="field-hint">关闭时仅按语义相关排序（适合追最新预印本）</span>
+            </a-form-item>
+            <a-form-item
+              v-if="createForm.crawl_mode !== 'smart' && createForm.enable_quality_filter"
+              label="质量分阈值"
+            >
+              <a-slider
+                v-model:value="createForm.min_quality_score"
+                :min="0"
+                :max="100"
+                @change="markManualMode"
+              />
+            </a-form-item>
+            <a-form-item label="单次最多入选">
+              <a-input-number
+                v-model:value="createForm.max_papers_per_run"
+                :min="1"
+                :max="200"
+                style="width: 100%"
+                @change="markManualMode"
+              />
+            </a-form-item>
+          </a-collapse-panel>
+        </a-collapse>
       </a-form>
     </a-modal>
 
@@ -269,7 +345,13 @@
           <a-descriptions-item label="入库位置">{{ detailItem.visibility_label }}</a-descriptions-item>
           <a-descriptions-item label="状态">{{ statusLabel(detailItem.status) }}</a-descriptions-item>
           <a-descriptions-item label="进度">{{ detailItem.progress }}%</a-descriptions-item>
-          <a-descriptions-item v-if="detailItem.enable_smart_planning" label="规划模式">
+          <a-descriptions-item label="执行方式">
+            {{ detailItem.execution_mode_label || '—' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="抓取模式">
+            {{ detailItem.crawl_mode_label || '—' }}
+          </a-descriptions-item>
+          <a-descriptions-item v-if="detailItem.enable_smart_planning" label="规划状态">
             {{ planningStatusLabel(detailItem.planning_status) }}
           </a-descriptions-item>
           <a-descriptions-item
@@ -278,11 +360,11 @@
           >
             {{ detailItem.planning_error || '—' }}
           </a-descriptions-item>
-          <template v-if="!detailItem.enable_smart_planning">
+          <template v-if="detailItem.crawl_mode !== 'smart' && !detailItem.enable_smart_planning">
           <a-descriptions-item label="数据源">{{ detailItem.sources || 'arxiv' }}</a-descriptions-item>
           <a-descriptions-item label="兴趣描述">{{ detailItem.intent_text || '—' }}</a-descriptions-item>
-          <a-descriptions-item label="arXiv 分类">{{ detailItem.categories || '—' }}</a-descriptions-item>
-          <a-descriptions-item label="OpenReview">{{ detailItem.openreview_venues || '—' }}</a-descriptions-item>
+          <a-descriptions-item label="arXiv 分类偏好">{{ detailItem.categories || '—' }}</a-descriptions-item>
+          <a-descriptions-item label="OpenReview 会议偏好">{{ detailItem.openreview_venues || '—' }}</a-descriptions-item>
           <a-descriptions-item v-if="(detailItem.sources || '').includes('openalex')" label="OpenAlex CCF">
             {{ detailItem.openalex_ccf_ranks || '—' }}
           </a-descriptions-item>
@@ -333,6 +415,10 @@ import {
   OPENALEX_CCF_RANK_OPTIONS,
   OPENALEX_VENUE_TYPE_OPTIONS,
 } from '@/constants/openalexVenues'
+import {
+  applyCrawlModePreset,
+  CRAWL_MODE_OPTIONS,
+} from '@/constants/crawlModes'
 import { previewCrawlQueryTranslation } from '@/api/translate'
 
 const CJK_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/
@@ -343,11 +429,14 @@ const creating = ref(false)
 const createOpen = ref(false)
 const detailOpen = ref(false)
 const detailItem = ref(null)
+const advancedOpenKeys = ref([])
 
 const latestRunStats = computed(() => detailItem.value?.runs?.[0]?.stats || null)
 let pollTimer = null
 
 const defaultCreateForm = () => ({
+  crawl_mode: 'latest',
+  execution_mode: 'once',
   name: '',
   intent_text: '',
   sources: ['arxiv'],
@@ -365,10 +454,10 @@ const defaultCreateForm = () => ({
   enable_quality_filter: false,
   enable_smart_planning: false,
   max_papers_per_run: 50,
-  schedule: null,
+  schedule: dayjs('08:30', 'HH:mm'),
 })
 
-const createForm = ref(defaultCreateForm())
+const createForm = ref(applyCrawlModePreset(defaultCreateForm(), 'latest'))
 
 const crawlTranslatePreview = ref({
   translated: false,
@@ -496,9 +585,29 @@ const fetchTasks = async () => {
 }
 
 const openCreateModal = () => {
-  createForm.value = defaultCreateForm()
+  createForm.value = applyCrawlModePreset(defaultCreateForm(), 'latest')
+  advancedOpenKeys.value = []
   resetCrawlTranslatePreview()
   createOpen.value = true
+}
+
+const onCrawlModeChange = () => {
+  const { name, intent_text, visibility, schedule, keywords } = createForm.value
+  const mode = createForm.value.crawl_mode
+  createForm.value = {
+    ...applyCrawlModePreset(
+      { ...defaultCreateForm(), name, intent_text, visibility, schedule, keywords },
+      mode,
+    ),
+    keywords,
+  }
+  resetCrawlTranslatePreview()
+}
+
+const markManualMode = () => {
+  if (createForm.value.crawl_mode === 'smart') return
+  createForm.value.crawl_mode = 'manual'
+  createForm.value.enable_smart_planning = false
 }
 
 const filterArxivCategory = (input, option) => {
@@ -518,25 +627,14 @@ const filterOpenReviewVenue = (input, option) => {
 }
 
 const handleCreate = async () => {
-  if (!createForm.value.name?.trim()) {
-    message.warning('请填写任务名称')
-    return Promise.reject()
-  }
   if (!createForm.value.intent_text?.trim()) {
-    message.warning(createForm.value.enable_smart_planning ? '请填写研究领域描述' : '请填写研究兴趣描述')
+    message.warning(createForm.value.crawl_mode === 'smart' ? '请填写研究领域描述' : '请填写研究兴趣描述')
     return Promise.reject()
   }
-  if (!createForm.value.enable_smart_planning) {
+  const isSmart = createForm.value.crawl_mode === 'smart'
+  if (!isSmart) {
     if (!createForm.value.sources?.length) {
       message.warning('请至少选择一种抓取数据源')
-      return Promise.reject()
-    }
-    if (createForm.value.sources.includes('arxiv') && !createForm.value.categories?.length) {
-      message.warning('请选择至少一个 arXiv 分类')
-      return Promise.reject()
-    }
-    if (createForm.value.sources.includes('openreview') && !createForm.value.openreview_venues?.length) {
-      message.warning('请选择至少一个 OpenReview 会议')
       return Promise.reject()
     }
     if (createForm.value.sources.includes('openalex')) {
@@ -551,24 +649,33 @@ const handleCreate = async () => {
     }
   }
 
+  if (createForm.value.execution_mode === 'daily' && !createForm.value.schedule) {
+    message.warning('请选择每日执行时间')
+    return Promise.reject()
+  }
+
   creating.value = true
-  const schedule_time = createForm.value.schedule
-    ? dayjs(createForm.value.schedule).format('HH:mm')
-    : null
+  const auto_run = createForm.value.execution_mode === 'once'
+  const schedule_time =
+    createForm.value.execution_mode === 'daily' && createForm.value.schedule
+      ? dayjs(createForm.value.schedule).format('HH:mm')
+      : null
 
   try {
     const payload = {
-      name: createForm.value.name.trim(),
+      name: createForm.value.name?.trim() || '',
       intent_text: createForm.value.intent_text.trim(),
       visibility: createForm.value.visibility,
       min_semantic_score: createForm.value.min_semantic_score,
       min_quality_score: createForm.value.min_quality_score,
       enable_quality_filter: createForm.value.enable_quality_filter,
-      enable_smart_planning: createForm.value.enable_smart_planning,
+      enable_smart_planning: isSmart,
+      crawl_mode: createForm.value.crawl_mode,
       max_papers_per_run: createForm.value.max_papers_per_run,
       schedule_time,
+      auto_run,
     }
-    if (!createForm.value.enable_smart_planning) {
+    if (!isSmart) {
       Object.assign(payload, {
         sources: createForm.value.sources.join(','),
         categories: createForm.value.categories.join(', '),
@@ -581,17 +688,18 @@ const handleCreate = async () => {
         keywords: createForm.value.keywords.trim(),
       })
     }
-    await apiJson('/api/tasks/crawl', {
+    const res = await apiJson('/api/tasks/crawl', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
-    const wasSmartPlan = createForm.value.enable_smart_planning
+    const wasSmartPlan = isSmart
+    const runOnce = createForm.value.execution_mode === 'once'
     createOpen.value = false
-    createForm.value = defaultCreateForm()
+    createForm.value = applyCrawlModePreset(defaultCreateForm(), 'latest')
     resetCrawlTranslatePreview()
-    message.success(wasSmartPlan ? '任务已创建，智能规划在后台进行' : '任务创建成功')
+    message.success(res.message || (wasSmartPlan ? '任务已创建' : '任务创建成功'))
     await fetchTasks()
-    if (wasSmartPlan) {
+    if (wasSmartPlan || runOnce) {
       startPolling()
     }
   } catch (err) {
@@ -715,6 +823,73 @@ onUnmounted(() => {
     margin: 4px 0 0;
     line-height: 1.6;
   }
+}
+
+.execution-mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.advanced-collapse {
+  margin-top: 8px;
+  background: transparent;
+  border: none;
+
+  :deep(.ant-collapse-item) {
+    border: 1px solid var(--gray-300);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+}
+
+.advanced-intro {
+  margin: 0 0 16px;
+}
+
+.crawl-mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.crawl-mode-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--gray-300);
+  border-radius: 8px;
+  background: #fafafa;
+  height: auto;
+
+  :deep(.ant-radio) {
+    align-self: flex-start;
+    margin-top: 2px;
+  }
+
+  &.ant-radio-wrapper-checked {
+    border-color: var(--main-color);
+    background: #f0f9fb;
+  }
+}
+
+.crawl-mode-label {
+  display: block;
+  font-weight: 600;
+  color: var(--gray-900);
+  margin-bottom: 4px;
+}
+
+.crawl-mode-desc {
+  display: block;
+  font-size: 12px;
+  color: var(--gray-700);
+  line-height: 1.5;
+  white-space: normal;
 }
 
 .field-hint {
