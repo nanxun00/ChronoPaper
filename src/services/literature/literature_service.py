@@ -27,6 +27,30 @@ from src.utils.pdf_metadata import abstract_from_markdown, metadata_from_markdow
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
+def resolve_pipeline_status(paper: Paper, entry: LiteratureEntry) -> str:
+    """文献处理流水线状态（供前端「状态」列展示）。"""
+    review = entry.review_status or "approved"
+    if review == "pending":
+        return "pending_review"
+    if review == "rejected":
+        return "rejected"
+
+    ps = (paper.parse_status or "pending").lower()
+    if ps == "parsing":
+        return "parsing"
+    if ps == "indexing":
+        return "indexing"
+    if ps == "indexed":
+        return "indexed"
+    if ps == "parsed":
+        return "indexing"
+    if ps == "parse_failed":
+        return "parse_failed"
+    if ps == "index_failed":
+        return "index_failed"
+    return "waiting_parse"
+
+
 def _is_pdf_content(content: bytes) -> bool:
     return len(content) >= 4 and content[:4] == b"%PDF"
 
@@ -192,6 +216,7 @@ def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
     data["pool_type"] = entry.pool_type or paper.source or "arxiv"
     data["visibility"] = entry.visibility
     data["review_status"] = entry.review_status or "approved"
+    data["pipeline_status"] = resolve_pipeline_status(paper, entry)
     data["listed_at"] = entry.created_at.strftime("%Y-%m-%d") if entry.created_at else ""
     data["source"] = paper.source or "arxiv"
     _overlay_mineru_metadata(paper, data)
@@ -271,6 +296,11 @@ def _start_post_approval_processing(db: Session, paper_ids: list[str]) -> list[s
             pdf_path = ensure_paper_pdf_downloaded(db, paper, trigger_parse=False)
         if pdf_path and paper.parse_status in ("downloaded", "parse_failed", "pending"):
             schedule_paper_parse([paper_id])
+            queued.append(paper_id)
+        elif paper.parse_status == "parsed":
+            from src.workers.index_tasks import index_paper_chunks_task
+
+            index_paper_chunks_task.delay(paper_id)
             queued.append(paper_id)
     if queued:
         schedule_quality_assessment(queued)

@@ -5,13 +5,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.settings import get_settings
 from src.utils.logging_config import setup_logger
-from src.api import router
-from fastapi.staticfiles import StaticFiles
 from src.models.base import init_db
+from fastapi.staticfiles import StaticFiles
 from src.services.scheduler import start_crawl_scheduler
 from src.utils.paths import UPLOADS_DIR, ensure_papers_dir
 
 get_settings()
+# 须在 import router/startup 之前建表：startup 模块加载时会立即查询 knowledge_base
+init_db()
+from src.api import router
 
 
 @asynccontextmanager

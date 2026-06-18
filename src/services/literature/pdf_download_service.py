@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import Paper
 from src.utils.logging_config import setup_logger
-from src.utils.paths import ensure_paper_dir, paper_pdf_path, resolve_paper_pdf_path
+from src.utils.paths import ensure_paper_dir, paper_pdf_path, resolve_paper_pdf_file
 
 logger = setup_logger("PdfDownloadService")
 
@@ -110,7 +110,7 @@ def try_download_paper_pdf(
     """尝试下载单篇论文 PDF。返回 (成功与否, 日志说明)。"""
     if throttle_sec > 0:
         time.sleep(throttle_sec)
-    if resolve_paper_pdf_path(paper):
+    if resolve_paper_pdf_file(paper.arxiv_id, paper.pdf_path):
         return True, f"PDF 已存在: {paper.arxiv_id}"
 
     url = pdf_url or resolve_pdf_download_url(paper)

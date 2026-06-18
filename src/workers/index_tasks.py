@@ -35,6 +35,10 @@ def index_paper_chunks_task(self, paper_id: str, kb_id: str | None = None, owner
             kb_id = startup.dbm.get_default_public_kb_id()
 
         _kb_or_raise(session, kb_id)
+        paper.parse_status = "indexing"
+        session.add(paper)
+        session.commit()
+
         content_list_path = mineru_indexing.resolve_paper_content_list_path(paper_id)
         if not content_list_path:
             content_list_path = mineru_indexing.parse_paper_pdf_to_content_list(paper_id)
@@ -61,6 +65,14 @@ def index_paper_chunks_task(self, paper_id: str, kb_id: str | None = None, owner
         return {"status": "ok", "chunks": count}
     except Exception as exc:
         logger.exception("index_paper_chunks failed paper=%s: %s", paper_id, exc)
+        try:
+            paper = session.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+            if paper and paper.parse_status == "indexing":
+                paper.parse_status = "index_failed"
+                session.add(paper)
+                session.commit()
+        except Exception:
+            pass
         raise self.retry(exc=exc)
     finally:
         session.close()

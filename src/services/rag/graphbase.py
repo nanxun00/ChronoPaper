@@ -1,14 +1,10 @@
-import os
 import json
-import torch
-from neo4j import GraphDatabase as GD
-# from src.parsers import pdf_simple as pdf2txt, OneKE
-from transformers import AutoTokenizer, AutoModel
-from FlagEmbedding import FlagModel, FlagReranker
+import os
 import warnings
 
+from neo4j import GraphDatabase as GD
+
 from src.parsers import pdf_simple as pdf2txt
-from src.plugins.oneke import OneKE
 from src.utils import setup_logger
 
 logger = setup_logger("server-graphbase")
@@ -149,6 +145,8 @@ class GraphDatabase:
         text_path = pdf2txt(file_path)
         global UIE_MODEL
         if UIE_MODEL is None:
+            from src.plugins.oneke import OneKE
+
             UIE_MODEL = OneKE()
         triples_path = UIE_MODEL.processing_text_to_kg(text_path, output_path)
         self.jsonl_file_add_entity(triples_path)
@@ -340,6 +338,8 @@ class GraphDatabase:
             return session.execute_read(query, node_name, hops)
 
     def get_embedding(self, text):
+        import torch
+
         inputs = [text]
         with torch.no_grad():
             outputs = self.embed_model.encode(inputs)
@@ -366,6 +366,8 @@ class GraphDatabase:
 
 
 if __name__ == "__main__":
+    from FlagEmbedding import FlagModel
+
     config = None
 
     kgdb_name = "neo4j"

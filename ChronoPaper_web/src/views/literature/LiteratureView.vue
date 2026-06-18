@@ -94,37 +94,34 @@
                   {{ sourceLabel(record.source) }}
                 </a-tag>
               </template>
-              <template v-else-if="column.key === 'review_status'">
-                <a-tag :color="reviewStatusColor(record.review_status)">
-                  {{ reviewStatusLabel(record.review_status) }}
+              <template v-else-if="column.key === 'pipeline_status'">
+                <a-tag :color="pipelineStatusColor(record)">
+                  {{ pipelineStatusLabel(record) }}
                 </a-tag>
               </template>
               <template v-else-if="column.key === 'action'">
                 <a-space wrap>
                   <a-button type="link" size="small" @click="openPreview(record)">预览</a-button>
-                  <a-button
-                    v-if="record.review_status === 'pending'"
-                    type="link"
-                    size="small"
-                    @click="runApprove([record.arxiv_id], 'public')"
-                  >
-                    通过
-                  </a-button>
-                  <a-button
-                    v-if="record.review_status === 'pending'"
-                    type="link"
-                    size="small"
-                    danger
-                    @click="runReject([record.arxiv_id], 'public')"
-                  >
-                    不通过
-                  </a-button>
-                  <a-button type="link" size="small" @click="toggleFavorite(record)">
-                    {{ record.favorited ? '取消收藏' : '收藏' }}
-                  </a-button>
-                  <a-button type="link" size="small" danger @click="confirmDeleteOne(record, 'public')">
-                    删除
-                  </a-button>
+                  <span v-if="record.review_status === 'pending'" class="review-action-group">
+                    <a-button type="link" size="small" @click="runApprove([record.arxiv_id], 'public')">
+                      通过
+                    </a-button>
+                    <span class="review-action-divider">|</span>
+                    <a-button type="link" size="small" danger @click="runReject([record.arxiv_id], 'public')">
+                      不通过
+                    </a-button>
+                  </span>
+                  <a-tooltip :title="record.favorited ? '取消收藏' : '收藏'">
+                    <a-button type="text" size="small" class="icon-action-btn" @click="toggleFavorite(record)">
+                      <StarFilled v-if="record.favorited" class="star-filled" />
+                      <StarOutlined v-else class="star-outline" />
+                    </a-button>
+                  </a-tooltip>
+                  <a-tooltip title="删除">
+                    <a-button type="text" size="small" danger class="icon-action-btn" @click="confirmDeleteOne(record, 'public')">
+                      <DeleteOutlined />
+                    </a-button>
+                  </a-tooltip>
                 </a-space>
               </template>
             </template>
@@ -203,34 +200,28 @@
                   {{ sourceLabel(record.source) }}
                 </a-tag>
               </template>
-              <template v-else-if="column.key === 'review_status'">
-                <a-tag :color="reviewStatusColor(record.review_status)">
-                  {{ reviewStatusLabel(record.review_status) }}
+              <template v-else-if="column.key === 'pipeline_status'">
+                <a-tag :color="pipelineStatusColor(record)">
+                  {{ pipelineStatusLabel(record) }}
                 </a-tag>
               </template>
               <template v-else-if="column.key === 'action'">
                 <a-space wrap>
                   <a-button type="link" size="small" @click="openPreview(record)">预览</a-button>
-                  <a-button
-                    v-if="record.review_status === 'pending'"
-                    type="link"
-                    size="small"
-                    @click="runApprove([record.arxiv_id], 'private')"
-                  >
-                    通过
-                  </a-button>
-                  <a-button
-                    v-if="record.review_status === 'pending'"
-                    type="link"
-                    size="small"
-                    danger
-                    @click="runReject([record.arxiv_id], 'private')"
-                  >
-                    不通过
-                  </a-button>
-                  <a-button type="link" size="small" danger @click="confirmDeleteOne(record, 'private')">
-                    删除
-                  </a-button>
+                  <span v-if="record.review_status === 'pending'" class="review-action-group">
+                    <a-button type="link" size="small" @click="runApprove([record.arxiv_id], 'private')">
+                      通过
+                    </a-button>
+                    <span class="review-action-divider">|</span>
+                    <a-button type="link" size="small" danger @click="runReject([record.arxiv_id], 'private')">
+                      不通过
+                    </a-button>
+                  </span>
+                  <a-tooltip title="删除">
+                    <a-button type="text" size="small" danger class="icon-action-btn" @click="confirmDeleteOne(record, 'private')">
+                      <DeleteOutlined />
+                    </a-button>
+                  </a-tooltip>
                 </a-space>
               </template>
             </template>
@@ -302,7 +293,11 @@
               <template v-else-if="column.key === 'action'">
                 <a-space>
                   <a-button type="link" size="small" @click="openPreview(record)">预览</a-button>
-                  <a-button type="link" size="small" danger @click="toggleFavorite(record)">移除</a-button>
+                  <a-tooltip title="取消收藏">
+                    <a-button type="text" size="small" class="icon-action-btn" @click="toggleFavorite(record)">
+                      <StarFilled class="star-filled" />
+                    </a-button>
+                  </a-tooltip>
                 </a-space>
               </template>
             </template>
@@ -329,7 +324,6 @@
           </a-tag>
           <span v-if="previewItem.venue">会议/期刊：{{ previewItem.venue }}</span>
           <span v-if="previewItem.venue_rank">CCF：{{ previewItem.venue_rank }}</span>
-          <span v-if="previewItem.journal_if != null"> · IF/citedness：{{ previewItem.journal_if }}</span>
           <span v-if="previewItem.jcr_quartile"> · 分区：{{ previewItem.jcr_quartile }}</span>
           <span v-if="previewItem.doi"> · DOI：{{ previewItem.doi }}</span>
           <span v-if="previewItem.review_rating != null">评审均分：{{ previewItem.review_rating }}</span>
@@ -360,7 +354,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { Modal, message } from 'ant-design-vue'
-import { PictureOutlined } from '@ant-design/icons-vue'
+import { DeleteOutlined, PictureOutlined, StarFilled, StarOutlined } from '@ant-design/icons-vue'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import PdfPreview from '@/components/literature/PdfPreview.vue'
 import { approveLiteratureEntries, deleteLiteratureEntries, getPaperDetail, listPublicPapers, listPrivatePapers, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
@@ -401,10 +395,9 @@ const searchModeOptions = [
 const literatureColumns = [
   { title: '标题', key: 'title', dataIndex: 'title', ellipsis: true },
   { title: '来源', key: 'source', width: 100 },
-  { title: '审核', key: 'review_status', width: 90 },
+  { title: '状态', key: 'pipeline_status', width: 100 },
   { title: '会议/期刊', dataIndex: 'venue', width: 140, ellipsis: true },
   { title: 'CCF', dataIndex: 'venue_rank', width: 60 },
-  { title: 'IF/citedness', dataIndex: 'journal_if', width: 100 },
   { title: '引用', dataIndex: 'citation_count', width: 70 },
   { title: '作者', dataIndex: 'authors', width: 150, ellipsis: true },
   { title: '发布时间', dataIndex: 'published_at', width: 120 },
@@ -462,14 +455,46 @@ const sourceColor = (source) => {
   return map[source] || 'default'
 }
 
-const reviewStatusLabel = (status) => {
-  const map = { pending: '待审核', approved: '已通过', rejected: '未通过' }
-  return map[status] || '已通过'
+const resolvePipelineStatus = (record) => {
+  if (record.pipeline_status) return record.pipeline_status
+  const review = record.review_status
+  const parse = record.parse_status || record.status
+  if (review === 'pending') return 'pending_review'
+  if (review === 'rejected') return 'rejected'
+  if (parse === 'parsing') return 'parsing'
+  if (parse === 'indexed') return 'indexed'
+  if (parse === 'indexing' || parse === 'parsed') return 'indexing'
+  if (parse === 'parse_failed') return 'parse_failed'
+  if (parse === 'index_failed') return 'index_failed'
+  return 'waiting_parse'
 }
 
-const reviewStatusColor = (status) => {
-  const map = { pending: 'gold', approved: 'green', rejected: 'red' }
-  return map[status] || 'green'
+const pipelineStatusLabel = (record) => {
+  const map = {
+    pending_review: '待审核',
+    rejected: '未通过',
+    parsing: '解析中',
+    indexing: '入库中',
+    indexed: '已入库',
+    waiting_parse: '待解析',
+    parse_failed: '解析失败',
+    index_failed: '入库失败',
+  }
+  return map[resolvePipelineStatus(record)] || '待解析'
+}
+
+const pipelineStatusColor = (record) => {
+  const map = {
+    pending_review: 'gold',
+    rejected: 'red',
+    parsing: 'processing',
+    indexing: 'cyan',
+    indexed: 'success',
+    waiting_parse: 'default',
+    parse_failed: 'error',
+    index_failed: 'error',
+  }
+  return map[resolvePipelineStatus(record)] || 'default'
 }
 
 const previewExternalUrl = computed(() => {
@@ -487,6 +512,14 @@ const previewAbstract = computed(() => {
   return (item.abstract || item.summary || '').trim()
 })
 
+const favoriteIdSet = computed(() => new Set(favoritePapers.value.map((p) => p.arxiv_id)))
+
+const applyFavoriteState = (papers) =>
+  (papers || []).map((p) => ({
+    ...p,
+    favorited: favoriteIdSet.value.has(p.arxiv_id),
+  }))
+
 const loadPublicPapers = async (page = publicPagination.value.current, pageSize = publicPagination.value.pageSize) => {
   loading.value = true
   try {
@@ -499,7 +532,7 @@ const loadPublicPapers = async (page = publicPagination.value.current, pageSize 
       page,
       page_size: pageSize,
     })
-    publicPapers.value = data.papers || []
+    publicPapers.value = applyFavoriteState(data.papers)
     publicPagination.value = {
       ...publicPagination.value,
       current: data.page || page,
@@ -596,6 +629,16 @@ const toggleFavorite = (record) => {
     favoritePapers.value = favoritePapers.value.filter((p) => p.arxiv_id !== record.arxiv_id)
     message.success('已取消收藏')
   }
+  syncFavoriteFlags(record.arxiv_id, record.favorited)
+}
+
+const syncFavoriteFlags = (arxivId, favorited) => {
+  publicPapers.value = publicPapers.value.map((p) =>
+    p.arxiv_id === arxivId ? { ...p, favorited } : p,
+  )
+  privateDocs.value = privateDocs.value.map((p) =>
+    p.arxiv_id === arxivId ? { ...p, favorited } : p,
+  )
 }
 
 const removeFromFavorites = (arxivIds) => {
@@ -774,6 +817,10 @@ const runImageSearch = () => {
   padding: 16px;
   border-radius: 8px;
   border: 1px solid var(--gray-300);
+
+  :deep(.ant-table-thead > tr > th) {
+    text-align: center;
+  }
 }
 
 .tab-toolbar {
@@ -826,5 +873,43 @@ const runImageSearch = () => {
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
+}
+
+.icon-action-btn {
+  padding: 0 6px;
+  height: 28px;
+  line-height: 1;
+}
+
+.review-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+
+  :deep(.ant-btn) {
+    padding: 0 4px;
+    height: auto;
+  }
+}
+
+.review-action-divider {
+  color: #d9d9d9;
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+}
+
+.star-filled {
+  color: #faad14;
+  font-size: 16px;
+}
+
+.star-outline {
+  color: var(--gray-600, #8c8c8c);
+  font-size: 16px;
+
+  &:hover {
+    color: #faad14;
+  }
 }
 </style>

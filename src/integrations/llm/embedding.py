@@ -1,59 +1,87 @@
 import os
-import uuid
-from FlagEmbedding import FlagModel, FlagReranker
 
 from src.config import EMBED_MODEL_INFO, RERANKER_LIST
 from src.utils.logging_config import setup_logger
 from src.utils import hashstr
-
 
 logger = setup_logger("EmbeddingModel")
 
 GLOBAL_EMBED_STATE = {}
 
 
-class EmbeddingModel(FlagModel):
+def _load_flag_model():
+    from FlagEmbedding import FlagModel
+
+    return FlagModel
+
+
+def _load_flag_reranker():
+    from FlagEmbedding import FlagReranker
+
+    return FlagReranker
+
+
+class EmbeddingModel:
+    """本地 BGE 模型封装（按需加载 FlagEmbedding，避免启动时拉取 torch/transformers）。"""
+
     def __init__(self, model_info, config, **kwargs):
         self.info = model_info
         model_name_or_path = handle_local_model(
             paths=config.model_local_paths,
             model_name=model_info["name"],
-            default_path=model_info.get("default_path", None))
+            default_path=model_info.get("default_path", None),
+        )
 
-        logger.info(f"Loading embedding model {model_info['name']} from {model_name_or_path}")
+        logger.info("Loading embedding model %s from %s", model_info["name"], model_name_or_path)
+        FlagModel = _load_flag_model()
+        self._model = FlagModel(
+            model_name_or_path,
+            query_instruction_for_retrieval=model_info.get("query_instruction", None),
+            use_fp16=False,
+            **kwargs,
+        )
+        logger.info("Embedding model %s loaded", model_info["name"])
 
-        super().__init__(model_name_or_path,
-                query_instruction_for_retrieval=model_info.get("query_instruction", None),
-                use_fp16=False, **kwargs)
+    def encode(self, message):
+        return self._model.encode(message)
 
-        logger.info(f"Embedding model {model_info['name']} loaded")
+    def encode_queries(self, queries):
+        return self._model.encode_queries(queries)
 
 
-class Reranker(FlagReranker):
+class Reranker:
+    """交叉编码 Reranker（按需加载 FlagEmbedding）。"""
+
     def __init__(self, config, **kwargs):
-
-        assert config.reranker in RERANKER_LIST.keys(), f"Unsupported Reranker: {config.reranker}, only support {RERANKER_LIST.keys()}"
+        assert config.reranker in RERANKER_LIST, (
+            f"Unsupported Reranker: {config.reranker}, only support {RERANKER_LIST.keys()}"
+        )
 
         model_name_or_path = handle_local_model(
             paths=config.model_local_paths,
             model_name=config.reranker,
-            default_path=RERANKER_LIST[config.reranker]
+            default_path=RERANKER_LIST[config.reranker],
         )
 
-        logger.info(f"Loading Reranker model {config.reranker} from {model_name_or_path}")
+        logger.info("Loading Reranker model %s from %s", config.reranker, model_name_or_path)
 
-        cache_dir = "" # 默认缓存路径待优化
+        cache_dir = ""
         if os.getenv("MODEL_LOCAL_DIR"):
             cache_dir = os.getenv("MODEL_LOCAL_DIR")
-        super().__init__(model_name_or_path, use_fp16=True, cache_dir=cache_dir, **kwargs)
-        logger.info(f"Reranker model {config.reranker} loaded")
 
+        FlagReranker = _load_flag_reranker()
+        self._model = FlagReranker(model_name_or_path, use_fp16=True, cache_dir=cache_dir, **kwargs)
+        logger.info("Reranker model %s loaded", config.reranker)
 
-from zhipuai import ZhipuAI
+    def compute_score(self, *args, **kwargs):
+        return self._model.compute_score(*args, **kwargs)
+
 
 class ZhipuEmbedding:
 
     def __init__(self, model_info, config) -> None:
+        from zhipuai import ZhipuAI
+
         self.config = config
         self.model_info = model_info
         self.client = ZhipuAI(api_key=os.getenv("ZHIPUAI_API_KEY"))
@@ -67,19 +95,19 @@ class ZhipuEmbedding:
         if len(message) > batch_size:
             global GLOBAL_EMBED_STATE
             task_id = hashstr(message)
-            logger.info(f"Creating new state for process {task_id}")
+            logger.info("Creating new state for process %s", task_id)
             GLOBAL_EMBED_STATE[task_id] = {
-                'status': 'in-progress',
-                'total': len(message),
-                'progress': 0
+                "status": "in-progress",
+                "total": len(message),
+                "progress": 0,
             }
 
         for i in range(0, len(message), batch_size):
             if len(message) > batch_size:
-                logger.info(f"Encoding {i} to {i+batch_size} with {len(message)} messages")
-                GLOBAL_EMBED_STATE[task_id]['progress'] = i
+                logger.info("Encoding %s to %s with %s messages", i, i + batch_size, len(message))
+                GLOBAL_EMBED_STATE[task_id]["progress"] = i
 
-            group_msg = message[i:i+batch_size]
+            group_msg = message[i : i + batch_size]
             response = self.client.embeddings.create(
                 model=self.model_info.get("default_path", None),
                 input=group_msg,
@@ -88,8 +116,8 @@ class ZhipuEmbedding:
             data.extend([a.embedding for a in response.data])
 
         if len(message) > batch_size:
-            GLOBAL_EMBED_STATE[task_id]['progress'] = len(message)
-            GLOBAL_EMBED_STATE[task_id]['status'] = 'completed'
+            GLOBAL_EMBED_STATE[task_id]["progress"] = len(message)
+            GLOBAL_EMBED_STATE[task_id]["status"] = "completed"
 
         return data
 
@@ -102,7 +130,7 @@ class ZhipuEmbedding:
 
 
 def _create_embedding_model(config):
-    assert config.embed_model in EMBED_MODEL_INFO.keys(), (
+    assert config.embed_model in EMBED_MODEL_INFO, (
         f"Unsupported embed model: {config.embed_model}, only support {EMBED_MODEL_INFO.keys()}"
     )
 
@@ -138,6 +166,7 @@ def get_embedding_model(config, *, ignore_kb_switch: bool = False):
     _cached_embedder = model
     _cached_embedder_name = model_name
     return model
+
 
 def handle_local_model(paths, model_name, default_path):
     model_path = paths.get(model_name, default_path)
