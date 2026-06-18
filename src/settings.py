@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # --- 网关 ---
     gateway_time_out: int = 90
 
+    # --- OpenAlex ---
+    openalex_api_key: str = ""
+    openalex_mailto: str = ""
+
     @property
     def neo4j_legacy_uri_resolved(self) -> str:
         return self.neo4j_legacy_uri or self.neo4j_uri

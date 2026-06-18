@@ -15,7 +15,6 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '^/api': {
           target: env.VITE_API_URL || 'http://localhost:8081',
-          // target: 'http://101.132.70.68:7077',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, '')
         }
@@ -25,6 +24,17 @@ export default defineConfig(({ mode }) => {
         ignored: ['**/node_modules/**', '**/dist/**'],
       },
       host: '0.0.0.0',
-    }
+    },
+    build: {
+      target: 'es2022',
+    },
+    esbuild: {
+      target: 'es2022',
+    },
+    optimizeDeps: {
+      esbuildOptions: {
+        target: 'es2022',
+      },
+    },
   }
 })

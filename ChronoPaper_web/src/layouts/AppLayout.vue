@@ -20,18 +20,15 @@ import {
   StarOutlined,
   ExclamationCircleOutlined,
   UserOutlined,
-  BarChartOutlined ,
-  AreaChartOutlined,
   ReadOutlined,
   ReadFilled,
   ClockCircleOutlined,
   ClockCircleFilled,
 } from '@ant-design/icons-vue'
 import { themeConfig } from '@/assets/theme'
-import { useConfigStore } from '@/stores/config'
-import { useDatabaseStore } from '@/stores/database'
-import DebugComponent from '@/components/DebugComponent.vue'
-import { useUserStore } from '@/stores/user'
+import { useConfigStore, useDatabaseStore, useUserStore } from '@/stores'
+import DebugComponent from '@/components/common/DebugComponent.vue'
+import TranslateFloatPanel from '@/components/translate/TranslateFloatPanel.vue'
 // import login from '@/components/login.vue'
 import { onBeforeMount } from 'vue'
 const userStore = useUserStore();
@@ -109,6 +106,7 @@ console.log(route)
       <div class="logo circle">
         <router-link to="/">
           <img src="@/assets/image/logo.png" alt="ChronoPaper">
+          <span class="logo-text">ChronoPaper</span>
         </router-link>
       </div>
       <div class="nav">
@@ -136,10 +134,6 @@ console.log(route)
           <component class="icon" :is="route.path.startsWith('/tools') ? StarFilled: StarOutlined" />
           <span class="text">工具</span>
         </RouterLink>
-        <RouterLink to="/smartbi" class="nav-item" active-class="active">
-          <component class="icon" :is="route.path.startsWith('/smartbi') ?AreaChartOutlined :BarChartOutlined " />
-          <span class="text">智能分析</span>
-        </RouterLink>
         <a-tooltip placement="right">
           <template #title>后端疑似没有正常启动或者正在繁忙中，请刷新一下或者检查 docker logs api-dev</template>
           <div class="nav-item warning" v-if="!configStore.config._config_items">
@@ -166,6 +160,7 @@ console.log(route)
       <RouterLink to="/literature" class="nav-item" active-class="active">文献</RouterLink>
       <RouterLink to="/tasks" class="nav-item" active-class="active">任务</RouterLink>
       <RouterLink to="/database" class="nav-item" active-class="active">知识</RouterLink>
+      <RouterLink to="/tools" class="nav-item" active-class="active">工具</RouterLink>
       <RouterLink to="/setting" class="nav-item" active-class="active">设置</RouterLink>
     </div>
     <a-config-provider :theme="themeConfig">
@@ -176,6 +171,7 @@ console.log(route)
       <component :is="Component" v-else />
     </router-view>
     </a-config-provider>
+    <TranslateFloatPanel />
   </div>
 </template>
 
@@ -227,7 +223,7 @@ div.header, #app-router-view {
   padding-bottom: 20px;
 
   .logo {
-    width: 52px;
+    width: 40px;
     height: 40px;
     margin: 18px 0 18px 0;
 
@@ -235,7 +231,7 @@ div.header, #app-router-view {
       width: 100%;
       height: 100%;
       object-fit: contain;
-      border-radius: 4px;
+      border-radius: 8px;
     }
 
     .logo-text {
@@ -395,11 +391,11 @@ div.header, #app-router-view {
     }
 
     img {
-      width: auto;
-      height: 28px;
-      max-width: 140px;
+      width: 32px;
+      height: 32px;
       object-fit: contain;
       margin-right: 8px;
+      border-radius: 6px;
     }
 
     .logo-text {

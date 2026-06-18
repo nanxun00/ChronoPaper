@@ -1,4 +1,7 @@
-"""任务兴趣描述与论文摘要的相似度打分。"""
+"""任务兴趣描述与论文摘要的相似度打分。
+
+已弃用：抓取任务请使用 src.services.semantic_matcher（Embedding 语义匹配）。
+"""
 from __future__ import annotations
 
 import re

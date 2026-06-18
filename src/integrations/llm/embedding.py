@@ -101,18 +101,42 @@ class ZhipuEmbedding:
         return self.predict(queries)
 
 
-def get_embedding_model(config):
-    if not config.enable_knowledge_base:
-        return None
-
-    assert config.embed_model in EMBED_MODEL_INFO.keys(), f"Unsupported embed model: {config.embed_model}, only support {EMBED_MODEL_INFO.keys()}"
+def _create_embedding_model(config):
+    assert config.embed_model in EMBED_MODEL_INFO.keys(), (
+        f"Unsupported embed model: {config.embed_model}, only support {EMBED_MODEL_INFO.keys()}"
+    )
 
     if config.embed_model in ["bge-large-zh-v1.5"]:
-        model = EmbeddingModel(EMBED_MODEL_INFO[config.embed_model], config)
+        return EmbeddingModel(EMBED_MODEL_INFO[config.embed_model], config)
 
     if config.embed_model in ["zhipu-embedding-2", "zhipu-embedding-3"]:
-        model = ZhipuEmbedding(EMBED_MODEL_INFO[config.embed_model], config)
+        return ZhipuEmbedding(EMBED_MODEL_INFO[config.embed_model], config)
 
+    raise ValueError(f"Unsupported embed model: {config.embed_model}")
+
+
+_cached_embedder = None
+_cached_embedder_name: str | None = None
+
+
+def get_embedding_model(config, *, ignore_kb_switch: bool = False):
+    """加载 Embedding 模型。
+
+    - 知识库默认要求 enable_knowledge_base=True
+    - 抓取语义匹配可传 ignore_kb_switch=True，与知识库共用同一 embed_model 配置
+    """
+    global _cached_embedder, _cached_embedder_name
+
+    if not ignore_kb_switch and not config.enable_knowledge_base:
+        return None
+
+    model_name = config.embed_model or "zhipu-embedding-3"
+    if _cached_embedder is not None and _cached_embedder_name == model_name:
+        return _cached_embedder
+
+    model = _create_embedding_model(config)
+    _cached_embedder = model
+    _cached_embedder_name = model_name
     return model
 
 def handle_local_model(paths, model_name, default_path):

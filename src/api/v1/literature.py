@@ -16,23 +16,48 @@ router = APIRouter(prefix="/literature", tags=["literature"])
 def list_public_papers(
     q: str | None = Query(default=None),
     category: str | None = Query(default=None),
+    source: str | None = Query(default=None, description="arxiv | openreview | openalex"),
+    min_semantic: float | None = Query(default=None, ge=0, le=100),
+    min_quality: float | None = Query(default=None, ge=0, le=100),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    return literature_service.list_public_papers(db, q=q, category=category, page=page, page_size=page_size)
+    del current_user
+    return literature_service.list_public_papers(
+        db,
+        q=q,
+        category=category,
+        source=source,
+        min_semantic=min_semantic,
+        min_quality=min_quality,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/private")
 def list_private_papers(
     q: str | None = Query(default=None),
+    source: str | None = Query(default=None, description="arxiv | openreview | openalex"),
+    min_semantic: float | None = Query(default=None, ge=0, le=100),
+    min_quality: float | None = Query(default=None, ge=0, le=100),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    return literature_service.list_private_papers(db, current_user.userid, q=q, page=page, page_size=page_size)
+    return literature_service.list_private_papers(
+        db,
+        current_user.userid,
+        q=q,
+        source=source,
+        min_semantic=min_semantic,
+        min_quality=min_quality,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/pdf/{arxiv_id:path}")

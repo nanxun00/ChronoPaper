@@ -85,14 +85,46 @@ def resolve_accessible_paper_pdf(db: Session, arxiv_id: str, user_id: str) -> st
 
 def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
     data = paper.to_dict()
+    sem = entry.semantic_score if entry.semantic_score is not None else entry.match_score
+    qual = entry.quality_score if entry.quality_score is not None else paper.quality_score
     data["entry_id"] = entry.id
-    data["match_score"] = entry.match_score
+    data["semantic_score"] = sem
+    data["quality_score"] = qual
+    data["match_score"] = sem
+    data["pool_type"] = entry.pool_type or paper.source or "arxiv"
     data["visibility"] = entry.visibility
     data["listed_at"] = entry.created_at.strftime("%Y-%m-%d") if entry.created_at else ""
     data["source"] = paper.source or "arxiv"
     data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
     data["can_fetch_pdf"] = data["has_pdf"] or bool(_pdf_url_for_paper(paper))
     return data
+
+
+def _apply_list_filters(
+    query,
+    *,
+    source: str | None = None,
+    min_semantic: float | None = None,
+    min_quality: float | None = None,
+):
+    from sqlalchemy import and_, func, or_
+
+    if source in ("arxiv", "openreview", "openalex"):
+        query = query.filter(
+            or_(
+                LiteratureEntry.pool_type == source,
+                and_(LiteratureEntry.pool_type.is_(None), Paper.source == source),
+            )
+        )
+    if min_semantic is not None:
+        query = query.filter(
+            func.coalesce(LiteratureEntry.semantic_score, LiteratureEntry.match_score, 0) >= min_semantic
+        )
+    if min_quality is not None:
+        query = query.filter(
+            func.coalesce(LiteratureEntry.quality_score, Paper.quality_score, 0) >= min_quality
+        )
+    return query
 
 
 def _paper_pdf_candidates(paper: Paper) -> list[str]:
@@ -205,6 +237,9 @@ def list_public_papers(
     *,
     q: str | None = None,
     category: str | None = None,
+    source: str | None = None,
+    min_semantic: float | None = None,
+    min_quality: float | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> dict:
@@ -221,6 +256,7 @@ def list_public_papers(
         )
     if category:
         query = query.filter(Paper.categories.like(f"%{category}%"))
+    query = _apply_list_filters(query, source=source, min_semantic=min_semantic, min_quality=min_quality)
 
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
@@ -237,6 +273,9 @@ def list_private_papers(
     user_id: str,
     *,
     q: str | None = None,
+    source: str | None = None,
+    min_semantic: float | None = None,
+    min_quality: float | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> dict:
@@ -251,6 +290,7 @@ def list_private_papers(
         query = query.filter(
             (Paper.title.like(like)) | (Paper.abstract.like(like)) | (Paper.arxiv_id.like(like))
         )
+    query = _apply_list_filters(query, source=source, min_semantic=min_semantic, min_quality=min_quality)
 
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()

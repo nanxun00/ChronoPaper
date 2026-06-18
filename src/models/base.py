@@ -76,6 +76,24 @@ def migrate_schema(engine, log) -> None:
         alters.append("ALTER TABLE papers ADD COLUMN review_rating FLOAT NULL")
     if "openreview_id" not in paper_cols:
         alters.append("ALTER TABLE papers ADD COLUMN openreview_id VARCHAR(128) NULL")
+    if "doi" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN doi VARCHAR(256) NULL")
+    if "openalex_id" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN openalex_id VARCHAR(64) NULL")
+    if "venue_rank" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN venue_rank VARCHAR(8) NULL")
+    if "journal_if" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN journal_if FLOAT NULL")
+    if "jcr_quartile" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN jcr_quartile VARCHAR(8) NULL")
+    if "quality_score" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN quality_score FLOAT NULL")
+    if "llm_innovation_score" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN llm_innovation_score FLOAT NULL")
+    if "llm_experiment_score" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN llm_experiment_score FLOAT NULL")
+    if "quality_assessed_at" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN quality_assessed_at DATETIME NULL")
 
     arxiv_col = next((c for c in inspector.get_columns("papers") if c["name"] == "arxiv_id"), None)
     if arxiv_col and str(arxiv_col.get("type")).endswith("64"):
@@ -89,6 +107,43 @@ def migrate_schema(engine, log) -> None:
             alters.append("ALTER TABLE crawl_tasks ADD COLUMN sources VARCHAR(128) NOT NULL DEFAULT 'arxiv'")
         if "openreview_venues" not in task_cols:
             alters.append("ALTER TABLE crawl_tasks ADD COLUMN openreview_venues VARCHAR(1024) NOT NULL DEFAULT ''")
+        if "openalex_venue_types" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN openalex_venue_types VARCHAR(64) NOT NULL DEFAULT 'conference,journal'")
+        if "openalex_ccf_ranks" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN openalex_ccf_ranks VARCHAR(32) NOT NULL DEFAULT 'A,B,C'")
+        if "openalex_year_from" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN openalex_year_from INT NULL")
+        if "openalex_year_to" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN openalex_year_to INT NULL")
+        if "openalex_venue_names" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN openalex_venue_names VARCHAR(1024) NOT NULL DEFAULT ''")
+        if "min_semantic_score" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN min_semantic_score FLOAT NOT NULL DEFAULT 50")
+        if "min_quality_score" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN min_quality_score FLOAT NOT NULL DEFAULT 0")
+        if "enable_quality_filter" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN enable_quality_filter TINYINT(1) NOT NULL DEFAULT 0")
+        if "enable_smart_planning" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN enable_smart_planning TINYINT(1) NOT NULL DEFAULT 0")
+        if "plan_summary" not in task_cols:
+            alters.append(
+                "ALTER TABLE crawl_tasks ADD COLUMN plan_summary VARCHAR(2048) NOT NULL DEFAULT ''"
+            )
+        if "verified_suggestions_json" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN verified_suggestions_json TEXT NULL")
+        if "planning_status" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN planning_status VARCHAR(16) NOT NULL DEFAULT 'none'")
+        if "planning_error" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN planning_error VARCHAR(512) NOT NULL DEFAULT ''")
+
+    if "literature_entries" in inspector.get_table_names():
+        entry_cols = {c["name"] for c in inspector.get_columns("literature_entries")}
+        if "semantic_score" not in entry_cols:
+            alters.append("ALTER TABLE literature_entries ADD COLUMN semantic_score FLOAT NULL")
+        if "quality_score" not in entry_cols:
+            alters.append("ALTER TABLE literature_entries ADD COLUMN quality_score FLOAT NULL")
+        if "pool_type" not in entry_cols:
+            alters.append("ALTER TABLE literature_entries ADD COLUMN pool_type VARCHAR(16) NULL")
 
     for ddl in alters:
         try:

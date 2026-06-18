@@ -27,6 +27,15 @@ class Paper(Base):
     acceptance_status = Column(String(64), nullable=True)
     review_rating = Column(Float, nullable=True)
     openreview_id = Column(String(128), nullable=True)
+    doi = Column(String(256), nullable=True)
+    openalex_id = Column(String(64), nullable=True)
+    venue_rank = Column(String(8), nullable=True)
+    journal_if = Column(Float, nullable=True)
+    jcr_quartile = Column(String(8), nullable=True)
+    quality_score = Column(Float, nullable=True)
+    llm_innovation_score = Column(Float, nullable=True)
+    llm_experiment_score = Column(Float, nullable=True)
+    quality_assessed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -63,5 +72,13 @@ class Paper(Base):
             "acceptance_status": self.acceptance_status,
             "review_rating": self.review_rating,
             "openreview_id": self.openreview_id,
+            "doi": self.doi,
+            "openalex_id": self.openalex_id,
+            "venue_rank": self.venue_rank,
+            "journal_if": self.journal_if,
+            "jcr_quartile": self.jcr_quartile,
+            "quality_score": self.quality_score,
+            "llm_innovation_score": self.llm_innovation_score,
+            "llm_experiment_score": self.llm_experiment_score,
             "listed_at": self.created_at.strftime("%Y-%m-%d") if self.created_at else None,
         }
