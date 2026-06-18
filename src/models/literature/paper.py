@@ -36,6 +36,9 @@ class Paper(Base):
     llm_innovation_score = Column(Float, nullable=True)
     llm_experiment_score = Column(Float, nullable=True)
     quality_assessed_at = Column(DateTime, nullable=True)
+    pdf_download_attempts = Column(Integer, nullable=False, default=0)
+    pdf_download_next_retry_at = Column(DateTime, nullable=True)
+    pdf_download_last_error = Column(String(512), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

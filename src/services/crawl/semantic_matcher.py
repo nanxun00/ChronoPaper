@@ -20,6 +20,38 @@ def build_interest_text(intent_text: str, keywords: str) -> str:
     return "\n".join(parts)
 
 
+def build_api_search_query(
+    *,
+    intent_text: str = "",
+    keywords: str = "",
+    keyword_list: list[str] | None = None,
+    max_terms: int = 12,
+) -> str:
+    """外部检索 API（OpenReview / OpenAlex）用短查询，避免长段兴趣描述导致 0 命中。"""
+    terms: list[str] = []
+    if keyword_list:
+        terms.extend(str(k).strip() for k in keyword_list if str(k).strip())
+    kw = (keywords or "").strip()
+    if kw:
+        terms.extend(t.strip() for t in kw.replace("，", ",").split(",") if t.strip())
+    seen: set[str] = set()
+    unique: list[str] = []
+    for term in terms:
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(term)
+        if len(unique) >= max_terms:
+            break
+    if unique:
+        return ", ".join(unique)
+    intent = (intent_text or "").strip()
+    if len(intent) > 240:
+        intent = intent[:240].rsplit(" ", 1)[0]
+    return intent
+
+
 def paper_text(meta: dict[str, Any]) -> str:
     title = (meta.get("title") or "").strip()
     abstract = (meta.get("abstract") or "").strip()

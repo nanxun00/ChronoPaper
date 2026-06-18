@@ -3,15 +3,24 @@ from __future__ import annotations
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from src.models.base import SessionLocal
 from src.models.crawl import CrawlTask
 from src.services.crawl.crawl_service import is_task_running, run_task_async
+from src.services.literature.pdf_download_service import run_pdf_download_retry_job
 from src.utils.logging_config import setup_logger
 
 logger = setup_logger("CrawlScheduler")
 
 _scheduler: BackgroundScheduler | None = None
+PDF_RETRY_JOB_ID = "pdf_download_retry"
+
+
+def _job_pdf_download_retry() -> None:
+    stats = run_pdf_download_retry_job()
+    if stats.get("checked"):
+        logger.info("pdf download retry job: %s", stats)
 
 
 def _parse_schedule(schedule_time: str | None) -> tuple[str, str] | None:
@@ -38,6 +47,14 @@ def refresh_scheduler() -> None:
         _scheduler.start()
 
     _scheduler.remove_all_jobs()
+    _scheduler.add_job(
+        _job_pdf_download_retry,
+        IntervalTrigger(minutes=15),
+        id=PDF_RETRY_JOB_ID,
+        replace_existing=True,
+    )
+    logger.info("scheduled pdf download retry job every 15 minutes")
+
     session = SessionLocal()
     try:
         tasks = session.query(CrawlTask).filter(CrawlTask.enabled.is_(True)).all()

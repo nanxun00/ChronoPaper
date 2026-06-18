@@ -9,10 +9,15 @@ from typing import Any
 import requests
 
 from src.integrations.openalex.ccf_venues import annotate_openreview_ccf, meta_matches_ccf_ranks
+from src.utils.logging_config import setup_logger
+
+logger = setup_logger("OpenReviewFetcher")
 
 OPENREVIEW_API = "https://api2.openreview.net/notes"
 OPENREVIEW_SEARCH_API = "https://api2.openreview.net/notes/search"
 OPENREVIEW_BASE = "https://openreview.net"
+# OpenReview search API 对 offset 有上限，超过会返回 400
+OPENREVIEW_MAX_SEARCH_OFFSET = 9900
 RATING_RE = re.compile(r"^(\d+(?:\.\d+)?)")
 
 # OpenReview 的 Submission 邀请包含全部投稿；抓取时默认只保留已接收类结果
@@ -265,25 +270,47 @@ def fetch_openreview_by_keywords(
     offset = 0
     page_size = 100
     scanned = 0
+    examined = 0
+    max_examined = max(max_scan * 2, 1500)
 
-    while len(results) < max_results and scanned < max_scan:
-        resp = requests.get(
-            OPENREVIEW_SEARCH_API,
-            params={
-                "term": query,
-                "source": "all",
-                "limit": page_size,
-                "offset": offset,
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
+    while (
+        len(results) < max_results
+        and scanned < max_scan
+        and examined < max_examined
+        and offset < OPENREVIEW_MAX_SEARCH_OFFSET
+    ):
+        payload = None
+        for attempt in range(4):
+            resp = requests.get(
+                OPENREVIEW_SEARCH_API,
+                params={
+                    "term": query,
+                    "source": "all",
+                    "limit": page_size,
+                    "offset": offset,
+                },
+                timeout=60,
+            )
+            if resp.status_code == 429 and attempt < 3:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            if resp.status_code == 400:
+                logger.warning(
+                    "OpenReview search stopped at offset=%s (HTTP 400, likely API offset limit)",
+                    offset,
+                )
+                break
+            resp.raise_for_status()
+            payload = resp.json()
+            break
+        if payload is None:
+            break
         notes = payload.get("notes") or []
         if not notes:
             break
         for note in notes:
-            if scanned >= max_scan or len(results) >= max_results:
+            examined += 1
+            if scanned >= max_scan or len(results) >= max_results or examined >= max_examined:
                 break
             candidate = _search_note_to_candidate(note)
             if not candidate:
@@ -303,6 +330,14 @@ def fetch_openreview_by_keywords(
             break
         offset += len(notes)
         time.sleep(0.3)
+
+    if len(results) < max_results and offset >= OPENREVIEW_MAX_SEARCH_OFFSET:
+        logger.info(
+            "OpenReview search reached offset cap (%s), returning %s/%s matches",
+            OPENREVIEW_MAX_SEARCH_OFFSET,
+            len(results),
+            max_results,
+        )
 
     return results
 

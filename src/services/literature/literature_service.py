@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import LiteratureEntry, Paper
 from src.services.literature.paper_parse_service import read_paper_full_text, schedule_paper_parse
+from src.services.literature.pdf_download_service import try_download_paper_pdf
 from src.services.literature.paper_quality_assessment import schedule_quality_assessment
 from src.utils.paths import (
     ensure_paper_dir,
@@ -156,32 +157,12 @@ def ensure_paper_pdf_downloaded(db: Session, paper: Paper, *, trigger_parse: boo
     if not pdf_url:
         return None
 
-    ensure_paper_dir(paper.arxiv_id)
-    dest_path = str(paper_pdf_path(paper.arxiv_id))
-    ensure_papers_dir()
-
-    try:
-        with requests.get(pdf_url, stream=True, timeout=(10, 120)) as resp:
-            resp.raise_for_status()
-            with open(dest_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-        paper.pdf_path = dest_path
-        paper.pdf_url = pdf_url
-        paper.parse_status = "downloaded"
-        db.add(paper)
-        db.commit()
+    ok, _msg = try_download_paper_pdf(db, paper, pdf_url=pdf_url)
+    if ok:
         if trigger_parse:
             schedule_paper_parse([paper.arxiv_id])
-        return dest_path
-    except Exception:
-        paper.parse_status = "download_failed"
-        if pdf_url != paper.pdf_url:
-            paper.pdf_url = pdf_url
-        db.add(paper)
-        db.commit()
-        return None
+        return resolve_paper_pdf_path(paper)
+    return None
 
 
 def _can_access_paper(db: Session, arxiv_id: str, user_id: str) -> bool:

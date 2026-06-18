@@ -26,6 +26,8 @@ CCF_VENUE_PATTERNS: dict[str, tuple[str, ...]] = {
         "ieee transactions on pattern analysis",
         "tpami", "journal of machine learning research", "jmlr",
         "nature machine intelligence", "nature methods",
+        "miccai", "medical image computing and computer assisted",
+        "medical image analysis",
     ),
     "B": (
         "icassp", "interspeech", "coling", "aistats",
@@ -37,6 +39,8 @@ CCF_VENUE_PATTERNS: dict[str, tuple[str, ...]] = {
         "neural networks", "pattern recognition",
         "artificial intelligence", "ai journal",
         "computational linguistics",
+        "ieee transactions on medical imaging",
+        "international symposium on biomedical imaging", "isbi",
     ),
     "C": (
         "iconip", "ijcnn", "icann",

@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 import traceback
 from datetime import datetime, timedelta
 
-import requests
 from sqlalchemy.orm import Session
 
 from src.integrations.arxiv.fetcher import arxiv_result_to_dict, fetch_arxiv_by_keywords
@@ -27,11 +25,16 @@ from src.services.crawl.crawl_reranker import rerank_candidates
 from src.services.crawl.crawl_relevance_filter import apply_keyword_and_llm_filter
 from src.services.crawl.crawl_mode_presets import CRAWL_MODE_LABELS
 from src.services.literature.literature_service import resolve_paper_pdf_path
+from src.services.literature.pdf_download_service import CRAWL_DOWNLOAD_GAP_SEC, try_download_paper_pdf
 from src.services.literature.quality_scorer import compute_quality_score, merge_paper_quality_signals
-from src.services.crawl.semantic_matcher import batch_semantic_scores, build_interest_text, encode_interest_vector
+from src.services.crawl.semantic_matcher import (
+    batch_semantic_scores,
+    build_api_search_query,
+    build_interest_text,
+    encode_interest_vector,
+)
 from src.services.translate.service import prepare_crawl_match_query
 from src.utils.datetime_fmt import format_display_datetime
-from src.utils.paths import ensure_paper_dir, ensure_papers_dir, paper_pdf_path
 from src.utils.logging_config import setup_logger
 
 logger = setup_logger("CrawlService")
@@ -142,16 +145,6 @@ def _append_log(run: CrawlTaskRun, line: str, session: Session) -> None:
     session.commit()
 
 
-def _download_pdf(pdf_url: str, dest_path: str) -> None:
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    with requests.get(pdf_url, stream=True, timeout=(10, 120)) as resp:
-        resp.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    f.write(chunk)
-
-
 def _pdf_url_for_download(meta: dict) -> str | None:
     url = meta.get("pdf_url")
     forum_id = meta.get("openreview_id") or ""
@@ -167,26 +160,20 @@ def _try_download_paper_pdf(
     run: CrawlTaskRun,
     stats: dict,
 ) -> None:
-    pdf_url = _pdf_url_for_download(meta)
-    if not pdf_url:
-        return
-    if paper.pdf_url != pdf_url:
-        paper.pdf_url = pdf_url
-    pdf_path = str(paper_pdf_path(paper.arxiv_id))
-    try:
-        ensure_paper_dir(paper.arxiv_id)
-        _download_pdf(pdf_url, pdf_path)
-        paper.pdf_path = pdf_path
-        paper.parse_status = "downloaded"
-        session.add(paper)
-        session.commit()
-        _append_log(run, f"已下载 PDF: {paper.arxiv_id}", session)
-    except Exception as exc:
-        stats["download_failed"] += 1
-        paper.parse_status = "download_failed"
-        session.add(paper)
-        session.commit()
-        _append_log(run, f"PDF 下载失败 {paper.arxiv_id}: {exc}", session)
+    source = meta.get("source") or paper.source or "arxiv"
+    throttle = CRAWL_DOWNLOAD_GAP_SEC if source == "openreview" else 1.0
+    ok, msg = try_download_paper_pdf(
+        session,
+        paper,
+        pdf_url=_pdf_url_for_download(meta),
+        throttle_sec=throttle,
+    )
+    if not ok:
+        if paper.parse_status == "download_failed":
+            stats["download_failed"] += 1
+        elif paper.parse_status == "download_retry":
+            stats["download_retry"] = stats.get("download_retry", 0) + 1
+    _append_log(run, msg, session)
 
 
 def _parse_csv_field(value: str) -> list[str]:
@@ -298,31 +285,38 @@ def _collect_candidate_pools(
 
     if "openreview" in sources:
         profile = search_profile or {}
-        search_text = build_interest_text(
-            profile.get("intent_text") or task.intent_text or "",
-            profile.get("keywords") or task.keywords or "",
+        search_text = build_api_search_query(
+            intent_text=profile.get("intent_text") or task.intent_text or "",
+            keywords=profile.get("keywords") or task.keywords or "",
+            keyword_list=profile.get("keyword_list") or [],
+            max_terms=4,
         )
         ccf_ranks = getattr(task, "openalex_ccf_ranks", None) or "A,B,C"
-        or_list = fetch_openreview_by_keywords(
-            search_text,
-            max_results=task.max_papers_per_run * 8,
-            only_accepted=True,
-            ccf_ranks=ccf_ranks,
-        )
+        try:
+            or_list = fetch_openreview_by_keywords(
+                search_text,
+                max_results=task.max_papers_per_run * 8,
+                only_accepted=True,
+                ccf_ranks=ccf_ranks,
+            )
+        except Exception as exc:
+            or_list = []
+            _append_log(run, f"[顶会池] OpenReview 检索异常，已跳过: {exc}", session)
         for meta in or_list:
             meta["pool_type"] = "openreview"
         pools["openreview"] = or_list
         _append_log(
             run,
-            f"[顶会池] OpenReview 关键词检索 + CCF 过滤（{ccf_ranks}）候选 {len(or_list)} 篇",
+            f"[顶会池] OpenReview 关键词检索 + CCF 过滤（{ccf_ranks}）候选 {len(or_list)} 篇（检索词: {search_text[:120]}）",
             session,
         )
 
     if "openalex" in sources:
         profile = search_profile or {}
-        search_q = build_interest_text(
-            profile.get("intent_text") or task.intent_text or "",
-            profile.get("keywords") or task.keywords or "",
+        search_q = build_api_search_query(
+            intent_text=profile.get("intent_text") or task.intent_text or "",
+            keywords=profile.get("keywords") or task.keywords or "",
+            keyword_list=profile.get("keyword_list") or [],
         )
         year_from = getattr(task, "openalex_year_from", None)
         year_to = getattr(task, "openalex_year_to", None)
@@ -342,7 +336,7 @@ def _collect_candidate_pools(
         pools["openalex"] = oa_list
         _append_log(
             run,
-            f"[综合期刊/会议池] 从 OpenAlex 获取 CCF 过滤后候选 {len(oa_list)} 篇（{year_from}-{year_to}）",
+            f"[综合期刊/会议池] 从 OpenAlex 获取 CCF 过滤后候选 {len(oa_list)} 篇（{year_from}-{year_to}，检索词: {search_q[:120]}）",
             session,
         )
 
@@ -564,7 +558,7 @@ def _upsert_paper(session: Session, meta: dict, run: CrawlTaskRun, stats: dict) 
             paper.pdf_url = fixed_pdf
         session.add(paper)
         session.commit()
-        if paper.parse_status in ("pending", "download_failed") and not resolve_paper_pdf_path(paper):
+        if paper.parse_status in ("pending", "download_failed", "download_retry") and not resolve_paper_pdf_path(paper):
             _try_download_paper_pdf(session, paper, meta, run, stats)
         else:
             _append_log(run, f"论文元数据已存在，更新扩展字段: {paper_id}", session)
@@ -678,6 +672,7 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
         "skipped_dup": 0,
         "new_papers": 0,
         "download_failed": 0,
+        "download_retry": 0,
         "arxiv_matched": 0,
         "openreview_matched": 0,
         "openalex_matched": 0,
@@ -795,6 +790,7 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
             if paper and not resolve_paper_pdf_path(paper) and paper.parse_status in (
                 "pending",
                 "download_failed",
+                "download_retry",
             ):
                 _try_download_paper_pdf(session, paper, meta, run, stats)
             _append_log(run, f"跳过已存在: {paper_id} {meta['title'][:60]}", session)
