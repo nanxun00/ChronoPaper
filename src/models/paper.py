@@ -52,7 +52,7 @@ class Paper(Base):
             "authors": ", ".join(self.authors_list()),
             "abstract": self.abstract,
             "categories": self.categories_list(),
-            "published_at": pub.strftime("%Y-%m-%d %H:%M:%S") if pub else None,
+            "published_at": pub.strftime("%Y-%m-%d") if pub else None,
             "year": pub.year if pub else None,
             "abs_url": self.abs_url,
             "pdf_url": self.pdf_url,
@@ -63,5 +63,5 @@ class Paper(Base):
             "acceptance_status": self.acceptance_status,
             "review_rating": self.review_rating,
             "openreview_id": self.openreview_id,
-            "listed_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
+            "listed_at": self.created_at.strftime("%Y-%m-%d") if self.created_at else None,
         }

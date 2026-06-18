@@ -12,6 +12,10 @@ OPENREVIEW_API = "https://api2.openreview.net/notes"
 OPENREVIEW_BASE = "https://openreview.net"
 RATING_RE = re.compile(r"^(\d+(?:\.\d+)?)")
 
+# OpenReview 的 Submission 邀请包含全部投稿；抓取时默认只保留已接收类结果
+OPENREVIEW_ACCEPTED_STATUSES = frozenset({"accepted", "oral", "spotlight", "poster"})
+OPENREVIEW_EXCLUDED_STATUSES = frozenset({"submitted", "rejected", "desk_rejected", "withdrawn", "unknown"})
+
 
 def _content_value(content: dict, key: str, default: Any = "") -> Any:
     raw = content.get(key)
@@ -30,6 +34,20 @@ def _parse_rating_text(text: str) -> float | None:
         return float(match.group(1))
     except ValueError:
         return None
+
+
+def is_openreview_accepted_candidate(meta: dict) -> bool:
+    """Submission 邀请会返回审稿中的投稿，默认仅保留已接收/录用类论文。"""
+    status = (meta.get("acceptance_status") or "").lower()
+    if status in OPENREVIEW_EXCLUDED_STATUSES:
+        return False
+    if status in OPENREVIEW_ACCEPTED_STATUSES:
+        return True
+    # parse_acceptance_status 未识别的 venue 原样返回时，再按关键词兜底
+    venue = (meta.get("venue") or "").lower()
+    if any(k in venue for k in ("submitted", "under review", "withdrawn", "reject")):
+        return False
+    return True
 
 
 def parse_acceptance_status(venue: str) -> str:
@@ -174,8 +192,9 @@ def fetch_openreview_candidates(
     venues: list[str] | str,
     *,
     max_per_venue: int = 300,
+    only_accepted: bool = True,
 ) -> list[dict[str, Any]]:
-    """按 invitation 拉取 OpenReview 投稿列表。"""
+    """按 invitation 拉取 OpenReview 投稿列表（默认过滤投稿中/拒稿等）。"""
     venue_ids = _normalize_venues(venues)
     if not venue_ids:
         raise ValueError("请至少选择一个 OpenReview 会议/venue")
@@ -212,5 +231,8 @@ def fetch_openreview_candidates(
                 break
             offset += len(notes)
             time.sleep(0.3)
+
+    if only_accepted:
+        results = [m for m in results if is_openreview_accepted_candidate(m)]
 
     return results

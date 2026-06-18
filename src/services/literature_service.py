@@ -88,7 +88,7 @@ def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
     data["entry_id"] = entry.id
     data["match_score"] = entry.match_score
     data["visibility"] = entry.visibility
-    data["listed_at"] = entry.created_at.strftime("%Y-%m-%d %H:%M:%S") if entry.created_at else ""
+    data["listed_at"] = entry.created_at.strftime("%Y-%m-%d") if entry.created_at else ""
     data["source"] = paper.source or "arxiv"
     data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
     data["can_fetch_pdf"] = data["has_pdf"] or bool(_pdf_url_for_paper(paper))
@@ -212,7 +212,7 @@ def list_public_papers(
         db.query(LiteratureEntry, Paper)
         .join(Paper, Paper.arxiv_id == LiteratureEntry.arxiv_id)
         .filter(LiteratureEntry.visibility == "public", LiteratureEntry.user_id == "")
-        .order_by(Paper.published_at.desc(), LiteratureEntry.created_at.desc())
+        .order_by(LiteratureEntry.created_at.desc(), Paper.published_at.desc())
     )
     if q:
         like = f"%{q}%"
@@ -244,7 +244,7 @@ def list_private_papers(
         db.query(LiteratureEntry, Paper)
         .join(Paper, Paper.arxiv_id == LiteratureEntry.arxiv_id)
         .filter(LiteratureEntry.visibility == "private", LiteratureEntry.user_id == user_id)
-        .order_by(Paper.published_at.desc(), LiteratureEntry.created_at.desc())
+        .order_by(LiteratureEntry.created_at.desc(), Paper.published_at.desc())
     )
     if q:
         like = f"%{q}%"

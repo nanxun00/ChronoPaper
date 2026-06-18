@@ -132,9 +132,17 @@ def _collect_candidates(task: CrawlTask, run: CrawlTaskRun, session: Session) ->
         venues = getattr(task, "openreview_venues", None) or ""
         if not venues.strip():
             raise ValueError("已选择 OpenReview 源，请选择会议/venue")
-        or_list = fetch_openreview_candidates(venues, max_per_venue=task.max_papers_per_run * 3)
+        or_list = fetch_openreview_candidates(
+            venues,
+            max_per_venue=task.max_papers_per_run * 3,
+            only_accepted=True,
+        )
         candidates.extend(or_list)
-        _append_log(run, f"从 OpenReview 获取候选论文 {len(or_list)} 篇", session)
+        _append_log(
+            run,
+            f"从 OpenReview 获取已接收候选论文 {len(or_list)} 篇（已排除投稿中/拒稿/撤回）",
+            session,
+        )
 
     if not sources:
         raise ValueError("请至少选择一种抓取数据源")
