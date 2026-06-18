@@ -19,6 +19,39 @@ executor = ThreadPoolExecutor()
 refs_pool = {}
 
 
+def _is_stream_enabled(meta: dict) -> bool:
+    return meta.get("stream", True) is not False
+
+
+def _prepare_chat_query(
+    query: str,
+    history_manager: HistoryManager,
+    meta: dict,
+    literature_context: str,
+    cur_res_id: str,
+) -> str:
+    if meta.get("enable_retrieval"):
+        new_query, refs = startup.retriever(query, history_manager.messages, meta)
+        refs_pool[cur_res_id] = refs
+    else:
+        new_query = query
+    if literature_context:
+        new_query = f"{literature_context}\n\n用户问题：{new_query}"
+    return new_query
+
+
+def _message_to_response_content(message) -> tuple[dict, str]:
+    response_content = {"reasoning_content": "", "content": ""}
+    reasoning = getattr(message, "reasoning_content", None)
+    if reasoning:
+        response_content["reasoning_content"] = reasoning
+    content = getattr(message, "content", None)
+    if content is None:
+        content = str(message)
+    response_content["content"] = content or ""
+    return response_content, response_content["content"]
+
+
 @chat.get("/")
 async def chat_get():
     return "Chat Get!"
@@ -84,6 +117,26 @@ def chat_post(
             "meta": meta,
         }, ensure_ascii=False).encode('utf-8') + b"\n"
 
+    use_stream = _is_stream_enabled(meta)
+
+    if not use_stream:
+        new_query = _prepare_chat_query(query, history_manager, meta, literature_context, cur_res_id)
+        messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get("history_round"))
+        history_manager.add_user(query)
+        message = startup.model.predict(messages, stream=False)
+        response_content, content = _message_to_response_content(message)
+        payload = {
+            "response": response_content,
+            "history": history_manager.update_ai(content),
+            "model_name": startup.config.model_name,
+            "status": "finished",
+            "meta": meta,
+        }
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            media_type="application/json",
+        )
+
     def generate_response():
         '''
             生成响应
@@ -91,20 +144,13 @@ def chat_post(
             然后使用模型生成响应，生成的响应被切分为块，以便实时推送到客户端
         '''
 
-        # 如果采用了检索功能，他会首先进行检索
         if meta.get("enable_retrieval"):
             chunk = make_chunk("", "searching", history=None)
             yield chunk
 
-            new_query, refs = startup.retriever(query, history_manager.messages, meta)
-            refs_pool[cur_res_id] = refs
-        else:
-            new_query = query
+        new_query = _prepare_chat_query(query, history_manager, meta, literature_context, cur_res_id)
 
-        if literature_context:
-            new_query = f"{literature_context}\n\n用户问题：{new_query}"
-
-        # 提那件带有新查询的历史记录，并添加用户查询到历史记录中
+        # 提交带有新查询的历史记录，并添加用户查询到历史记录中
         messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get('history_round'))
         history_manager.add_user(query)
         logger.debug(f"Web history: {history_manager.messages}")

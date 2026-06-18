@@ -36,7 +36,7 @@
           <component :is="opts.showPanel ? FolderOpenOutlined : FolderOutlined" /> <span class="text">选项</span>
         </div>
         <div v-if="opts.showPanel" class="my-panal r0 top100 swing-in-top-fwd" ref="panel">
-          <div class="flex-center" @click="meta.stream = !meta.stream">
+          <div class="flex-center">
             流式输出 <div @click.stop><a-switch v-model:checked="meta.stream" /></div>
           </div>
           <div class="flex-center" @click="meta.summary_title = !meta.summary_title">
@@ -487,12 +487,101 @@ const loadDatabases = () => {
 
 const buildRequestMeta = (citedLiteraturePayload = []) => ({
   ...structuredClone(toRaw(meta)),
+  stream: meta.stream !== false,
   cited_literature: citedLiteraturePayload,
 })
+
+const parseResponseContent = (responsePayload) => {
+  const raw = responsePayload?.content ?? responsePayload ?? ''
+  const text = typeof raw === 'string' ? raw : String(raw?.content ?? '')
+  const thinkStartRegex = /<think>/
+  const thinkEndRegex = /<\/think>/
+
+  let isInThinkTag = false
+  let textContent = ''
+  let ponderContent = ''
+
+  for (const line of text.split('\n')) {
+    if (thinkStartRegex.test(line)) {
+      isInThinkTag = true
+      continue
+    }
+    if (thinkEndRegex.test(line)) {
+      isInThinkTag = false
+      continue
+    }
+    if (isInThinkTag) {
+      ponderContent += `${line}\n`
+    } else {
+      textContent += `${line}\n`
+    }
+  }
+
+  const reasoning = responsePayload?.reasoning_content
+  if (reasoning && !ponderContent.trim()) {
+    ponderContent = String(reasoning)
+  }
+
+  return {
+    textContent: textContent.trim(),
+    ponderContent: ponderContent.trim(),
+  }
+}
+
+const applyChatPayload = (data, cur_res_id) => {
+  const { textContent, ponderContent } = parseResponseContent(data.response)
+
+  updateMessage({
+    id: cur_res_id,
+    ponder: ponderContent,
+    model_name: data.model_name,
+    status: data.status,
+    meta: data.meta,
+  })
+
+  nextTick(() => {
+    updateMessage({
+      id: cur_res_id,
+      text: textContent,
+      model_name: data.model_name,
+      status: data.status,
+      meta: data.meta,
+    })
+  })
+
+  if (data.history) {
+    conv.value.history = data.history
+  }
+}
+
+const finishChatResponse = (cur_res_id) => {
+  const message = conv.value.messages.find((item) => item.id === cur_res_id)
+  if (message?.meta?.enable_retrieval) {
+    fetchRefs(cur_res_id).then((data) => {
+      updateMessage({
+        id: cur_res_id,
+        refs: data,
+        status: 'finished',
+      })
+      groupRefs(cur_res_id)
+    })
+  } else {
+    updateMessage({
+      id: cur_res_id,
+      status: 'finished',
+    })
+  }
+  isStreaming.value = false
+  if (conv.value.messages.length === 2) {
+    renameTitle()
+  }
+}
 
 // 新函数用于处理 fetch 请求
 const fetchChatResponse = (user_input, cur_res_id, citedLiteraturePayload = []) => {
   const requestMeta = buildRequestMeta(citedLiteraturePayload)
+  const useStream = requestMeta.stream !== false
+
   fetch('/api/chat/', {
     method: 'POST',
     body: JSON.stringify({
@@ -505,129 +594,49 @@ const fetchChatResponse = (user_input, cur_res_id, citedLiteraturePayload = []) 
       'Content-Type': 'application/json',
     }
   })
-    .then((response) => {
-      console.log(response);
-      if (!response.body) throw new Error("ReadableStream not supported.");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let buffer = '';
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`请求失败 (${response.status})`)
+      }
+
+      if (!useStream) {
+        const data = await response.json()
+        applyChatPayload(data, cur_res_id)
+        finishChatResponse(cur_res_id)
+        return
+      }
+
+      if (!response.body) throw new Error('ReadableStream not supported.')
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
 
       const readChunk = () => {
         return reader.read().then(({ done, value }) => {
           if (done) {
-            const message = conv.value.messages.find((message) => message.id === cur_res_id);
-            console.log(message);
-            if (message.meta.enable_retrieval) {
-              console.log("fetching refs");
-              fetchRefs(cur_res_id).then((data) => {
-                console.log(data);
-                updateMessage({
-                  id: cur_res_id,
-                  refs: data,
-                  status: "finished",
-                });
-                groupRefs(cur_res_id);
-              });
-            } else {
-              updateMessage({
-                id: cur_res_id,
-                status: "finished",
-              });
-            }
-            isStreaming.value = false;
-            if (conv.value.messages.length === 2) { renameTitle(); }
-            return;
+            finishChatResponse(cur_res_id)
+            return
           }
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
 
-          // 处理除最后一行外的所有完整行
           for (let i = 0; i < lines.length - 1; i++) {
-            const line = lines[i].trim();
-            if (line) {
-              try {
-                const data = JSON.parse(line);
-
-                // 定义正则表达式来检测和提取 <think> 标签的内容
-                const thinkStartRegex = /<think>/;
-                const thinkEndRegex = /<\/think>/;
-
-                // 初始化状态变量
-                let isInThinkTag = false;
-                let textContent = ""; // 用于存储非 <think> 部分的内容
-                let ponderContent = ""; // 用于存储 <think> 部分的内容
-
-                // 按行解析 data.response.content
-                const lines = data.response.content.split('\n');
-                for (let i = 0; i < lines.length; i++) {
-                  const line = lines[i];
-
-                  if (thinkStartRegex.test(line)) {
-                    // 遇到 <think> 标签，开始记录 ponderContent
-                    isInThinkTag = true;
-                    continue; // 跳过当前行
-                  }
-
-                  if (thinkEndRegex.test(line)) {
-                    // 遇到 </think> 标签，停止记录 ponderContent
-                    isInThinkTag = false;
-                    continue; // 跳过当前行
-                  }
-
-                  if (isInThinkTag) {
-                    // 当前处于 <think> 标签内，将内容添加到 ponderContent
-                    ponderContent += line + '\n';
-                  } else {
-                    // 当前不在 <think> 标签内，将内容添加到 textContent
-                    textContent += line + '\n';
-                  }
-                }
-
-                // 去掉多余的换行符
-                ponderContent = ponderContent.trim();
-                textContent = textContent.trim();
-
-                console.log("textContent:", textContent);
-                console.log("ponderContent:", ponderContent);
-
-                // 更新消息
-                updateMessage({
-                  id: cur_res_id,
-                  ponder: ponderContent, // 先更新 ponder
-                  model_name: data.model_name,
-                  status: data.status,
-                  meta: data.meta,
-                });
-
-                // 等待 DOM 更新完成
-                nextTick(() => {
-                  updateMessage({
-                    id: cur_res_id,
-                    text: textContent, // 再更新 text
-                    model_name: data.model_name,
-                    status: data.status,
-                    meta: data.meta,
-                  });
-                });
-
-                // 如果存在 history，更新 conv.value.history
-                if (data.history) {
-                  conv.value.history = data.history;
-                }
-              } catch (e) {
-                console.error('JSON 解析错误:', e, line);
-              }
+            const line = lines[i].trim()
+            if (!line) continue
+            try {
+              const data = JSON.parse(line)
+              applyChatPayload(data, cur_res_id)
+            } catch (e) {
+              console.error('JSON 解析错误:', e, line)
             }
           }
 
-          // 保留最后一个可能不完整的行
-          buffer = lines[lines.length - 1];
-
-          return readChunk(); // 继续读取
-        });
-      };
-      readChunk();
+          buffer = lines[lines.length - 1]
+          return readChunk()
+        })
+      }
+      return readChunk()
     })
     .catch((error) => {
       console.error(error);
@@ -861,10 +870,13 @@ onMounted(() => {
   loadDatabases()
   const storedMeta = localStorage.getItem('meta');
   if (storedMeta) {
-    const parsedMeta = JSON.parse(storedMeta);
-    Object.assign(meta, parsedMeta);
+    const parsedMeta = JSON.parse(storedMeta)
+    Object.assign(meta, parsedMeta)
   }
-});
+  if (meta.stream === undefined) {
+    meta.stream = true
+  }
+})
 
 // 监听 meta 对象的变化，并保存到本地存储（不持久化临时引用）
 watch(
