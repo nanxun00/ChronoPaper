@@ -16,7 +16,7 @@
         <GlobalOutlined /> 关系图
       </span>
       <span class="filetag item btn"
-        v-for="(results, filename) in msg.groupedResults"
+        v-for="(results, filename) in groupedResults"
         :key="filename"
         @click="toggleDrawer(filename)"
       >
@@ -47,7 +47,10 @@
                     <a-progress :percent="getPercent(res.rerank_score)"/>
                   </span>
                 </div>
-                <div class="result-id">ID: #{{ res.id }}</div>
+                <div class="result-id">
+                  ID: #{{ res.id }}
+                  <span v-if="res.entity?.page_num"> · 第 {{ res.entity.page_num }} 页</span>
+                </div>
               </div>
               <div class="result-text">{{ res.entity.text }}</div>
             </div>
@@ -67,7 +70,7 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { useClipboard } from '@vueuse/core'
 import { message } from 'ant-design-vue'
 import {
@@ -92,9 +95,24 @@ const props = defineProps({
 
 const emit = defineEmits(['delete-turn'])
 
-const msg = ref(props.message)
+const msg = computed(() => props.message || {})
 
-// 使用 useClipboard 实现复制功能
+const groupedResults = computed(() => msg.value.groupedResults || {})
+
+// 使用 reactive 创建一个响应式对象来存储每个文件的抽屉状态
+const openDetail = reactive({})
+
+watch(
+  groupedResults,
+  (groups) => {
+    for (const filename of Object.keys(groups)) {
+      if (!(filename in openDetail)) {
+        openDetail[filename] = false
+      }
+    }
+  },
+  { immediate: true, deep: true },
+)
 const { copy, isSupported } = useClipboard()
 
 // 定义 copy 方法
@@ -127,19 +145,11 @@ const deleteThisTurn = (msg) => {
   emit('delete-turn', msg.id)
 }
 
-// 使用 reactive 创建一个响应式对象来存储每个文件的抽屉状态
-const openDetail = reactive({})
-
-// 初始化 openDetail 对象
-for (const filename in msg.value.groupedResults) {
-  openDetail[filename] = false
-}
-
 const toggleDrawer = (filename) => {
   openDetail[filename] = !openDetail[filename]
 }
 
-const showRefs = computed(() => msg.value.role=='received' && msg.value.status=='finished')
+const showRefs = computed(() => msg.value.role === 'received' && msg.value.status === 'finished')
 
 const subGraphVisible = ref(false)
 const subGraphData = ref(null)

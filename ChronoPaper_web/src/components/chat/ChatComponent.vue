@@ -446,6 +446,10 @@ const updateMessage = (info) => {
     if (info.meta !== null && info.meta !== undefined) {
       message.meta = info.meta;
     }
+
+    if (info.groupedResults !== null && info.groupedResults !== undefined) {
+      message.groupedResults = info.groupedResults;
+    }
   } else {
     console.error('Message not found');
   }
@@ -454,21 +458,62 @@ const updateMessage = (info) => {
 };
 
 
-const groupRefs = (id) => {
-  const message = conv.value.messages.find((message) => message.id === id)
-  if (message.refs && message.refs.knowledge_base.results.length > 0) {
-    message.groupedResults = message.refs.knowledge_base.results
-      .filter(result => result.file && result.file.filename)
-      .reduce((acc, result) => {
-        const { filename } = result.file;
-        if (!acc[filename]) {
-          acc[filename] = []
-        }
-        acc[filename].push(result)
-        return acc;
-      }, {})
+const resolveDbName = () => {
+  if (!meta.enable_retrieval || !opts.databases?.length) return null
+  let index = meta.selectedKB
+  if (index == null || index < 0 || !opts.databases[index]) {
+    index = opts.databases.findIndex((d) => d.is_system)
+    if (index < 0) index = 0
+    meta.selectedKB = index
   }
+  return opts.databases[index]?.metaname || null
+}
+
+const groupRefs = (id) => {
+  const message = conv.value.messages.find((m) => m.id === id)
+  if (!message) {
+    scrollToBottom()
+    return
+  }
+
+  const grouped = {}
+  const kbResults = message?.refs?.knowledge_base?.results || []
+  for (const result of kbResults) {
+    const filename = result.file?.filename || result.entity?.paper_id
+    if (!filename) continue
+    if (!result.file) {
+      result.file = { filename, type: 'pdf', created_at: Date.now() / 1000 }
+    }
+    if (!grouped[filename]) grouped[filename] = []
+    grouped[filename].push(result)
+  }
+
+  const msgIndex = conv.value.messages.findIndex((m) => m.id === id)
+  const userMsg = msgIndex > 0 ? conv.value.messages[msgIndex - 1] : null
+  const citations = userMsg?.citations || message?.meta?.cited_literature || []
+  for (const cite of citations) {
+    const title = (cite.title || cite.arxiv_id || '').trim()
+    if (!title || grouped[title]) continue
+    grouped[title] = [{
+      id: cite.arxiv_id || title,
+      file: { filename: title, type: 'pdf', created_at: Date.now() / 1000 },
+      entity: {
+        text: cite.abstract || cite.full_text || '（本轮对话引用的文献）',
+        paper_id: cite.arxiv_id,
+      },
+      distance: 1,
+    }]
+  }
+
+  message.groupedResults = grouped
+  updateMessage({ id, groupedResults: grouped })
   scrollToBottom()
+}
+
+const applyRefsToMessage = (cur_res_id, refs) => {
+  if (!refs) return
+  updateMessage({ id: cur_res_id, refs })
+  groupRefs(cur_res_id)
 }
 
 const simpleCall = (messageText) => callChat(messageText)
@@ -479,14 +524,23 @@ const loadDatabases = () => {
   })
     .then(response => response.json())
     .then(data => {
-      console.log(data)
-      opts.databases = data.databases
+      opts.databases = data.databases || []
+      if (meta.enable_retrieval && (meta.selectedKB == null || meta.selectedKB < 0)) {
+        const systemIdx = opts.databases.findIndex((d) => d.is_system)
+        if (systemIdx >= 0) meta.selectedKB = systemIdx
+      }
     })
 }
 
 const buildRequestMeta = (citedLiteraturePayload = []) => ({
   ...structuredClone(toRaw(meta)),
   stream: meta.stream !== false,
+  db_name: resolveDbName() || meta.db_name || null,
+  mode: 'search',
+  maxQueryCount: 20,
+  topK: 5,
+  distanceThreshold: 0,
+  use_llm_filter: false,
   cited_literature: citedLiteraturePayload,
 })
 
@@ -555,29 +609,41 @@ const applyChatPayload = (data, cur_res_id) => {
     conv.value.conv_id = data.conv_id
     emit('conv-created', data.conv_id)
   }
+  if (data.refs) {
+    applyRefsToMessage(cur_res_id, data.refs)
+  }
 }
 
 const finishChatResponse = (cur_res_id) => {
   const message = conv.value.messages.find((item) => item.id === cur_res_id)
-  if (message?.meta?.enable_retrieval) {
-    fetchRefs(cur_res_id).then((data) => {
-      updateMessage({
-        id: cur_res_id,
-        refs: data,
-        status: 'finished',
-      })
+  const useRetrieval = meta.enable_retrieval || message?.meta?.enable_retrieval
+  const hasGrouped = message?.groupedResults && Object.keys(message.groupedResults).length > 0
+
+  const finalize = () => {
+    if (message && message.status !== 'finished') {
+      updateMessage({ id: cur_res_id, status: 'finished' })
+    }
+    isStreaming.value = false
+    if (conv.value.messages.length === 2) {
+      renameTitle()
+    }
+  }
+
+  if (!hasGrouped) {
+    if (message?.refs) {
       groupRefs(cur_res_id)
-    })
-  } else {
-    updateMessage({
-      id: cur_res_id,
-      status: 'finished',
-    })
+    } else if (useRetrieval) {
+      fetchRefs(cur_res_id)
+        .then((refs) => applyRefsToMessage(cur_res_id, refs))
+        .catch((err) => console.warn('fetchRefs failed', err))
+        .finally(finalize)
+      return
+    } else {
+      groupRefs(cur_res_id)
+    }
   }
-  isStreaming.value = false
-  if (conv.value.messages.length === 2) {
-    renameTitle()
-  }
+
+  finalize()
 }
 
 const fetchChatResponse = (user_input, user_msg_id, cur_res_id, citedLiteraturePayload = []) => {
@@ -668,7 +734,7 @@ const fetchRefs = (cur_res_id) => {
 // 更新后的 sendMessage 函数
 const sendMessage = () => {
   const user_input = conv.value.inputText.trim();
-  const dbName = opts.databases.length > 0 ? opts.databases[meta.selectedKB]?.metaname : null;
+  const dbName = resolveDbName();
   const images = fileList.value.map(file => file.url);
   const citations = citedLiterature.value.map((p) => ({ ...p }));
   const finalInput = ocrText.value ? `${user_input} ${ocrText.value}` : user_input;

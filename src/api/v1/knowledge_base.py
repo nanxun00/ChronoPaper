@@ -162,9 +162,24 @@ async def delete_document(db_id: str = Body(...), file_id: str = Body(...)):
     startup.dbm.delete_file(db_id, file_id)
     return {"message": "删除成功"}
 
+@data.get("/papers")
+async def list_kb_papers(
+    db_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    q: str | None = None,
+):
+    """列出知识库中已向量入库的文献（按 paper_id 关联的 text_chunks）。"""
+    logger.debug(f"List indexed papers in {db_id}, page={page}")
+    return startup.dbm.list_indexed_papers(db_id, page=page, page_size=page_size, q=q)
+
+
 @data.get("/document")
-async def get_document_info(db_id: str, file_id: str
-                            ):
+async def get_document_info(
+    db_id: str,
+    file_id: str | None = None,
+    paper_id: str | None = None,
+):
     '''
         异步函数获取文档信息
         该函数通过接受数据库ID和文件ID作为参数，查询并返回指定文档的信息。它使用了装饰器来处理HTTP get请求
@@ -175,10 +190,16 @@ async def get_document_info(db_id: str, file_id: str
         返回：
         - info: 文档信息的字典，如果查询失败，则返回包含错误信息和状态码的字典
     '''
-    logger.debug(f"GET document {file_id} info in {db_id}")
+    logger.debug(f"GET document in {db_id}, file_id={file_id}, paper_id={paper_id}")
+
+    if not file_id and not paper_id:
+        raise HTTPException(status_code=400, detail="file_id 或 paper_id 必填其一")
 
     try:
-        info = startup.dbm.get_file_info(db_id, file_id)
+        if paper_id:
+            info = startup.dbm.get_paper_chunks(db_id, paper_id)
+        else:
+            info = startup.dbm.get_file_info(db_id, file_id)
     except Exception as e:
         logger.error(f"Failed to get file info, {e}, {db_id=}, {file_id=}")
         info = {"message": "Failed to get file info", "status": "failed"}, 500

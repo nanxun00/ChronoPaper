@@ -10,6 +10,10 @@ from src.models.base import Base
 
 class KnowledgeBaseFile(Base):
     __tablename__ = "knowledge_base_files"
+    __table_args__ = {
+        "mysql_charset": "utf8mb4",
+        "mysql_collate": "utf8mb4_unicode_ci",
+    }
 
     file_id = Column(String(64), primary_key=True)
     kb_id = Column(String(32), nullable=False, index=True)

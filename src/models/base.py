@@ -83,6 +83,44 @@ def repair_chat_conversation_fk(engine, log) -> None:
                 log.warning("Could not drop chat_conversation FK %s: %s", fk_name, exc)
 
 
+def _table_collation(engine, table: str) -> str:
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT TABLE_COLLATION FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name"
+            ),
+            {"table_name": table},
+        ).fetchone()
+    return (row[0] or "").lower() if row else ""
+
+
+def repair_unicode_collation(engine, log) -> None:
+    """统一文献与 RAG 表的 collation，避免 JOIN 报 1267。"""
+    target = "utf8mb4_unicode_ci"
+    inspector = inspect(engine)
+    for table in (
+        "text_chunks",
+        "knowledge_base",
+        "knowledge_base_files",
+        "entity_alias",
+        "papers",
+        "literature_entries",
+    ):
+        if table not in inspector.get_table_names():
+            continue
+        current = _table_collation(engine, table)
+        if current == target:
+            continue
+        ddl = f"ALTER TABLE `{table}` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(ddl))
+            log.info("Collation migrated %s: %s -> %s", table, current or "?", target)
+        except Exception as exc:
+            log.warning("Collation migration skipped for %s: %s", table, exc)
+
+
 def migrate_schema(engine, log) -> None:
     """为已存在库补充新列（create_all 不会 ALTER 旧表）。"""
     inspector = inspect(engine)
@@ -205,6 +243,8 @@ def migrate_schema(engine, log) -> None:
             log.info("Schema migrated: %s", ddl.split("ADD COLUMN")[-1].split("MODIFY")[-1][:40])
         except Exception as exc:
             log.warning("Schema migration skipped: %s (%s)", ddl[:60], exc)
+
+    repair_unicode_collation(engine, log)
 
 
 def init_db() -> None:

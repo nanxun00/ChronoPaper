@@ -107,7 +107,11 @@ class Retriever:
         top_k = meta.get("topK", 5)
         user_id = meta.get("user_id") or meta.get("owner_user_id") or 0
 
-        filter_json = llm_extract_filter_cond(query)
+        filter_json = llm_extract_filter_cond(query) if meta.get("use_llm_filter") else {}
+        # 当前入库 chunk 的 keywords/task_domain 等字段多为空，LLM 抽取的标量过滤会导致 0 命中
+        for key in ("keywords", "task_domain", "section_type", "block_type"):
+            filter_json.pop(key, None)
+
         all_kb_res = self.dbm.search_knowledge_base(
             rw_query,
             db_name,
@@ -116,14 +120,21 @@ class Retriever:
             limit=max_query_count,
         )
         for r in all_kb_res:
-            file_id = r["entity"].get("file_id")
+            entity = r.get("entity") or {}
+            file_id = entity.get("file_id")
+            paper_id = entity.get("paper_id")
+            r["file"] = None
             if file_id:
                 r["file"] = self.dbm.id2file(kb_row.kb_id, file_id)
+            if not r.get("file") and paper_id:
+                r["file"] = self.dbm.id2paper(paper_id)
+            if not r.get("file") and file_id:
+                r["file"] = self.dbm.id2paper(file_id)
 
         if meta.get("mode") == "search":
             kb_res = all_kb_res
         else:
-            kb_res = [r for r in all_kb_res if r["distance"] > distance_threshold]
+            kb_res = [r for r in all_kb_res if r["distance"] >= distance_threshold]
 
         if self.config.enable_reranker:
             for r in kb_res:

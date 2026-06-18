@@ -11,6 +11,10 @@ from src.models.base import Base
 
 class KnowledgeBaseRecord(Base):
     __tablename__ = "knowledge_base"
+    __table_args__ = {
+        "mysql_charset": "utf8mb4",
+        "mysql_collate": "utf8mb4_unicode_ci",
+    }
 
     kb_id = Column(String(32), primary_key=True)
     name = Column(String(255), nullable=False, default="")
@@ -25,7 +29,9 @@ class KnowledgeBaseRecord(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def to_dict(self, *, row_count: int = 0, metadata: dict | None = None) -> dict:
-        meta = metadata or {"collection_name": "paper_text_chunk", "row_count": row_count}
+        meta = dict(metadata or {})
+        meta.setdefault("collection_name", "paper_text_chunk")
+        meta["row_count"] = row_count
         return {
             "kb_id": self.kb_id,
             "db_id": self.kb_id,

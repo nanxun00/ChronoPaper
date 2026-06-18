@@ -9,6 +9,10 @@ from src.models.base import Base
 
 class Paper(Base):
     __tablename__ = "papers"
+    __table_args__ = {
+        "mysql_charset": "utf8mb4",
+        "mysql_collate": "utf8mb4_unicode_ci",
+    }
 
     arxiv_id = Column(String(128), primary_key=True)
     source = Column(String(32), nullable=False, default="arxiv")

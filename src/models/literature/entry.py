@@ -10,6 +10,7 @@ class LiteratureEntry(Base):
     __tablename__ = "literature_entries"
     __table_args__ = (
         UniqueConstraint("arxiv_id", "user_id", "visibility", name="uq_literature_scope"),
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)

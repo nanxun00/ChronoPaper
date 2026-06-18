@@ -10,6 +10,10 @@ from src.models.base import Base
 
 class EntityAlias(Base):
     __tablename__ = "entity_alias"
+    __table_args__ = {
+        "mysql_charset": "utf8mb4",
+        "mysql_collate": "utf8mb4_unicode_ci",
+    }
 
     id = Column(String(32), primary_key=True)
     std_name = Column(String(255), nullable=False, index=True)

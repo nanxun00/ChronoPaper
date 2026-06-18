@@ -7,7 +7,7 @@
       <div class="database-info">
         <a-tag color="blue" v-if="database.embed_model">{{ database.embed_model }}</a-tag>
         <a-tag color="green" v-if="database.dimension">{{ database.dimension }}</a-tag>
-        <span class="row-count">{{ database.metadata?.row_count }} 行 · {{ database.files?.length || 0 }} 文件</span>
+        <span class="row-count">{{ database.metadata?.row_count }} 行 · {{ indexedPaperTotal }} 篇文献</span>
       </div>
     </template>
     <template #actions>
@@ -43,58 +43,74 @@
             </a-upload-dragger>
           </div>
           <div class="actions">
+            <a-input-search
+              v-model:value="paperQuery"
+              placeholder="搜索标题或文献 ID"
+              style="max-width: 360px"
+              allow-clear
+              @search="searchIndexedPapers"
+            />
             <a-button
               type="primary"
               @click="addDocumentByFile"
               :loading="state.loading"
               :disabled="fileList.length === 0"
-              style="margin: 0px 20px 20px 0;"
             >
               添加到知识库
             </a-button>
             <a-button @click="handleRefresh" :loading="state.refrashing">刷新状态</a-button>
           </div>
-          <a-table :columns="columns" :data-source="database.files" row-key="filename" class="my-table">
-            <template #bodyCell="{ column, text, record }">
-              <template v-if="column.key === 'filename'">
-                <a-button class="main-btn" type="link" @click="openFileDetail(record)">{{ text }}</a-button>
+          <a-table
+            :columns="paperColumns"
+            :data-source="indexedPapers"
+            row-key="arxiv_id"
+            class="my-table"
+            :loading="state.papersLoading"
+            :pagination="paperPagination"
+            @change="onPaperTableChange"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'title'">
+                <a-button class="main-btn" type="link" @click="openPaperDetail(record)">{{ record.title }}</a-button>
               </template>
-              <template v-else-if="column.key === 'type'"><span :class="text">{{ text.toUpperCase() }}</span></template>
-              <template v-else-if="column.key === 'status' && text === 'done'">
-                <CheckCircleFilled style="color: #41A317;"/>
+              <template v-else-if="column.key === 'source'">
+                <a-tag :color="sourceColor(record.source)">{{ sourceLabel(record.source) }}</a-tag>
               </template>
-              <template v-else-if="column.key === 'status' && text === 'failed'">
-                <CloseCircleFilled style="color: #FF4D4F ;"/>
+              <template v-else-if="column.key === 'pipeline_status'">
+                <a-tag color="success">已入库</a-tag>
               </template>
-              <template v-else-if="column.key === 'status' && text === 'processing'">
-                <HourglassFilled style="color: #1677FF;"/>
+              <template v-else-if="column.key === 'chunk_count'">
+                {{ record.chunk_count || 0 }}
               </template>
-              <template v-else-if="column.key === 'status' && text === 'waiting'">
-                <ClockCircleFilled style="color: #FFCD43;"/>
+              <template v-else-if="column.key === 'indexed_at'">
+                {{ record.indexed_at ? formatRelativeTime(Math.round(record.indexed_at * 1000)) : '-' }}
               </template>
               <template v-else-if="column.key === 'action'">
-                <a-button class="del-btn" type="link"
-                  @click="deleteFile(text)"
-                  :disabled="state.lock || record.status === 'processing' || record.status === 'waiting' "
-                  >删除
-                </a-button>
+                <a-button class="main-btn" type="link" @click="openPaperDetail(record)">查看片段</a-button>
               </template>
-              <span v-else-if="column.key === 'created_at'">{{ formatRelativeTime(Math.round(text*1000)) }}</span>
-              <span v-else>{{ text }}</span>
+            </template>
+            <template #emptyText>
+              <a-empty description="暂无已入库文献，请先在文献管理中完成解析与向量入库" />
             </template>
           </a-table>
           <a-drawer
             width="50%"
             v-model:open="state.drawer"
             class="custom-class"
-            :title="selectedFile?.filename || '文件详情'"
+            :title="selectedPaper?.title || '文献片段'"
             placement="right"
             @after-open-change="afterOpenChange"
           >
-            <h2>共 {{ selectedFile?.lines.length }} 个片段</h2>
-            <p v-for="line in selectedFile?.lines" :key="line.id">
-              <strong>Chunk #{{ line.id }}</strong>   {{ line.text }}
-            </p>
+            <h2>共 {{ selectedPaper?.chunkTotal ?? selectedPaper?.lines?.length ?? 0 }} 个片段</h2>
+            <div v-for="line in selectedPaper?.lines" :key="line.id" class="chunk-item">
+              <p class="chunk-meta">
+                <strong>Chunk #{{ line.id }}</strong>
+                <span v-if="line.page_num"> · 第 {{ line.page_num }} 页</span>
+                <span v-if="line.section_type"> · {{ line.section_type }}</span>
+                <span v-if="line.block_type"> · {{ line.block_type }}</span>
+              </p>
+              <p class="chunk-text">{{ line.text }}</p>
+            </div>
           </a-drawer>
         </div>
       </a-tab-pane>
@@ -210,12 +226,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useConfigStore } from '@/stores'
 import HeaderComponent from '@/components/common/HeaderComponent.vue';
 import {
-  ReadFilled,
   LeftOutlined,
-  CheckCircleFilled,
-  HourglassFilled,
-  CloseCircleFilled,
-  ClockCircleFilled,
   DeleteOutlined,
   CloudUploadOutlined,
   SearchOutlined,
@@ -229,7 +240,40 @@ const databaseId = ref(route.params.database_id);
 const database = ref({});
 
 const fileList = ref([]);
-const selectedFile = ref(null);
+const selectedPaper = ref(null);
+const indexedPapers = ref([]);
+const indexedPaperTotal = ref(0);
+const paperQuery = ref('');
+
+const paperPagination = ref({
+  current: 1,
+  pageSize: 20,
+  total: 0,
+  showSizeChanger: true,
+  showTotal: (total) => `共 ${total} 篇`,
+});
+
+const SOURCE_LABELS = {
+  arxiv: '预印本',
+  openreview: '顶会',
+  openalex: '期刊/会议',
+  upload: '本地上传',
+};
+
+const sourceLabel = (source) => SOURCE_LABELS[source] || source || 'arXiv';
+const sourceColor = (source) => {
+  const map = { arxiv: 'blue', openreview: 'purple', openalex: 'green', upload: 'orange' };
+  return map[source] || 'default';
+};
+
+const paperColumns = [
+  { title: '标题', key: 'title', dataIndex: 'title', ellipsis: true },
+  { title: '来源', key: 'source', width: 100 },
+  { title: '状态', key: 'pipeline_status', width: 90 },
+  { title: '片段数', key: 'chunk_count', width: 80 },
+  { title: '入库时间', key: 'indexed_at', width: 140 },
+  { title: '操作', key: 'action', width: 100 },
+];
 
 // 查询测试
 const queryText = ref('');
@@ -243,6 +287,7 @@ const state = reactive({
   searchLoading: false,
   lock: false,
   drawer: false,
+  papersLoading: false,
   refreshInterval: null,
   curPage: "add",
 });
@@ -338,7 +383,7 @@ const handleDrop = (event) => {
 
 const afterOpenChange = (visible) => {
   if (!visible) {
-    selectedFile.value = null
+    selectedPaper.value = null
   }
 }
 
@@ -348,10 +393,56 @@ const backToDatabase = () => {
 
 const handleRefresh = () => {
   state.refrashing = true
-  getDatabaseInfo().then(() => {
+  Promise.all([getDatabaseInfo(), loadIndexedPapers()]).finally(() => {
     state.refrashing = false
-    console.log(database.value)
   })
+}
+
+const searchIndexedPapers = () => {
+  paperPagination.value.current = 1
+  loadIndexedPapers()
+}
+
+const onPaperTableChange = (pagination) => {
+  paperPagination.value.current = pagination.current
+  paperPagination.value.pageSize = pagination.pageSize
+  loadIndexedPapers()
+}
+
+const loadIndexedPapers = () => {
+  const db_id = databaseId.value
+  if (!db_id) {
+    return Promise.resolve()
+  }
+  state.papersLoading = true
+  const params = new URLSearchParams({
+    db_id,
+    page: String(paperPagination.value.current),
+    page_size: String(paperPagination.value.pageSize),
+  })
+  if (paperQuery.value.trim()) {
+    params.set('q', paperQuery.value.trim())
+  }
+  return fetch(`/api/data/papers?${params.toString()}`)
+    .then(async (response) => {
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `请求失败 (${response.status})`)
+      }
+      return response.json()
+    })
+    .then((data) => {
+      indexedPapers.value = data.items || []
+      indexedPaperTotal.value = data.total || 0
+      paperPagination.value.total = data.total || 0
+    })
+    .catch((error) => {
+      console.error(error)
+      message.error(error.message || '加载文献列表失败')
+    })
+    .finally(() => {
+      state.papersLoading = false
+    })
 }
 
 const deleteDatabse = () => {
@@ -392,22 +483,24 @@ const deleteDatabse = () => {
   });
 }
 
-const openFileDetail = (record) => {
+const openPaperDetail = (record) => {
   state.lock = true
-  fetch(`/api/data/document?db_id=${databaseId.value}&file_id=${record.file_id}`, {
-    method: "GET",
-  })
-    .then(response => response.json())
-    .then(data => {
-      console.log(data)
-      state.lock = false
-      selectedFile.value = record
-      selectedFile.value.lines = data.lines
+  fetch(`/api/data/document?db_id=${databaseId.value}&paper_id=${encodeURIComponent(record.arxiv_id)}`)
+    .then((response) => response.json())
+    .then((data) => {
+      selectedPaper.value = {
+        ...record,
+        lines: data.lines || [],
+        chunkTotal: data.total ?? (data.lines || []).length,
+      }
       state.drawer = true
     })
-    .catch(error => {
+    .catch((error) => {
       console.error(error)
-      message.error(error.message)
+      message.error(error.message || '加载片段失败')
+    })
+    .finally(() => {
+      state.lock = false
     })
 }
 
@@ -440,8 +533,8 @@ const getDatabaseInfo = () => {
     fetch(`/api/data/info?db_id=${db_id}`, {
       method: "GET",
     })
-      .then(response => response.json())
-      .then(data => {
+      .then((response) => response.json())
+      .then((data) => {
         database.value = data
         resolve(data)
       })
@@ -456,45 +549,19 @@ const getDatabaseInfo = () => {
   })
 }
 
-const deleteFile = (fileId) => {
-  console.log(fileId)
-  state.lock = true
-  fetch('/api/data/document', {
-    method: "DELETE",
-    headers: {
-      "Content-Type": "application/json"  // 添加 Content-Type 头
-    },
-    body: JSON.stringify({
-      db_id: databaseId.value,
-      file_id: fileId
-    }),
-  })
-    .then(response => response.json())
-    .then(data => {
-      console.log(data)
-      message.success(data.message)
-      getDatabaseInfo()
-    })
-    .catch(error => {
-      console.error(error)
-      message.error(error.message)
-    })
-}
-
 const addDocumentByFile = () => {
-  console.log(fileList.value)
   const files = fileList.value.filter(file => file.status === 'done').map(file => file.response.file_path)
-  console.log(files)
 
   state.loading = true
   state.lock = true
   state.refreshInterval = setInterval(() => {
     getDatabaseInfo();
+    loadIndexedPapers();
   }, 1000);
   fetch('/api/data/add-by-file', {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"  // 添加 Content-Type 头
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
       db_id: databaseId.value,
@@ -503,7 +570,6 @@ const addDocumentByFile = () => {
   })
     .then(response => response.json())
     .then(data => {
-      console.log(data)
       fileList.value = []
       if (data.status === 'failed') {
         message.error(data.message)
@@ -517,25 +583,19 @@ const addDocumentByFile = () => {
     })
     .finally(() => {
       getDatabaseInfo()
+      loadIndexedPapers()
       clearInterval(state.refreshInterval)
       state.loading = false
+      state.lock = false
     })
 }
 
-const columns = [
-  // { title: '文件ID', dataIndex: 'file_id', key: 'file_id' },
-  { title: '文件名', dataIndex: 'filename', key: 'filename' },
-  { title: '上传时间', dataIndex: 'created_at', key: 'created_at' },
-  { title: '状态', dataIndex: 'status', key: 'status' },
-  { title: '类型', dataIndex: 'type', key: 'type' },
-  { title: '操作', key: 'action', dataIndex: 'file_id' }
-];
-
 watch(() => route.params.database_id, (newId) => {
     databaseId.value = newId;
-    console.log(newId)
     clearInterval(state.refreshInterval)
+    paperPagination.value.current = 1
     getDatabaseInfo()
+    loadIndexedPapers()
   }
 );
 
@@ -560,9 +620,7 @@ const useQueryExample = (example) => {
 
 onMounted(() => {
   getDatabaseInfo();
-  // const refreshInterval = setInterval(() => {
-  //   getDatabaseInfo();
-  // }, 10000);
+  loadIndexedPapers();
 })
 
 
@@ -802,6 +860,33 @@ onMounted(() => {
         border-top: 1px solid var(--main-light-3);
       }
     }
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.chunk-item {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--main-light-3);
+
+  .chunk-meta {
+    margin-bottom: 6px;
+    color: var(--gray-700);
+    font-size: 13px;
+  }
+
+  .chunk-text {
+    margin: 0;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 }
 

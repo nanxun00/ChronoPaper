@@ -10,6 +10,10 @@ from src.models.base import Base
 
 class TextChunk(Base):
     __tablename__ = "text_chunks"
+    __table_args__ = {
+        "mysql_charset": "utf8mb4",
+        "mysql_collate": "utf8mb4_unicode_ci",
+    }
 
     chunk_id = Column(String(64), primary_key=True)
     chunk_text = Column(Text, nullable=False, default="")

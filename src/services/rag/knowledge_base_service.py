@@ -7,9 +7,12 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from sqlalchemy import desc, func
+
 from src.config import EMBED_MODEL_INFO
 from src.integrations.llm.embedding import get_embedding_model
 from src.models.base import SessionLocal
+from src.models.literature import Paper
 from src.models.rag import KnowledgeBaseFile, KnowledgeBaseRecord, TextChunk
 from src.services.rag.indexing_pipeline import fetch_chunks_by_ids, index_chunk_rows, soft_delete_kb_chunks
 from src.services.rag.knowledgebase import KnowledgeBase
@@ -192,6 +195,122 @@ class KnowledgeBaseService:
                 .count()
             )
             return row.to_dict(row_count=count, metadata=self.knowledge_base.get_collection_info() if self.knowledge_base else {})
+        finally:
+            session.close()
+
+    def list_indexed_papers(
+        self,
+        db_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        q: str | None = None,
+    ) -> dict:
+        """列出知识库中已入库文献。分步查询，避免 papers/text_chunks 字符集排序规则不一致导致 JOIN 失败。"""
+        session = self._session()
+        try:
+            stats_q = (
+                session.query(
+                    TextChunk.paper_id.label("paper_id"),
+                    func.count(TextChunk.chunk_id).label("chunk_count"),
+                    func.max(TextChunk.created_at).label("indexed_at"),
+                )
+                .filter(
+                    TextChunk.kb_id == db_id,
+                    TextChunk.paper_id.isnot(None),
+                    TextChunk.paper_id != "",
+                    TextChunk.is_deleted == 0,
+                )
+                .group_by(TextChunk.paper_id)
+            )
+
+            if q:
+                like = f"%{q.strip()}%"
+                matching_ids = [
+                    row[0]
+                    for row in session.query(Paper.arxiv_id)
+                    .filter(Paper.title.like(like) | Paper.arxiv_id.like(like))
+                    .all()
+                ]
+                if not matching_ids:
+                    return {"items": [], "total": 0, "page": max(1, page), "page_size": page_size}
+                stats_q = stats_q.filter(TextChunk.paper_id.in_(matching_ids))
+
+            total = stats_q.count()
+            page = max(1, page)
+            page_size = min(max(1, page_size), 100)
+            stat_rows = (
+                stats_q.order_by(desc(func.max(TextChunk.created_at)))
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+
+            paper_ids = [row.paper_id for row in stat_rows]
+            paper_map = {}
+            if paper_ids:
+                for paper in session.query(Paper).filter(Paper.arxiv_id.in_(paper_ids)).all():
+                    paper_map[paper.arxiv_id] = paper
+
+            items = []
+            for paper_id, chunk_count, indexed_at in stat_rows:
+                paper = paper_map.get(paper_id)
+                if paper:
+                    item = paper.to_dict()
+                else:
+                    item = {
+                        "arxiv_id": paper_id,
+                        "title": paper_id,
+                        "source": "",
+                        "authors": "",
+                        "published_at": None,
+                    }
+                item["pipeline_status"] = "indexed"
+                item["chunk_count"] = int(chunk_count or 0)
+                item["indexed_at"] = indexed_at.timestamp() if indexed_at else None
+                items.append(item)
+            return {"items": items, "total": total, "page": page, "page_size": page_size}
+        finally:
+            session.close()
+
+    def get_paper_chunks(
+        self,
+        db_id: str,
+        paper_id: str,
+        *,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> dict:
+        session = self._session()
+        try:
+            base = session.query(TextChunk).filter(
+                TextChunk.kb_id == db_id,
+                TextChunk.paper_id == paper_id,
+                TextChunk.is_deleted == 0,
+            )
+            total = base.count()
+            lines = (
+                base.order_by(TextChunk.page_num.asc(), TextChunk.created_at.asc())
+                .offset(max(0, offset))
+                .limit(min(max(1, limit), 1000))
+                .all()
+            )
+            return {
+                "total": total,
+                "lines": [
+                    {
+                        "id": line.chunk_id,
+                        "text": line.chunk_text,
+                        "paper_id": paper_id,
+                        "page_num": line.page_num,
+                        "section_type": line.section_type,
+                        "block_type": line.block_type,
+                        "bbox": line.bbox,
+                        "hash": line.text_hash,
+                    }
+                    for line in lines
+                ],
+            }
         finally:
             session.close()
 
@@ -385,6 +504,37 @@ class KnowledgeBaseService:
                 "path": row.path,
                 "type": row.file_type,
                 "status": row.index_status,
+                "created_at": row.created_at.timestamp() if row.created_at else time.time(),
+            }
+        finally:
+            session.close()
+
+    def id2paper(self, paper_id: str) -> dict | None:
+        """文献向量片段：映射为 RefsComponent 可展示的 file 结构。"""
+        if not paper_id:
+            return None
+        session = self._session()
+        try:
+            paper = session.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+            if not paper:
+                return {
+                    "file_id": paper_id,
+                    "filename": paper_id,
+                    "path": "",
+                    "type": "pdf",
+                    "status": "done",
+                    "created_at": time.time(),
+                    "paper_id": paper_id,
+                }
+            return {
+                "file_id": paper.arxiv_id,
+                "filename": (paper.title or paper.arxiv_id).strip(),
+                "path": paper.pdf_path or "",
+                "type": "pdf",
+                "status": "done",
+                "created_at": paper.created_at.timestamp() if paper.created_at else time.time(),
+                "paper_id": paper.arxiv_id,
+                "source": paper.source or "",
             }
         finally:
             session.close()

@@ -64,6 +64,17 @@ def _meta_for_persist(meta: dict) -> dict:
     return clean
 
 
+def _ensure_retrieval_db(meta: dict) -> dict:
+    """启用检索但未指定知识库时，默认使用系统公共文献库。"""
+    meta = dict(meta or {})
+    if meta.get("enable_retrieval") and not meta.get("db_name") and startup.config.enable_knowledge_base:
+        try:
+            meta["db_name"] = startup.dbm.ensure_default_knowledge_base().metaname
+        except Exception as exc:
+            logger.warning("Could not resolve default knowledge base: %s", exc)
+    return meta
+
+
 def _prepare_chat_query(
     query: str,
     history_manager: HistoryManager,
@@ -73,6 +84,7 @@ def _prepare_chat_query(
     cur_res_id: str,
 ) -> str:
     if meta.get("enable_retrieval"):
+        meta = _ensure_retrieval_db(meta)
         meta = {**meta, "user_id": user_id}
         new_query, refs = startup.retriever(query, history_manager.messages, meta)
         _refs_set(user_id, cur_res_id, refs)
@@ -213,6 +225,7 @@ def chat_post(
     db: Session = Depends(get_db),
 ):
     meta = meta or {}
+    meta = _ensure_retrieval_db(meta)
     user_id = current_user.userid
     conv_id = _resolve_conversation(db, user_id, conv_id)
     user_msg_id = user_msg_id or f"msg-{uuid.uuid4().hex}"
@@ -228,18 +241,18 @@ def chat_post(
     db_history = build_llm_history(db, conv_id)
     history_manager = HistoryManager(db_history if conv_id else history)
 
-    def make_chunk(content, status, history=None):
-        return json.dumps(
-            {
-                "response": content,
-                "history": history,
-                "model_name": startup.config.model_name,
-                "status": status,
-                "meta": meta,
-                "conv_id": conv_id,
-            },
-            ensure_ascii=False,
-        ).encode("utf-8") + b"\n"
+    def make_chunk(content, status, history=None, refs=None):
+        payload = {
+            "response": content,
+            "history": history,
+            "model_name": startup.config.model_name,
+            "status": status,
+            "meta": meta,
+            "conv_id": conv_id,
+        }
+        if refs is not None:
+            payload["refs"] = refs
+        return json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n"
 
     def persist_turn(
         assistant_content: str,
@@ -296,6 +309,7 @@ def chat_post(
             "status": "finished",
             "meta": meta,
             "conv_id": conv_id,
+            "refs": refs,
         }
         return Response(
             content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -346,7 +360,7 @@ def chat_post(
             reasoning_content=response_content.get("reasoning_content") or "",
             refs=refs,
         )
-        yield make_chunk(response_content, "finished", history=updated_history)
+        yield make_chunk(response_content, "finished", history=updated_history, refs=refs)
 
     return StreamingResponse(generate_response(), media_type="application/json")
 
@@ -371,5 +385,7 @@ def get_refs(
     cur_res_id: str,
     current_user: UserInDB = Depends(get_current_active_user),
 ):
-    refs = _refs_pop(current_user.userid, cur_res_id)
+    refs = _refs_get(current_user.userid, cur_res_id)
+    if refs is not None:
+        _refs_pop(current_user.userid, cur_res_id)
     return {"refs": refs}
