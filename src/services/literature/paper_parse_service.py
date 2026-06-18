@@ -1,6 +1,8 @@
 """使用 MinerU 将论文 PDF 解析为 Markdown + 图片。"""
 from __future__ import annotations
 
+import src.env_bootstrap  # noqa: F401 — USE_TF=0 before transformers
+
 import shutil
 import threading
 from pathlib import Path
@@ -25,13 +27,24 @@ from src.utils.paths import (
     resolve_paper_md_file,
     resolve_paper_pdf_file,
 )
+from src.utils.pdf_validate import is_pdf_load_error, is_valid_pdf_bytes, is_valid_pdf_file
 
-logger = setup_logger("PaperParseService")
+logger = setup_logger("PaperParseService", console=True)
 
 CONTENT_LIST_NAME = "content_list.json"
 
 _parse_lock = threading.Lock()
 _parsing_papers: set[str] = set()
+
+
+def is_paper_parse_running(arxiv_id: str) -> bool:
+    with _parse_lock:
+        return arxiv_id in _parsing_papers
+
+
+def list_running_parse_paper_ids() -> list[str]:
+    with _parse_lock:
+        return sorted(_parsing_papers)
 
 
 def select_mineru_backend() -> str:
@@ -94,6 +107,22 @@ def _schedule_paper_index(arxiv_id: str) -> None:
         logger.warning("Failed to queue index task for %s: %s", arxiv_id, exc)
 
 
+def _invalidate_corrupt_pdf(arxiv_id: str, paper: Paper, session: Session) -> None:
+    pdf_file = paper_pdf_path(arxiv_id)
+    if pdf_file.exists():
+        try:
+            pdf_file.unlink()
+        except OSError:
+            pass
+    paper.pdf_path = None
+    paper.parse_status = "download_failed"
+    paper.pdf_download_attempts = 0
+    paper.pdf_download_next_retry_at = None
+    paper.pdf_download_last_error = "本地 PDF 无效或损坏"
+    session.add(paper)
+    session.commit()
+
+
 def parse_paper_with_mineru(arxiv_id: str, pdf_path: str | None = None) -> str:
     """解析单篇论文 PDF，返回 content.md 路径。"""
     resolved_pdf = pdf_path or migrate_legacy_pdf_to_paper_dir(arxiv_id)
@@ -115,10 +144,19 @@ def parse_paper_with_mineru(arxiv_id: str, pdf_path: str | None = None) -> str:
     backend = select_mineru_backend()
     settings = get_settings()
     pdf_bytes = canonical_pdf.read_bytes()
+    if not is_valid_pdf_bytes(pdf_bytes):
+        raise ValueError("本地 PDF 文件无效，请重新拉取")
     pdf_stem = canonical_pdf.stem
+    pdf_size_mb = len(pdf_bytes) / (1024 * 1024)
+    logger.info(
+        "MinerU preparing paper=%s backend=%s pdf_size=%.2fMB",
+        arxiv_id,
+        backend,
+        pdf_size_mb,
+    )
 
     do_parse = _load_do_parse()
-    logger.info("MinerU parse start paper=%s backend=%s", arxiv_id, backend)
+    logger.info("MinerU parse start paper=%s backend=%s (模型加载/版面分析可能需数分钟)", arxiv_id, backend)
 
     try:
         do_parse(
@@ -178,6 +216,7 @@ def parse_paper_with_mineru(arxiv_id: str, pdf_path: str | None = None) -> str:
 def _parse_one(session: Session, arxiv_id: str) -> bool:
     paper = session.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
     if not paper:
+        logger.warning("parse skipped, paper not found: %s", arxiv_id)
         return False
 
     if resolve_paper_md_file(arxiv_id):
@@ -193,13 +232,30 @@ def _parse_one(session: Session, arxiv_id: str) -> bool:
         _schedule_paper_index(arxiv_id)
         return True
 
+    status = (paper.parse_status or "pending").lower()
+    if status == "parsing" and is_paper_parse_running(arxiv_id):
+        logger.info("paper already parsing in background: %s", arxiv_id)
+        return False
+    if status == "parsing":
+        logger.warning("paper has stale parsing status, restarting: %s", arxiv_id)
+
     pdf_path = resolve_paper_pdf_file(arxiv_id, paper.pdf_path)
     if not pdf_path:
+        if status == "parsing":
+            paper.parse_status = "downloaded"
+            session.add(paper)
+            session.commit()
+        logger.warning("parse skipped, pdf missing: %s", arxiv_id)
+        return False
+    if not is_valid_pdf_file(pdf_path):
+        _invalidate_corrupt_pdf(arxiv_id, paper, session)
+        logger.warning("parse skipped, invalid pdf: %s", arxiv_id)
         return False
 
     paper.parse_status = "parsing"
     session.add(paper)
     session.commit()
+    logger.info("paper parse queued in worker: %s", arxiv_id)
 
     try:
         md_path = parse_paper_with_mineru(arxiv_id, pdf_path)
@@ -215,9 +271,12 @@ def _parse_one(session: Session, arxiv_id: str) -> bool:
         return True
     except Exception as exc:
         logger.exception("paper parse failed: %s", arxiv_id)
-        paper.parse_status = "parse_failed"
-        session.add(paper)
-        session.commit()
+        if is_pdf_load_error(exc) or "本地 PDF 文件无效" in str(exc):
+            _invalidate_corrupt_pdf(arxiv_id, paper, session)
+        else:
+            paper.parse_status = "parse_failed"
+            session.add(paper)
+            session.commit()
         return False
 
 
@@ -226,12 +285,15 @@ def _parse_batch(paper_ids: list[str]) -> int:
     for arxiv_id in paper_ids:
         with _parse_lock:
             if arxiv_id in _parsing_papers:
+                logger.info("parse batch skip, already running: %s", arxiv_id)
                 continue
             _parsing_papers.add(arxiv_id)
         session = SessionLocal()
         try:
             if _parse_one(session, arxiv_id):
                 done += 1
+        except Exception as exc:
+            logger.exception("parse batch unexpected error paper=%s: %s", arxiv_id, exc)
         finally:
             session.close()
             with _parse_lock:
@@ -244,14 +306,20 @@ def schedule_paper_parse(paper_ids: list[str]) -> None:
     if not ids:
         return
 
+    running = list_running_parse_paper_ids()
+    if running:
+        logger.info("parse scheduler: currently running=%s", running)
+
     def _worker():
+        logger.info("parse worker thread started for %s paper(s): %s", len(ids), ids)
         try:
             count = _parse_batch(ids)
-            logger.info("MinerU paper parse finished: %s papers", count)
+            logger.info("MinerU paper parse finished: %s/%s papers", count, len(ids))
         except Exception as exc:
             logger.exception("MinerU paper parse worker failed: %s", exc)
 
     threading.Thread(target=_worker, daemon=True, name="paper-parse").start()
+    logger.info("parse background thread spawned for: %s", ids)
 
 
 def read_paper_full_text(arxiv_id: str, pdf_fallback_path: str | None = None) -> str:

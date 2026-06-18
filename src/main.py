@@ -1,3 +1,4 @@
+import src.env_bootstrap  # noqa: F401 — USE_TF=0 before transformers
 import os
 import uvicorn
 from contextlib import asynccontextmanager
@@ -21,7 +22,11 @@ async def lifespan(app: FastAPI):
     ensure_papers_dir()
     init_db()
     start_crawl_scheduler()
+    from src.workers.celery_supervisor import start_celery_worker, stop_celery_worker
+
+    start_celery_worker()
     yield
+    stop_celery_worker()
 
 
 app = FastAPI(limits={"max_file_size": 50 * 1024 * 1024}, lifespan=lifespan)
@@ -42,4 +47,5 @@ logger = setup_logger("server:main")    # 记录日志
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8080, workers=10, reload=True,timeout_keep_alive=120)
+    # workers 须为 1，否则每个 worker 会各起一个 Celery 子进程
+    uvicorn.run("src.main:app", host="127.0.0.1", port=8081, workers=1, reload=True, timeout_keep_alive=120)

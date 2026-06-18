@@ -102,7 +102,25 @@
               <template v-else-if="column.key === 'action'">
                 <a-space wrap>
                   <a-button type="link" size="small" @click="openPreview(record)">预览</a-button>
-                  <span v-if="record.review_status === 'pending'" class="review-action-group">
+                  <a-button
+                    v-if="canRetryParse(record)"
+                    type="link"
+                    size="small"
+                    :loading="parseRetryingId === record.arxiv_id"
+                    @click="runParse([record.arxiv_id], 'public')"
+                  >
+                    {{ parseActionLabel(record) }}
+                  </a-button>
+                  <a-button
+                    v-if="needsPdfFetch(record)"
+                    type="link"
+                    size="small"
+                    :loading="fetchRetryingId === record.arxiv_id"
+                    @click="runFetch([record.arxiv_id], 'public')"
+                  >
+                    拉取
+                  </a-button>
+                  <span v-else-if="record.review_status === 'pending'" class="review-action-group">
                     <a-button type="link" size="small" @click="runApprove([record.arxiv_id], 'public')">
                       通过
                     </a-button>
@@ -208,7 +226,25 @@
               <template v-else-if="column.key === 'action'">
                 <a-space wrap>
                   <a-button type="link" size="small" @click="openPreview(record)">预览</a-button>
-                  <span v-if="record.review_status === 'pending'" class="review-action-group">
+                  <a-button
+                    v-if="canRetryParse(record)"
+                    type="link"
+                    size="small"
+                    :loading="parseRetryingId === record.arxiv_id"
+                    @click="runParse([record.arxiv_id], 'private')"
+                  >
+                    {{ parseActionLabel(record) }}
+                  </a-button>
+                  <a-button
+                    v-if="needsPdfFetch(record)"
+                    type="link"
+                    size="small"
+                    :loading="fetchRetryingId === record.arxiv_id"
+                    @click="runFetch([record.arxiv_id], 'private')"
+                  >
+                    拉取
+                  </a-button>
+                  <span v-else-if="record.review_status === 'pending'" class="review-action-group">
                     <a-button type="link" size="small" @click="runApprove([record.arxiv_id], 'private')">
                       通过
                     </a-button>
@@ -352,12 +388,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Modal, message } from 'ant-design-vue'
 import { DeleteOutlined, PictureOutlined, StarFilled, StarOutlined } from '@ant-design/icons-vue'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import PdfPreview from '@/components/literature/PdfPreview.vue'
-import { approveLiteratureEntries, deleteLiteratureEntries, getPaperDetail, listPublicPapers, listPrivatePapers, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
+import { approveLiteratureEntries, deleteLiteratureEntries, fetchLiteraturePdf, getPaperDetail, listPublicPapers, listPrivatePapers, parseLiteratureEntries, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
 import { SOURCE_LABELS } from '@/constants/openreviewVenues'
 import { useSelectionTranslate } from '@/composables/useSelectionTranslate'
 
@@ -368,6 +404,8 @@ const loading = ref(false)
 const uploading = ref(false)
 const deleting = ref(false)
 const reviewing = ref(false)
+const parseRetryingId = ref('')
+const fetchRetryingId = ref('')
 const searchLoading = ref(false)
 const previewOpen = ref(false)
 const previewItem = ref(null)
@@ -401,7 +439,7 @@ const literatureColumns = [
   { title: '引用', dataIndex: 'citation_count', width: 70 },
   { title: '作者', dataIndex: 'authors', width: 150, ellipsis: true },
   { title: '发布时间', dataIndex: 'published_at', width: 120 },
-  { title: '操作', key: 'action', width: 260 },
+  { title: '操作', key: 'action', width: 300 },
 ]
 
 const publicRowSelection = computed(() => ({
@@ -459,6 +497,8 @@ const resolvePipelineStatus = (record) => {
   if (record.pipeline_status) return record.pipeline_status
   const review = record.review_status
   const parse = record.parse_status || record.status
+  if (parse === 'download_failed' || parse === 'download_retry') return 'download_failed'
+  if (review === 'pending' && !record.has_pdf) return 'download_failed'
   if (review === 'pending') return 'pending_review'
   if (review === 'rejected') return 'rejected'
   if (parse === 'parsing') return 'parsing'
@@ -473,6 +513,7 @@ const pipelineStatusLabel = (record) => {
   const map = {
     pending_review: '待审核',
     rejected: '未通过',
+    download_failed: '下载失败',
     parsing: '解析中',
     indexing: '入库中',
     indexed: '已入库',
@@ -487,6 +528,7 @@ const pipelineStatusColor = (record) => {
   const map = {
     pending_review: 'gold',
     rejected: 'red',
+    download_failed: 'error',
     parsing: 'processing',
     indexing: 'cyan',
     indexed: 'success',
@@ -496,6 +538,15 @@ const pipelineStatusColor = (record) => {
   }
   return map[resolvePipelineStatus(record)] || 'default'
 }
+
+const needsPdfFetch = (record) => resolvePipelineStatus(record) === 'download_failed'
+
+const canRetryParse = (record) => {
+  const status = resolvePipelineStatus(record)
+  return status === 'waiting_parse' || status === 'parse_failed' || status === 'parsing'
+}
+
+const parseActionLabel = (record) => (resolvePipelineStatus(record) === 'parsing' ? '重新解析' : '解析')
 
 const previewExternalUrl = computed(() => {
   const item = previewItem.value
@@ -520,8 +571,12 @@ const applyFavoriteState = (papers) =>
     favorited: favoriteIdSet.value.has(p.arxiv_id),
   }))
 
-const loadPublicPapers = async (page = publicPagination.value.current, pageSize = publicPagination.value.pageSize) => {
-  loading.value = true
+const loadPublicPapers = async (
+  page = publicPagination.value.current,
+  pageSize = publicPagination.value.pageSize,
+  silent = false,
+) => {
+  if (!silent) loading.value = true
   try {
     const data = await listPublicPapers({
       q: publicQuery.value || undefined,
@@ -546,8 +601,12 @@ const loadPublicPapers = async (page = publicPagination.value.current, pageSize 
   }
 }
 
-const loadPrivatePapers = async (page = privatePagination.value.current, pageSize = privatePagination.value.pageSize) => {
-  loading.value = true
+const loadPrivatePapers = async (
+  page = privatePagination.value.current,
+  pageSize = privatePagination.value.pageSize,
+  silent = false,
+) => {
+  if (!silent) loading.value = true
   try {
     const data = await listPrivatePapers({
       q: privateQuery.value || undefined,
@@ -596,6 +655,40 @@ const searchPrivatePapers = () => {
 onMounted(() => {
   loadPublicPapers()
   loadPrivatePapers()
+})
+
+const hasActivePipeline = computed(() => {
+  const papers = [...publicPapers.value, ...privateDocs.value]
+  return papers.some((p) => {
+    const s = resolvePipelineStatus(p)
+    return s === 'parsing' || s === 'indexing' || s === 'waiting_parse'
+  })
+})
+
+let pipelinePollTimer = null
+
+const refreshActiveTabPapers = (silent = true) => {
+  if (activeTab.value === 'public') {
+    loadPublicPapers(publicPagination.value.current, publicPagination.value.pageSize, silent)
+  } else if (activeTab.value === 'private') {
+    loadPrivatePapers(privatePagination.value.current, privatePagination.value.pageSize, silent)
+  }
+}
+
+watch(hasActivePipeline, (active) => {
+  if (active && !pipelinePollTimer) {
+    pipelinePollTimer = setInterval(() => refreshActiveTabPapers(true), 8000)
+  } else if (!active && pipelinePollTimer) {
+    clearInterval(pipelinePollTimer)
+    pipelinePollTimer = null
+  }
+}, { immediate: true })
+
+onUnmounted(() => {
+  if (pipelinePollTimer) {
+    clearInterval(pipelinePollTimer)
+    pipelinePollTimer = null
+  }
 })
 
 watch(activeTab, (tab) => {
@@ -719,6 +812,42 @@ const runApprove = async (arxivIds, visibility) => {
     message.error(err.message || '审核通过失败')
   } finally {
     reviewing.value = false
+  }
+}
+
+const runParse = async (arxivIds, visibility) => {
+  if (!arxivIds.length) return
+  parseRetryingId.value = arxivIds[0]
+  try {
+    const result = await parseLiteratureEntries({ arxiv_ids: arxivIds, visibility })
+    message.success(`已排队解析 ${result.queued} 篇`)
+    if (visibility === 'public') {
+      await loadPublicPapers()
+    } else {
+      await loadPrivatePapers()
+    }
+  } catch (err) {
+    message.error(err.message || '解析失败')
+  } finally {
+    parseRetryingId.value = ''
+  }
+}
+
+const runFetch = async (arxivIds, visibility) => {
+  if (!arxivIds.length) return
+  fetchRetryingId.value = arxivIds[0]
+  try {
+    const result = await fetchLiteraturePdf({ arxiv_ids: arxivIds, visibility })
+    message.success(`已拉取 PDF ${result.fetched} 篇`)
+    if (visibility === 'public') {
+      await loadPublicPapers()
+    } else {
+      await loadPrivatePapers()
+    }
+  } catch (err) {
+    message.error(err.message || 'PDF 拉取失败')
+  } finally {
+    fetchRetryingId.value = ''
   }
 }
 

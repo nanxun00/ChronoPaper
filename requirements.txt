@@ -2,6 +2,7 @@
 # ChronoPaper 项目依赖（Python 3.12 专用环境）
 # 仅包含本项目代码实际 import 的包，不含 tensorflow/docling/chromadb 等无关包
 # 安装：conda create -n chronopaper python=3.12 -y && pip install -r requirements.txt
+# Windows 建议先设 $env:PYTHONNOUSERSITE="1"，避免 Roaming 用户 site-packages 污染 conda
 # =============================================================================
 
 # --- 版本锚点（多生态兼容，勿随意升级）---
@@ -19,6 +20,7 @@ pydantic>=2.0.0,<3.0.0
 pydantic-settings>=2.6.0,<3.0.0
 python-dotenv>=1.0.0,<2.0.0
 starlette>=0.41.0,<0.46.0
+python-multipart>=0.0.9,<1.0.0
 
 # =============================================================================
 # 2. 数据库
@@ -116,6 +118,8 @@ opencv-python-headless>=4.11.0,<5.0.0
 fast-langdetect>=0.2.3,<0.3.0
 beautifulsoup4>=4.13.0,<5.0.0
 magika>=0.6.2,<1.1.0
+mammoth>=1.6.0,<2.0.0
+python-pptx>=1.0.0,<2.0.0
 mineru-vl-utils>=1.0.5,<2.0.0
 pylatexenc>=2.10,<3.0.0
 lxml>=4.0.0,<7.0.0

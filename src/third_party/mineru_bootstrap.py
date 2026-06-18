@@ -1,6 +1,8 @@
 """将 vendored MinerU 加入 Python 导入路径。"""
 from __future__ import annotations
 
+import src.env_bootstrap  # noqa: F401 — USE_TF=0 before transformers
+
 import sys
 from pathlib import Path
 

@@ -13,6 +13,7 @@ from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import Paper
 from src.utils.logging_config import setup_logger
 from src.utils.paths import ensure_paper_dir, paper_pdf_path, resolve_paper_pdf_file
+from src.utils.pdf_validate import is_valid_pdf_file
 
 logger = setup_logger("PdfDownloadService")
 
@@ -106,12 +107,20 @@ def try_download_paper_pdf(
     *,
     pdf_url: str | None = None,
     throttle_sec: float = 0,
+    force: bool = False,
 ) -> tuple[bool, str]:
     """尝试下载单篇论文 PDF。返回 (成功与否, 日志说明)。"""
     if throttle_sec > 0:
         time.sleep(throttle_sec)
-    if resolve_paper_pdf_file(paper.arxiv_id, paper.pdf_path):
-        return True, f"PDF 已存在: {paper.arxiv_id}"
+
+    existing = resolve_paper_pdf_file(paper.arxiv_id, paper.pdf_path)
+    if existing:
+        if not force and is_valid_pdf_file(existing):
+            return True, f"PDF 已存在: {paper.arxiv_id}"
+        try:
+            os.remove(existing)
+        except OSError:
+            pass
 
     url = pdf_url or resolve_pdf_download_url(paper)
     if not url:
@@ -124,6 +133,12 @@ def try_download_paper_pdf(
     try:
         ensure_paper_dir(paper.arxiv_id)
         download_pdf_to_path(url, pdf_path)
+        if not is_valid_pdf_file(pdf_path):
+            try:
+                os.remove(pdf_path)
+            except OSError:
+                pass
+            raise ValueError("下载内容不是有效的 PDF 文件（可能是 HTML 登录页）")
         _mark_downloaded(paper, pdf_path, url)
         session.add(paper)
         session.commit()

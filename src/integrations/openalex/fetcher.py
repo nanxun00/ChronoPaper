@@ -69,20 +69,62 @@ def _paper_id_from_work(work: dict) -> str:
     return f"oa:{oa_id}"
 
 
+def _looks_like_pdf_url(url: str | None) -> bool:
+    if not url:
+        return False
+    u = url.strip().lower()
+    if not u.startswith(("http://", "https://")):
+        return False
+    if "doi.org/" in u:
+        return False
+    if u.endswith(".pdf"):
+        return True
+    if "/pdf/" in u or "/retrieve/" in u:
+        return True
+    return False
+
+
 def _pdf_url_from_work(work: dict) -> str | None:
-    oa = work.get("open_access") or {}
-    if oa.get("oa_url"):
-        return oa["oa_url"]
+    """优先返回可直接下载的 PDF 链接，避免把 DOI 落地页当作 PDF。"""
+    candidates: list[str] = []
+
+    def add(url: str | None) -> None:
+        if url and url not in candidates:
+            candidates.append(url)
+
+    best_oa = work.get("best_oa_location") or {}
+    add(best_oa.get("pdf_url"))
+
     primary = work.get("primary_location") or {}
-    if primary.get("pdf_url"):
-        return primary["pdf_url"]
+    add(primary.get("pdf_url"))
+
     for loc in work.get("locations") or []:
-        if loc.get("pdf_url"):
-            return loc["pdf_url"]
-    doi = work.get("doi")
-    if doi:
-        return f"https://doi.org/{str(doi).replace('https://doi.org/', '')}"
+        add(loc.get("pdf_url"))
+
+    for url in candidates:
+        if _looks_like_pdf_url(url):
+            return url
+
+    oa_url = (work.get("open_access") or {}).get("oa_url")
+    if _looks_like_pdf_url(oa_url):
+        return oa_url
+
     return None
+
+
+def resolve_openalex_work_pdf_url(*, doi: str | None = None, openalex_id: str | None = None) -> str | None:
+    """按 DOI 或 OpenAlex ID 重新解析可用的 PDF 直链。"""
+    if doi:
+        work_key = f"https://doi.org/{str(doi).replace('https://doi.org/', '')}"
+    elif openalex_id:
+        oid = openalex_id if str(openalex_id).startswith("W") else f"W{openalex_id}"
+        work_key = f"https://openalex.org/{oid}"
+    else:
+        return None
+
+    resp = requests.get(f"{OPENALEX_API}/{work_key}", params=_api_params(), timeout=30)
+    resp.raise_for_status()
+    return _pdf_url_from_work(resp.json())
 
 
 def _journal_metrics_from_source(source: dict | None) -> tuple[float | None, str | None]:

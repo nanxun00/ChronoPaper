@@ -52,6 +52,20 @@ export function rejectLiteratureEntries({ arxiv_ids, visibility }) {
   })
 }
 
+export function parseLiteratureEntries({ arxiv_ids, visibility }) {
+  return apiJson('/api/literature/parse', {
+    method: 'POST',
+    body: JSON.stringify({ arxiv_ids, visibility }),
+  })
+}
+
+export function fetchLiteraturePdf({ arxiv_ids, visibility }) {
+  return apiJson('/api/literature/fetch-pdf', {
+    method: 'POST',
+    body: JSON.stringify({ arxiv_ids, visibility }),
+  })
+}
+
 export async function uploadLiteraturePdf(file, visibility, title) {
   const form = new FormData()
   form.append('file', file)

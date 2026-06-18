@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     # --- Celery / Redis ---
     celery_broker_url: str = "redis://127.0.0.1:6379/0"
     celery_result_backend: str = "redis://127.0.0.1:6379/1"
+    auto_start_celery_worker: bool = Field(default=True, validation_alias="AUTO_START_CELERY_WORKER")
 
     save_dir: str | None = None
     kb_database_json: str = ""

@@ -161,6 +161,50 @@ def reject_literature_entries(
     return result
 
 
+@router.post("/parse")
+def retry_literature_parse(
+    body: LiteratureReviewRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = literature_service.retry_literature_parse(
+        db,
+        current_user.userid,
+        arxiv_ids=body.arxiv_ids,
+        visibility=body.visibility,
+    )
+    if result["queued"] == 0:
+        if result["not_found"]:
+            raise HTTPException(status_code=404, detail="未找到可解析的文献")
+        if result["no_pdf"]:
+            raise HTTPException(status_code=400, detail="本地 PDF 尚未就绪，无法解析")
+        if result["skipped"]:
+            raise HTTPException(status_code=400, detail="仅待解析、解析失败或卡住的文献可解析")
+    return result
+
+
+@router.post("/fetch-pdf")
+def fetch_literature_pdf(
+    body: LiteratureReviewRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = literature_service.fetch_literature_pdf(
+        db,
+        current_user.userid,
+        arxiv_ids=body.arxiv_ids,
+        visibility=body.visibility,
+    )
+    if result["fetched"] == 0:
+        if result["not_found"]:
+            raise HTTPException(status_code=404, detail="未找到可拉取的文献")
+        if result["no_url"]:
+            raise HTTPException(status_code=400, detail="未找到可用的 PDF 下载链接")
+        if result["failed"]:
+            raise HTTPException(status_code=400, detail="PDF 拉取失败，请稍后重试")
+    return result
+
+
 @router.post("/delete")
 def delete_literature_entries(
     body: LiteratureDeleteRequest,

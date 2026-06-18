@@ -11,9 +11,13 @@ from sqlalchemy.orm import Session
 
 from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import LiteratureEntry, Paper
-from src.services.literature.paper_parse_service import read_paper_full_text, schedule_paper_parse
-from src.services.literature.pdf_download_service import try_download_paper_pdf
+from src.services.literature.paper_parse_service import (
+    is_paper_parse_running,
+    read_paper_full_text,
+    schedule_paper_parse,
+)
 from src.services.literature.paper_quality_assessment import schedule_quality_assessment
+from src.services.literature.pdf_download_service import try_download_paper_pdf
 from src.utils.paths import (
     ensure_paper_dir,
     ensure_papers_dir,
@@ -30,12 +34,18 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 def resolve_pipeline_status(paper: Paper, entry: LiteratureEntry) -> str:
     """文献处理流水线状态（供前端「状态」列展示）。"""
     review = entry.review_status or "approved"
+    ps = (paper.parse_status or "pending").lower()
+    has_pdf = resolve_paper_pdf_path(paper) is not None
+
+    if ps in ("download_failed", "download_retry"):
+        return "download_failed"
+    if review == "pending" and not has_pdf:
+        return "download_failed"
     if review == "pending":
         return "pending_review"
     if review == "rejected":
         return "rejected"
 
-    ps = (paper.parse_status or "pending").lower()
     if ps == "parsing":
         return "parsing"
     if ps == "indexing":
@@ -365,6 +375,116 @@ def reject_literature_entries(
 
     db.commit()
     return {"rejected": rejected, "not_found": not_found}
+
+
+def retry_literature_parse(
+    db: Session,
+    user_id: str,
+    *,
+    arxiv_ids: list[str],
+    visibility: str,
+) -> dict:
+    """对待解析或解析失败的文献排队 MinerU 解析。"""
+    unique_ids = _unique_paper_ids(arxiv_ids)
+    queued: list[str] = []
+    skipped: list[str] = []
+    no_pdf: list[str] = []
+    not_found: list[str] = []
+
+    for paper_id in unique_ids:
+        entry = _entry_query(db, paper_id, visibility, user_id).first()
+        if not entry:
+            not_found.append(paper_id)
+            continue
+
+        paper = db.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+        if not paper:
+            not_found.append(paper_id)
+            continue
+
+        status = (paper.parse_status or "pending").lower()
+        if status == "parsing":
+            if is_paper_parse_running(paper_id):
+                skipped.append(paper_id)
+                continue
+        elif status not in ("pending", "downloaded", "parse_failed"):
+            skipped.append(paper_id)
+            continue
+
+        pdf_path = resolve_paper_pdf_path(paper)
+        if not pdf_path:
+            pdf_path = ensure_paper_pdf_downloaded(db, paper, trigger_parse=False)
+        if not pdf_path:
+            no_pdf.append(paper_id)
+            continue
+
+        queued.append(paper_id)
+
+    if queued:
+        schedule_paper_parse(queued)
+
+    return {
+        "queued": len(queued),
+        "queued_ids": queued,
+        "skipped": skipped,
+        "no_pdf": no_pdf,
+        "not_found": not_found,
+    }
+
+
+def fetch_literature_pdf(
+    db: Session,
+    user_id: str,
+    *,
+    arxiv_ids: list[str],
+    visibility: str,
+) -> dict:
+    """重新拉取论文 PDF（OpenAlex 文献会刷新直链）。"""
+    from src.integrations.openalex.fetcher import resolve_openalex_work_pdf_url
+
+    unique_ids = _unique_paper_ids(arxiv_ids)
+    fetched: list[str] = []
+    failed: list[str] = []
+    no_url: list[str] = []
+    not_found: list[str] = []
+
+    for paper_id in unique_ids:
+        entry = _entry_query(db, paper_id, visibility, user_id).first()
+        if not entry:
+            not_found.append(paper_id)
+            continue
+
+        paper = db.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+        if not paper:
+            not_found.append(paper_id)
+            continue
+
+        pdf_url = None
+        if paper.source == "openalex":
+            pdf_url = resolve_openalex_work_pdf_url(doi=paper.doi, openalex_id=paper.openalex_id)
+            if pdf_url:
+                paper.pdf_url = pdf_url
+                db.add(paper)
+                db.flush()
+
+        if not pdf_url and not _pdf_url_for_paper(paper):
+            no_url.append(paper_id)
+            continue
+
+        ok, _msg = try_download_paper_pdf(db, paper, pdf_url=pdf_url, force=True)
+        if ok:
+            fetched.append(paper_id)
+        else:
+            failed.append(paper_id)
+
+    db.commit()
+    return {
+        "fetched": len(fetched),
+        "fetched_ids": fetched,
+        "failed": failed,
+        "no_url": no_url,
+        "not_found": not_found,
+    }
 
 
 def delete_literature_entries(
