@@ -159,7 +159,12 @@ def _parse_one(session: Session, arxiv_id: str) -> bool:
         return False
 
     if resolve_paper_md_file(arxiv_id):
+        md_path = resolve_paper_md_file(arxiv_id)
         if paper.parse_status != "parsed":
+            from src.utils.pdf_metadata import apply_upload_metadata_from_md
+
+            if md_path:
+                apply_upload_metadata_from_md(paper, md_path)
             paper.parse_status = "parsed"
             session.add(paper)
             session.commit()
@@ -177,6 +182,9 @@ def _parse_one(session: Session, arxiv_id: str) -> bool:
         md_path = parse_paper_with_mineru(arxiv_id, pdf_path)
         paper.pdf_path = str(paper_pdf_path(arxiv_id).resolve())
         paper.parse_status = "parsed"
+        from src.utils.pdf_metadata import apply_upload_metadata_from_md
+
+        apply_upload_metadata_from_md(paper, md_path)
         session.add(paper)
         session.commit()
         logger.info("paper parsed: %s -> %s", arxiv_id, md_path)

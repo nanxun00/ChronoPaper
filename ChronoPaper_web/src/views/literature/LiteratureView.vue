@@ -16,6 +16,13 @@
               allow-clear
               @search="searchPublicPapers"
             />
+            <a-upload
+              :show-upload-list="false"
+              accept=".pdf,application/pdf"
+              :before-upload="beforePublicUpload"
+            >
+              <a-button type="primary" :loading="uploading">上传 PDF</a-button>
+            </a-upload>
             <a-select v-model:value="publicCategory" style="width: 160px" placeholder="分类筛选" @change="searchPublicPapers">
               <a-select-option value="">全部分类</a-select-option>
               <a-select-option value="cs.AI">cs.AI</a-select-option>
@@ -33,6 +40,7 @@
               <a-select-option value="arxiv">预印本池</a-select-option>
               <a-select-option value="openreview">顶会池</a-select-option>
               <a-select-option value="openalex">综合期刊/会议</a-select-option>
+              <a-select-option value="upload">本地上传</a-select-option>
             </a-select>
             <span class="filter-label">语义≥</span>
             <a-input-number
@@ -91,16 +99,13 @@
               </template>
             </template>
             <template #emptyText>
-              <a-empty description="暂无公共论文，请先在任务中心创建抓取任务" />
+              <a-empty description="暂无公共论文，可上传 PDF 或先在任务中心创建抓取任务" />
             </template>
           </a-table>
         </a-tab-pane>
 
         <a-tab-pane key="private" tab="私有文献">
           <div class="tab-toolbar">
-            <a-upload :show-upload-list="false" :before-upload="beforePrivateUpload">
-              <a-button>上传 PDF</a-button>
-            </a-upload>
             <a-input-search
               v-model:value="privateQuery"
               placeholder="搜索私有文献"
@@ -108,6 +113,13 @@
               allow-clear
               @search="searchPrivatePapers"
             />
+            <a-upload
+              :show-upload-list="false"
+              accept=".pdf,application/pdf"
+              :before-upload="beforePrivateUpload"
+            >
+              <a-button type="primary" :loading="uploading">上传 PDF</a-button>
+            </a-upload>
             <a-select
               v-model:value="privateSource"
               style="width: 140px"
@@ -119,6 +131,7 @@
               <a-select-option value="arxiv">预印本池</a-select-option>
               <a-select-option value="openreview">顶会池</a-select-option>
               <a-select-option value="openalex">综合期刊/会议</a-select-option>
+              <a-select-option value="upload">本地上传</a-select-option>
             </a-select>
             <span class="filter-label">语义≥</span>
             <a-input-number v-model:value="privateMinSemantic" :min="0" :max="100" style="width: 72px" />
@@ -268,7 +281,11 @@
         </p>
         <a-divider />
         <p class="preview-abstract selectable-text" @mouseup="handleTextSelection">
-          {{ previewItem.abstract || previewItem.summary || '暂无摘要' }}
+          <template v-if="previewAbstract">{{ previewAbstract }}</template>
+          <template v-else-if="previewItem.source === 'upload' && previewItem.parse_status === 'parsing'">
+            正在解析 PDF，摘要将在解析完成后显示…
+          </template>
+          <template v-else>暂无摘要</template>
         </p>
         <a-divider orientation="left">PDF 预览</a-divider>
         <PdfPreview
@@ -286,7 +303,7 @@ import { Modal, message } from 'ant-design-vue'
 import { PictureOutlined } from '@ant-design/icons-vue'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import PdfPreview from '@/components/literature/PdfPreview.vue'
-import { deleteLiteratureEntries, getPaperDetail, listPublicPapers, listPrivatePapers } from '@/api/literature'
+import { deleteLiteratureEntries, getPaperDetail, listPublicPapers, listPrivatePapers, uploadLiteraturePdf } from '@/api/literature'
 import { SOURCE_LABELS } from '@/constants/openreviewVenues'
 import { useSelectionTranslate } from '@/composables/useSelectionTranslate'
 
@@ -294,6 +311,7 @@ const { handleTextSelection } = useSelectionTranslate()
 
 const activeTab = ref('public')
 const loading = ref(false)
+const uploading = ref(false)
 const deleting = ref(false)
 const searchLoading = ref(false)
 const previewOpen = ref(false)
@@ -378,7 +396,7 @@ const privatePagination = ref({
 const sourceLabel = (source) => SOURCE_LABELS[source] || source || 'arXiv'
 
 const sourceColor = (source) => {
-  const map = { arxiv: 'blue', openreview: 'purple', openalex: 'green' }
+  const map = { arxiv: 'blue', openreview: 'purple', openalex: 'green', upload: 'orange' }
   return map[source] || 'default'
 }
 
@@ -389,6 +407,12 @@ const previewExternalUrl = computed(() => {
   if (url.startsWith('http://') || url.startsWith('https://')) return url
   if (url.startsWith('/')) return `https://openreview.net${url}`
   return url
+})
+
+const previewAbstract = computed(() => {
+  const item = previewItem.value
+  if (!item) return ''
+  return (item.abstract || item.summary || '').trim()
 })
 
 const loadPublicPapers = async (page = publicPagination.value.current, pageSize = publicPagination.value.pageSize) => {
@@ -560,10 +584,39 @@ const confirmBatchDelete = (visibility) => {
   })
 }
 
-const beforePrivateUpload = () => {
-  message.info('私有文档上传接口开发中')
+const beforePdfUpload = (file, visibility) => {
+  const name = file.name?.toLowerCase() || ''
+  const isPdf = file.type === 'application/pdf' || name.endsWith('.pdf')
+  if (!isPdf) {
+    message.error('仅支持 PDF 文件')
+    return false
+  }
+  if (file.size > 50 * 1024 * 1024) {
+    message.error('PDF 不能超过 50MB')
+    return false
+  }
+  uploading.value = true
+  uploadLiteraturePdf(file, visibility)
+    .then(() => {
+      message.success('上传成功，正在后台解析 PDF')
+      if (visibility === 'public') {
+        publicPagination.value.current = 1
+        loadPublicPapers(1)
+      } else {
+        privatePagination.value.current = 1
+        loadPrivatePapers(1)
+      }
+    })
+    .catch((err) => message.error(err.message || '上传失败'))
+    .finally(() => {
+      uploading.value = false
+    })
   return false
 }
+
+const beforePublicUpload = (file) => beforePdfUpload(file, 'public')
+
+const beforePrivateUpload = (file) => beforePdfUpload(file, 'private')
 
 const beforeImageSearchUpload = () => {
   message.info('以图搜图接口开发中')

@@ -1,13 +1,18 @@
 """Literature list and detail business logic."""
 from __future__ import annotations
 
+import json
+import uuid
+from datetime import datetime
+from pathlib import Path
+
 import requests
 from sqlalchemy.orm import Session
 
 from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import LiteratureEntry
 from src.models.paper import Paper
-from src.services.paper_parse_service import schedule_paper_parse
+from src.services.paper_parse_service import read_paper_full_text, schedule_paper_parse
 from src.utils.paths import (
     ensure_paper_dir,
     ensure_papers_dir,
@@ -16,6 +21,115 @@ from src.utils.paths import (
     resolve_paper_md_file,
     resolve_paper_pdf_file,
 )
+from src.utils.pdf_metadata import abstract_from_markdown, metadata_from_markdown
+
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
+def _is_pdf_content(content: bytes) -> bool:
+    return len(content) >= 4 and content[:4] == b"%PDF"
+
+
+def _title_from_filename(filename: str) -> str:
+    stem = Path(filename or "upload.pdf").stem
+    return stem.strip() or "未命名文档"
+
+
+def _overlay_mineru_metadata(paper: Paper, data: dict) -> None:
+    """本地上传论文：优先用 MinerU content.md 展示标题/作者/摘要。"""
+    if paper.source != "upload":
+        if not (data.get("abstract") or "").strip():
+            md_path = resolve_paper_md_file(paper.arxiv_id)
+            if md_path:
+                try:
+                    data["abstract"] = abstract_from_markdown(Path(md_path).read_text(encoding="utf-8"))
+                except OSError:
+                    pass
+        return
+
+    md_path = resolve_paper_md_file(paper.arxiv_id)
+    if not md_path:
+        data["abstract"] = (paper.abstract or "").strip()
+        return
+
+    try:
+        meta = metadata_from_markdown(Path(md_path).read_text(encoding="utf-8"))
+    except OSError:
+        data["abstract"] = (paper.abstract or "").strip()
+        return
+
+    if meta.get("title"):
+        data["title"] = meta["title"]
+    if meta.get("authors"):
+        data["authors"] = meta["authors"]
+    if meta.get("abstract"):
+        data["abstract"] = meta["abstract"]
+    elif (paper.abstract or "").strip():
+        data["abstract"] = paper.abstract.strip()
+
+
+def upload_paper_pdf(
+    db: Session,
+    *,
+    user_id: str,
+    visibility: str,
+    filename: str,
+    content: bytes,
+    title: str | None = None,
+) -> dict:
+    """保存用户上传的 PDF，写入论文与文献条目并触发 MinerU 解析。"""
+    if visibility not in ("public", "private"):
+        raise ValueError("visibility 须为 public 或 private")
+    if visibility == "private" and not user_id:
+        raise ValueError("私有文献须登录用户上传")
+
+    if not content:
+        raise ValueError("文件为空")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValueError("PDF 超过 50MB 大小限制")
+    if not _is_pdf_content(content):
+        raise ValueError("仅支持 PDF 文件")
+
+    paper_id = f"upload-{uuid.uuid4().hex[:16]}"
+    resolved_title = (title or "").strip() or _title_from_filename(filename)
+
+    ensure_papers_dir()
+    ensure_paper_dir(paper_id)
+    dest_path = str(paper_pdf_path(paper_id).resolve())
+    with open(dest_path, "wb") as f:
+        f.write(content)
+
+    paper = Paper(
+        arxiv_id=paper_id,
+        source="upload",
+        title=resolved_title,
+        authors=json.dumps([]),
+        abstract="",
+        categories=json.dumps([]),
+        published_at=datetime.utcnow(),
+        pdf_path=dest_path,
+        pdf_url=None,
+        parse_status="downloaded",
+    )
+    entry = LiteratureEntry(
+        arxiv_id=paper_id,
+        user_id=user_id if visibility == "private" else "",
+        visibility=visibility,
+        pool_type="upload",
+    )
+    try:
+        db.add(paper)
+        db.commit()
+        db.refresh(paper)
+        db.add(entry)
+        db.commit()
+        db.refresh(entry)
+    except Exception:
+        db.rollback()
+        remove_paper_storage(paper_id, dest_path)
+        raise
+    schedule_paper_parse([paper_id])
+    return entry_to_dict(entry, paper)
 
 
 def resolve_paper_pdf_path(paper: Paper) -> str | None:
@@ -94,6 +208,7 @@ def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
     data["visibility"] = entry.visibility
     data["listed_at"] = entry.created_at.strftime("%Y-%m-%d") if entry.created_at else ""
     data["source"] = paper.source or "arxiv"
+    _overlay_mineru_metadata(paper, data)
     data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
     data["has_md"] = resolve_paper_md_file(paper.arxiv_id) is not None
     data["can_fetch_pdf"] = data["has_pdf"] or bool(_pdf_url_for_paper(paper))
@@ -109,7 +224,7 @@ def _apply_list_filters(
 ):
     from sqlalchemy import and_, func, or_
 
-    if source in ("arxiv", "openreview", "openalex"):
+    if source in ("arxiv", "openreview", "openalex", "upload"):
         query = query.filter(
             or_(
                 LiteratureEntry.pool_type == source,
@@ -267,8 +382,13 @@ def list_private_papers(
     return {"total": total, "page": page, "page_size": page_size, "papers": papers}
 
 
-def enrich_cited_literature(db: Session, cited: list[dict] | None) -> list[dict]:
-    """补全引用文献字段，确保标题/摘要等可用于对话注入。"""
+def enrich_cited_literature(
+    db: Session,
+    cited: list[dict] | None,
+    *,
+    user_id: str = "",
+) -> list[dict]:
+    """补全引用文献字段，并加载 MinerU content.md 全文供对话注入。"""
     if not cited:
         return []
     enriched: list[dict] = []
@@ -278,27 +398,101 @@ def enrich_cited_literature(db: Session, cited: list[dict] | None) -> list[dict]
         if not paper_id:
             enriched.append(data)
             continue
+
+        if user_id:
+            detail = get_paper_detail(db, paper_id, user_id)
+            if not detail:
+                enriched.append(data)
+                continue
+            for key in (
+                "title",
+                "abstract",
+                "authors",
+                "arxiv_id",
+                "source",
+                "categories",
+                "published_at",
+                "venue",
+            ):
+                if detail.get(key) is not None:
+                    data[key] = detail[key]
+        else:
+            paper = db.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+            if not paper:
+                enriched.append(data)
+                continue
+            for key in (
+                "title",
+                "abstract",
+                "authors",
+                "arxiv_id",
+                "source",
+                "categories",
+                "published_at",
+                "venue",
+            ):
+                current = data.get(key)
+                if current is None or (isinstance(current, str) and not current.strip()):
+                    val = paper.to_dict().get(key)
+                    if val is not None:
+                        data[key] = val
+            _overlay_mineru_metadata(paper, data)
+
         paper = db.query(Paper).filter(Paper.arxiv_id == paper_id).first()
-        if not paper:
-            enriched.append(data)
-            continue
-        full = paper.to_dict()
-        for key in (
-            "title",
-            "abstract",
-            "authors",
-            "arxiv_id",
-            "source",
-            "categories",
-            "published_at",
-            "venue",
-        ):
-            current = data.get(key)
-            if current is None or (isinstance(current, str) and not current.strip()):
-                if full.get(key) is not None:
-                    data[key] = full[key]
+        if paper:
+            try:
+                data["full_text"] = read_paper_full_text(paper_id, paper.pdf_path)
+            except FileNotFoundError:
+                data["full_text"] = ""
+            except Exception:
+                data["full_text"] = ""
         enriched.append(data)
     return enriched
+
+
+def build_cited_literature_context(cited: list[dict]) -> str:
+    """将引用文献拼成模型上下文（优先 content.md 全文）。"""
+    if not cited:
+        return ""
+    parts = []
+    for i, item in enumerate(cited, 1):
+        title = item.get("title") or "未知标题"
+        paper_id = item.get("arxiv_id") or item.get("paper_id") or ""
+        authors = item.get("authors") or ""
+        full_text = (item.get("full_text") or "").strip()
+        if full_text:
+            parts.append(
+                f"[引用文献 {i}] {title}\n"
+                f"ID: {paper_id}\n"
+                f"作者: {authors}\n"
+                f"正文（MinerU Markdown 全文）:\n{full_text}"
+            )
+        else:
+            abstract = (item.get("abstract") or "")[:3000]
+            parts.append(
+                f"[引用文献 {i}] {title}\n"
+                f"ID: {paper_id}\n"
+                f"作者: {authors}\n"
+                f"摘要: {abstract}\n"
+                f"（正文尚未解析，仅提供摘要）"
+            )
+    return (
+        "以下为用户明确引用的文献，请结合正文回答，不要声称未看到文献：\n\n" + "\n\n".join(parts)
+    )
+
+
+def prepare_cited_literature_for_chat(
+    db: Session,
+    cited: list[dict] | None,
+    *,
+    user_id: str = "",
+) -> tuple[list[dict], str]:
+    """补全引用文献并生成上下文；full_text 不返回给前端 meta。"""
+    enriched = enrich_cited_literature(db, cited, user_id=user_id)
+    context = build_cited_literature_context(enriched)
+    for item in enriched:
+        item.pop("full_text", None)
+    return enriched, context
 
 
 def get_paper_detail(db: Session, arxiv_id: str, user_id: str) -> dict | None:
@@ -328,6 +522,7 @@ def get_paper_detail(db: Session, arxiv_id: str, user_id: str) -> dict | None:
         return None
 
     data = paper.to_dict()
+    _overlay_mineru_metadata(paper, data)
     data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
     data["has_md"] = resolve_paper_md_file(paper.arxiv_id) is not None
     data["can_fetch_pdf"] = data["has_pdf"] or bool(_pdf_url_for_paper(paper))

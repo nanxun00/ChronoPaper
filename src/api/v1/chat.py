@@ -19,24 +19,6 @@ executor = ThreadPoolExecutor()
 refs_pool = {}
 
 
-def _build_cited_literature_context(cited: list) -> str:
-    if not cited:
-        return ""
-    parts = []
-    for i, item in enumerate(cited, 1):
-        title = item.get("title") or "未知标题"
-        paper_id = item.get("arxiv_id") or item.get("paper_id") or ""
-        authors = item.get("authors") or ""
-        abstract = (item.get("abstract") or "")[:3000]
-        parts.append(
-            f"[引用文献 {i}] {title}\n"
-            f"ID: {paper_id}\n"
-            f"作者: {authors}\n"
-            f"摘要: {abstract}"
-        )
-    return "以下为用户明确引用的文献（已附摘要），请结合这些内容回答，不要声称未看到文献：\n\n" + "\n\n".join(parts)
-
-
 @chat.get("/")
 async def chat_get():
     return "Chat Get!"
@@ -59,13 +41,21 @@ def chat_post(
     '''
     meta = meta or {}
     cited_raw = meta.get("cited_literature") or []
+    literature_context = ""
     if cited_raw:
         db = SessionLocal()
         try:
-            meta = {**meta, "cited_literature": literature_service.enrich_cited_literature(db, cited_raw)}
+            enriched, literature_context = literature_service.prepare_cited_literature_for_chat(
+                db, cited_raw
+            )
+            meta = {**meta, "cited_literature": enriched}
         finally:
             db.close()
-    logger.debug("chat meta cited_literature count=%s", len(meta.get("cited_literature") or []))
+    logger.debug(
+        "chat meta cited_literature count=%s context_len=%s",
+        len(meta.get("cited_literature") or []),
+        len(literature_context),
+    )
 
     # 检查 meta 中是否包含 OCR 识别的 session_id
     # session_id = meta.get("session_id") if meta else None
@@ -100,9 +90,6 @@ def chat_post(
             该函数负责根据用户查询和历史记录生成聊天响应，如果启用了检索功能，他会首先检索相关信息
             然后使用模型生成响应，生成的响应被切分为块，以便实时推送到客户端
         '''
-
-        cited = meta.get("cited_literature") or []
-        literature_context = _build_cited_literature_context(cited)
 
         # 如果采用了检索功能，他会首先进行检索
         if meta.get("enable_retrieval"):

@@ -1,7 +1,7 @@
 """文献管理 API。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/literature", tags=["literature"])
 def list_public_papers(
     q: str | None = Query(default=None),
     category: str | None = Query(default=None),
-    source: str | None = Query(default=None, description="arxiv | openreview | openalex"),
+    source: str | None = Query(default=None, description="arxiv | openreview | openalex | upload"),
     min_semantic: float | None = Query(default=None, ge=0, le=100),
     min_quality: float | None = Query(default=None, ge=0, le=100),
     page: int = Query(default=1, ge=1),
@@ -40,7 +40,7 @@ def list_public_papers(
 @router.get("/private")
 def list_private_papers(
     q: str | None = Query(default=None),
-    source: str | None = Query(default=None, description="arxiv | openreview | openalex"),
+    source: str | None = Query(default=None, description="arxiv | openreview | openalex | upload"),
     min_semantic: float | None = Query(default=None, ge=0, le=100),
     min_quality: float | None = Query(default=None, ge=0, le=100),
     page: int = Query(default=1, ge=1),
@@ -97,6 +97,30 @@ def get_paper_detail(
             raise HTTPException(status_code=404, detail="论文不存在")
         raise HTTPException(status_code=403, detail="无权查看该论文")
     return data
+
+
+@router.post("/upload")
+async def upload_literature_pdf(
+    file: UploadFile = File(...),
+    visibility: str = Form(...),
+    title: str | None = Form(default=None),
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    if visibility not in ("public", "private"):
+        raise HTTPException(status_code=400, detail="visibility 须为 public 或 private")
+    content = await file.read()
+    try:
+        return literature_service.upload_paper_pdf(
+            db,
+            user_id=current_user.userid,
+            visibility=visibility,
+            filename=file.filename or "upload.pdf",
+            content=content,
+            title=title,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/delete")

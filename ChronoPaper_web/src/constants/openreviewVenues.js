@@ -49,4 +49,5 @@ export const SOURCE_LABELS = {
   arxiv: 'arXiv',
   openreview: 'OpenReview',
   openalex: 'OpenAlex',
+  upload: '本地上传',
 }

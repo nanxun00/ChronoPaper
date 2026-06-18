@@ -152,19 +152,20 @@ const loadPdf = async (arxivId) => {
       const detail = data.detail || '加载 PDF 失败'
       emptyText.value =
         response.status === 404
-          ? '本地 PDF 未缓存，后端拉取失败。可尝试外部链接，或重新执行抓取任务。'
+          ? '本地 PDF 未找到，请确认上传是否成功，或稍后重试。'
           : detail
       throw new Error(detail)
     }
     const blob = await response.blob()
-    blobUrl = URL.createObjectURL(blob)
+    if (!blob.size) {
+      emptyText.value = 'PDF 文件为空'
+      throw new Error('PDF 文件为空')
+    }
 
+    blobUrl = URL.createObjectURL(blob)
     const pdf = await pdfjsLib.getDocument(blobUrl).promise
     pageCount.value = pdf.numPages
-    source.value = pdf
-    URL.revokeObjectURL(blobUrl)
-    blobUrl = ''
-
+    source.value = blobUrl
     emit('loaded')
   } catch (err) {
     if (!emptyText.value || emptyText.value === '暂无 PDF 可预览') {
