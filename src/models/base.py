@@ -202,8 +202,9 @@ def init_db() -> None:
         raise RuntimeError(f"Failed to create tables: {', '.join(missing)}")
 
     log.info(
-        "MySQL ready database=%s tables=[%s]",
+        "MySQL ready database=%s %s tables=[%s]",
         settings.mysql_db,
+        settings.mysql_summary(),
         ", ".join(created),
     )
 
