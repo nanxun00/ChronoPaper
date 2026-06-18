@@ -41,6 +41,12 @@ src/routers/saves
 src/saves/data/uploads
 uploads
 
+# 已 vendored 至 src/third_party/mineru，可删除根目录副本以减小仓库体积
+/MinerU/
+
+# 参考项目，不纳入本仓库版本管理
+/cc-connect/
+
 # 本地模型 / OCR 等大文件目录（勿上传 GitHub）
 /local/
 /local/**

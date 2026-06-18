@@ -19,7 +19,7 @@
           />
         </div>
         <a-tabs v-model:activeKey="activeTab" size="small" @change="doSearch">
-          <a-tab-pane key="public" tab="存量论文" />
+          <a-tab-pane key="public" tab="公共空间" />
           <a-tab-pane key="private" tab="私有文献" />
         </a-tabs>
         <div class="cite-panel__list">

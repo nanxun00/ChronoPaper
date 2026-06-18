@@ -28,12 +28,13 @@ from src.services.crawl_reranker import rerank_candidates
 from src.services.crawl_relevance_filter import apply_keyword_and_llm_filter
 from src.services.crawl_mode_presets import CRAWL_MODE_LABELS
 from src.services.literature_service import resolve_paper_pdf_path
+from src.services.paper_parse_service import schedule_paper_parse
 from src.services.paper_quality_assessment import schedule_quality_assessment
 from src.services.quality_scorer import compute_quality_score, merge_paper_quality_signals
 from src.services.semantic_matcher import batch_semantic_scores, build_interest_text, encode_interest_vector
 from src.services.translate_service import prepare_crawl_match_query
 from src.utils.datetime_fmt import format_display_datetime
-from src.utils.paths import ensure_papers_dir, paper_pdf_path
+from src.utils.paths import ensure_paper_dir, ensure_papers_dir, paper_pdf_path
 from src.utils.logging_config import setup_logger
 
 logger = setup_logger("CrawlService")
@@ -176,11 +177,13 @@ def _try_download_paper_pdf(
         paper.pdf_url = pdf_url
     pdf_path = str(paper_pdf_path(paper.arxiv_id))
     try:
+        ensure_paper_dir(paper.arxiv_id)
         _download_pdf(pdf_url, pdf_path)
         paper.pdf_path = pdf_path
         paper.parse_status = "downloaded"
         session.add(paper)
         session.commit()
+        schedule_paper_parse([paper.arxiv_id])
         _append_log(run, f"已下载 PDF: {paper.arxiv_id}", session)
     except Exception as exc:
         stats["download_failed"] += 1

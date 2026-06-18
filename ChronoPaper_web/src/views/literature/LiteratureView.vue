@@ -7,7 +7,7 @@
 
     <div class="literature-body">
       <a-tabs v-model:activeKey="activeTab" class="literature-tabs">
-        <a-tab-pane key="public" tab="存量论文">
+        <a-tab-pane key="public" tab="公共空间">
           <div class="tab-toolbar">
             <a-input-search
               v-model:value="publicQuery"

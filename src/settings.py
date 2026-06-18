@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     openalex_api_key: str = ""
     openalex_mailto: str = ""
 
+    # --- MinerU PDF 解析 ---
+    mineru_lang: str = "en"
+    mineru_backend: str = ""  # 空=自动：有 GPU 用 hybrid-engine，否则 pipeline
+
     @property
     def neo4j_legacy_uri_resolved(self) -> str:
         return self.neo4j_legacy_uri or self.neo4j_uri

@@ -1,28 +1,25 @@
 """Literature list and detail business logic."""
 from __future__ import annotations
 
-import os
-
 import requests
 from sqlalchemy.orm import Session
 
 from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import LiteratureEntry
 from src.models.paper import Paper
+from src.services.paper_parse_service import schedule_paper_parse
 from src.utils.paths import (
-    PAPERS_DIR,
+    ensure_paper_dir,
     ensure_papers_dir,
     paper_pdf_path,
-    resolve_existing_file,
+    remove_paper_storage,
+    resolve_paper_md_file,
+    resolve_paper_pdf_file,
 )
 
 
 def resolve_paper_pdf_path(paper: Paper) -> str | None:
-    for path in _paper_pdf_candidates(paper):
-        resolved = resolve_existing_file(path)
-        if resolved:
-            return resolved
-    return None
+    return resolve_paper_pdf_file(paper.arxiv_id, paper.pdf_path)
 
 
 def _pdf_url_for_paper(paper: Paper) -> str | None:
@@ -33,7 +30,7 @@ def _pdf_url_for_paper(paper: Paper) -> str | None:
 
 
 def ensure_paper_pdf_downloaded(db: Session, paper: Paper) -> str | None:
-    """本地无文件时，按 pdf_url 拉取并缓存到 uploads/papers/。"""
+    """本地无文件时，按 pdf_url 拉取并缓存到 uploads/papers/{id}/paper.pdf。"""
     existing = resolve_paper_pdf_path(paper)
     if existing:
         return existing
@@ -42,6 +39,7 @@ def ensure_paper_pdf_downloaded(db: Session, paper: Paper) -> str | None:
     if not pdf_url:
         return None
 
+    ensure_paper_dir(paper.arxiv_id)
     dest_path = str(paper_pdf_path(paper.arxiv_id))
     ensure_papers_dir()
 
@@ -57,6 +55,7 @@ def ensure_paper_pdf_downloaded(db: Session, paper: Paper) -> str | None:
         paper.parse_status = "downloaded"
         db.add(paper)
         db.commit()
+        schedule_paper_parse([paper.arxiv_id])
         return dest_path
     except Exception:
         paper.parse_status = "download_failed"
@@ -96,6 +95,7 @@ def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
     data["listed_at"] = entry.created_at.strftime("%Y-%m-%d") if entry.created_at else ""
     data["source"] = paper.source or "arxiv"
     data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
+    data["has_md"] = resolve_paper_md_file(paper.arxiv_id) is not None
     data["can_fetch_pdf"] = data["has_pdf"] or bool(_pdf_url_for_paper(paper))
     return data
 
@@ -127,45 +127,8 @@ def _apply_list_filters(
     return query
 
 
-def _paper_pdf_candidates(paper: Paper) -> list[str]:
-    paths: list[str] = []
-    if paper.pdf_path:
-        paths.append(paper.pdf_path)
-    paths.append(str(paper_pdf_path(paper.arxiv_id)))
-    unique: list[str] = []
-    seen: set[str] = set()
-    for path in paths:
-        if path not in seen:
-            seen.add(path)
-            unique.append(path)
-    return unique
-
-
-def _safe_remove_pdf(pdf_path: str) -> bool:
-    if not pdf_path:
-        return False
-    abs_papers = str(PAPERS_DIR.resolve())
-    resolved = resolve_existing_file(pdf_path)
-    if not resolved:
-        return False
-    abs_path = os.path.abspath(resolved)
-    if not abs_path.startswith(abs_papers + os.sep) and abs_path != abs_papers:
-        return False
-    os.remove(abs_path)
-    return True
-
-
 def _remove_paper_files(paper: Paper) -> int:
-    removed = 0
-    seen: set[str] = set()
-    for path in _paper_pdf_candidates(paper):
-        resolved = resolve_existing_file(path)
-        if not resolved or resolved in seen:
-            continue
-        seen.add(resolved)
-        if _safe_remove_pdf(resolved):
-            removed += 1
-    return removed
+    return remove_paper_storage(paper.arxiv_id, paper.pdf_path)
 
 
 def _entry_query(db: Session, arxiv_id: str, visibility: str, user_id: str):
@@ -366,6 +329,7 @@ def get_paper_detail(db: Session, arxiv_id: str, user_id: str) -> dict | None:
 
     data = paper.to_dict()
     data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
+    data["has_md"] = resolve_paper_md_file(paper.arxiv_id) is not None
     data["can_fetch_pdf"] = data["has_pdf"] or bool(_pdf_url_for_paper(paper))
     if public:
         data["match_score"] = public.match_score
