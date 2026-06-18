@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 from src.integrations.arxiv.fetcher import arxiv_result_to_dict, fetch_arxiv_candidates
 from src.integrations.arxiv.matcher import compute_match_score
 from src.integrations.citations import fetch_citation_count
-from src.integrations.openreview.fetcher import fetch_openreview_candidates, fetch_review_rating
+from src.integrations.openreview.fetcher import (
+    fetch_openreview_candidates,
+    fetch_review_rating,
+    resolve_openreview_pdf_url,
+)
 from src.models.base import SessionLocal
 from src.models.crawl import CrawlTask, CrawlTaskRun
 from src.models.literature import LiteratureEntry
@@ -42,6 +46,43 @@ def _download_pdf(pdf_url: str, dest_path: str) -> None:
             for chunk in resp.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
+
+
+def _pdf_url_for_download(meta: dict) -> str | None:
+    url = meta.get("pdf_url")
+    forum_id = meta.get("openreview_id") or ""
+    if meta.get("source") == "openreview" or (url and str(url).strip().startswith("/")):
+        return resolve_openreview_pdf_url(url, forum_id)
+    return url or None
+
+
+def _try_download_paper_pdf(
+    session: Session,
+    paper: Paper,
+    meta: dict,
+    run: CrawlTaskRun,
+    stats: dict,
+) -> None:
+    pdf_url = _pdf_url_for_download(meta)
+    if not pdf_url:
+        return
+    if paper.pdf_url != pdf_url:
+        paper.pdf_url = pdf_url
+    safe_name = paper.arxiv_id.replace("/", "_").replace(":", "_")
+    pdf_path = os.path.join(PAPERS_DIR, f"{safe_name}.pdf")
+    try:
+        _download_pdf(pdf_url, pdf_path)
+        paper.pdf_path = pdf_path
+        paper.parse_status = "downloaded"
+        session.add(paper)
+        session.commit()
+        _append_log(run, f"已下载 PDF: {paper.arxiv_id}", session)
+    except Exception as exc:
+        stats["download_failed"] += 1
+        paper.parse_status = "download_failed"
+        session.add(paper)
+        session.commit()
+        _append_log(run, f"PDF 下载失败 {paper.arxiv_id}: {exc}", session)
 
 
 def _parse_csv_field(value: str) -> list[str]:
@@ -103,6 +144,7 @@ def _enrich_openreview_meta(meta: dict) -> None:
     if meta.get("source") != "openreview":
         return
     forum_id = meta.get("openreview_id")
+    meta["pdf_url"] = resolve_openreview_pdf_url(meta.get("pdf_url"), forum_id or "")
     if forum_id and meta.get("review_rating") is None:
         meta["review_rating"] = fetch_review_rating(forum_id)
     if meta.get("citation_count") is None:
@@ -123,11 +165,18 @@ def _upsert_paper(session: Session, meta: dict, run: CrawlTaskRun, stats: dict) 
             paper.review_rating = meta.get("review_rating")
         if meta.get("citation_count") is not None:
             paper.citation_count = meta.get("citation_count")
+        fixed_pdf = _pdf_url_for_download(meta)
+        if fixed_pdf and paper.pdf_url != fixed_pdf:
+            paper.pdf_url = fixed_pdf
         session.add(paper)
         session.commit()
-        _append_log(run, f"论文元数据已存在，更新扩展字段: {paper_id}", session)
+        if paper.parse_status in ("pending", "download_failed") and not paper.pdf_path:
+            _try_download_paper_pdf(session, paper, meta, run, stats)
+        else:
+            _append_log(run, f"论文元数据已存在，更新扩展字段: {paper_id}", session)
         return paper
 
+    fixed_pdf = _pdf_url_for_download(meta)
     paper = Paper(
         arxiv_id=paper_id,
         source=meta.get("source", "arxiv"),
@@ -137,7 +186,7 @@ def _upsert_paper(session: Session, meta: dict, run: CrawlTaskRun, stats: dict) 
         categories=json.dumps(meta.get("categories", []), ensure_ascii=False),
         published_at=meta.get("published_at"),
         abs_url=meta.get("abs_url"),
-        pdf_url=meta.get("pdf_url"),
+        pdf_url=fixed_pdf,
         parse_status="pending",
         venue=meta.get("venue"),
         venue_type=meta.get("venue_type"),
@@ -150,23 +199,8 @@ def _upsert_paper(session: Session, meta: dict, run: CrawlTaskRun, stats: dict) 
     session.commit()
     stats["new_papers"] += 1
 
-    pdf_url = meta.get("pdf_url")
-    if pdf_url:
-        safe_name = paper_id.replace("/", "_").replace(":", "_")
-        pdf_path = os.path.join(PAPERS_DIR, f"{safe_name}.pdf")
-        try:
-            _download_pdf(pdf_url, pdf_path)
-            paper.pdf_path = pdf_path
-            paper.parse_status = "downloaded"
-            session.add(paper)
-            session.commit()
-            _append_log(run, f"已下载 PDF: {paper_id}", session)
-        except Exception as exc:
-            stats["download_failed"] += 1
-            paper.parse_status = "download_failed"
-            session.add(paper)
-            session.commit()
-            _append_log(run, f"PDF 下载失败 {paper_id}: {exc}", session)
+    if fixed_pdf:
+        _try_download_paper_pdf(session, paper, meta, run, stats)
     return paper
 
 

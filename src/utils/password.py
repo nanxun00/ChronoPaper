@@ -6,7 +6,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # 校验密码：校验接收的密码是否匹配存储的哈希值。
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
-
 # 加密密码
 def get_password_hash(password):
     '''

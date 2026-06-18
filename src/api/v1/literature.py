@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from src.api.deps import UserInDB, get_current_active_user, get_db
+from src.schemas.literature import LiteratureDeleteRequest
 from src.services import literature_service
 
 router = APIRouter(prefix="/literature", tags=["literature"])
@@ -46,3 +47,20 @@ def get_paper_detail(
             raise HTTPException(status_code=404, detail="论文不存在")
         raise HTTPException(status_code=403, detail="无权查看该论文")
     return data
+
+
+@router.post("/delete")
+def delete_literature_entries(
+    body: LiteratureDeleteRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = literature_service.delete_literature_entries(
+        db,
+        current_user.userid,
+        arxiv_ids=body.arxiv_ids,
+        visibility=body.visibility,
+    )
+    if result["deleted"] == 0 and result["not_found"]:
+        raise HTTPException(status_code=404, detail="未找到可删除的文献")
+    return result

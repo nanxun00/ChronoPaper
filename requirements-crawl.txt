@@ -1,5 +1,0 @@
-# Extra dependencies for arXiv crawl module
-arxiv>=2.1.0
-feedparser>=6.0.0
-apscheduler>=3.10.0
-requests>=2.31.0

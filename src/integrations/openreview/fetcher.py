@@ -9,6 +9,7 @@ from typing import Any
 import requests
 
 OPENREVIEW_API = "https://api2.openreview.net/notes"
+OPENREVIEW_BASE = "https://openreview.net"
 RATING_RE = re.compile(r"^(\d+(?:\.\d+)?)")
 
 
@@ -71,6 +72,22 @@ def _normalize_venues(venues: list[str] | str | None) -> list[str]:
     return [v.strip() for v in venues if v and v.strip()]
 
 
+def resolve_openreview_pdf_url(pdf_raw: str | None, forum_id: str = "") -> str | None:
+    """OpenReview 的 pdf 字段常为 /pdf/xxx.pdf 相对路径，需补全为绝对 URL。"""
+    if pdf_raw:
+        pdf = str(pdf_raw).strip()
+        if pdf.startswith("http://") or pdf.startswith("https://"):
+            return pdf
+        if pdf.startswith("//"):
+            return f"https:{pdf}"
+        if pdf.startswith("/"):
+            return f"{OPENREVIEW_BASE}{pdf}"
+        return f"{OPENREVIEW_BASE}/{pdf.lstrip('/')}"
+    if forum_id:
+        return f"{OPENREVIEW_BASE}/pdf?id={forum_id}"
+    return None
+
+
 def _note_to_candidate(note: dict, invitation: str) -> dict[str, Any]:
     content = note.get("content") or {}
     forum = note.get("forum") or note.get("id") or ""
@@ -110,8 +127,8 @@ def _note_to_candidate(note: dict, invitation: str) -> dict[str, Any]:
         "abstract": abstract,
         "categories": [invitation.split("/")[0]],
         "published_at": published_at,
-        "abs_url": f"https://openreview.net/forum?id={forum}",
-        "pdf_url": _content_value(content, "pdf", "") or None,
+        "abs_url": f"{OPENREVIEW_BASE}/forum?id={forum}",
+        "pdf_url": resolve_openreview_pdf_url(_content_value(content, "pdf", ""), forum),
         "venue": venue_display,
         "venue_display": venue_display,
         "venue_type": parse_venue_type(venue),
