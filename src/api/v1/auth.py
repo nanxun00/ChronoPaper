@@ -173,7 +173,7 @@ async def gateway(service: str, path: str, request: Request,
     '''
 
     if service not in services:
-        raise HTTPException(status_code=401, detail="未找到该服务")
+        raise HTTPException(status_code=404, detail="未找到该服务")
 
     headers = {"userid": current_user.userid}
 

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_api_base: str = "https://api.openai.com/v1"
     deepseek_api_key: str = ""
+    translate_model: str = "deepseek-chat"
     zhipuai_api_key: str = ""
     dashscope_api_key: str = ""
     siliconflow_api_key: str = ""

@@ -14,6 +14,7 @@ from src.api.v1 import (
     tasks,
     timerag,
     tools,
+    translate,
 )
 
 v1_router = APIRouter()
@@ -21,6 +22,7 @@ v1_router = APIRouter()
 # 否则 /literature、/data 等会被网关拦截并因 services 未配置而返回 401。
 v1_router.include_router(tasks.router)
 v1_router.include_router(literature.router)
+v1_router.include_router(translate.router)
 v1_router.include_router(chat.router)
 v1_router.include_router(knowledge_base.router)
 v1_router.include_router(smartbi.router)

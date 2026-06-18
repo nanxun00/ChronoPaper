@@ -22,11 +22,13 @@ from src.models.base import SessionLocal
 from src.models.crawl import CrawlTask, CrawlTaskRun
 from src.models.literature import LiteratureEntry
 from src.models.paper import Paper
+from src.services.literature_service import resolve_paper_pdf_path
+from src.services.translate_service import prepare_crawl_match_query
+from src.utils.paths import ensure_papers_dir, paper_pdf_path
 from src.utils.logging_config import setup_logger
 
 logger = setup_logger("CrawlService")
 
-PAPERS_DIR = os.path.join("uploads", "papers")
 _running_tasks: set[int] = set()
 _lock = threading.Lock()
 
@@ -68,8 +70,7 @@ def _try_download_paper_pdf(
         return
     if paper.pdf_url != pdf_url:
         paper.pdf_url = pdf_url
-    safe_name = paper.arxiv_id.replace("/", "_").replace(":", "_")
-    pdf_path = os.path.join(PAPERS_DIR, f"{safe_name}.pdf")
+    pdf_path = str(paper_pdf_path(paper.arxiv_id))
     try:
         _download_pdf(pdf_url, pdf_path)
         paper.pdf_path = pdf_path
@@ -170,7 +171,7 @@ def _upsert_paper(session: Session, meta: dict, run: CrawlTaskRun, stats: dict) 
             paper.pdf_url = fixed_pdf
         session.add(paper)
         session.commit()
-        if paper.parse_status in ("pending", "download_failed") and not paper.pdf_path:
+        if paper.parse_status in ("pending", "download_failed") and not resolve_paper_pdf_path(paper):
             _try_download_paper_pdf(session, paper, meta, run, stats)
         else:
             _append_log(run, f"论文元数据已存在，更新扩展字段: {paper_id}", session)
@@ -271,11 +272,39 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
     stats["candidates"] = len(candidates)
     categories = task.categories or ""
 
+    except_translation = False
+    try:
+        match_query = prepare_crawl_match_query(task.intent_text or "", task.keywords or "")
+    except Exception as exc:
+        except_translation = True
+        match_query = {
+            "intent_text": task.intent_text or "",
+            "keywords": task.keywords or "",
+            "translated": False,
+            "translated_fields": [],
+            "original_intent": task.intent_text or "",
+            "original_keywords": task.keywords or "",
+        }
+        _append_log(run, f"中文自动翻译失败，将使用原文匹配（{exc}）", session)
+
+    intent_for_match = match_query["intent_text"]
+    keywords_for_match = match_query["keywords"]
+    if not except_translation and match_query["translated"]:
+        _append_log(run, "检测到中文输入，已自动翻译为英文用于论文匹配：", session)
+        if "intent" in match_query["translated_fields"]:
+            _append_log(run, f"  兴趣原文: {match_query['original_intent'][:120]}", session)
+            _append_log(run, f"  兴趣译文: {intent_for_match[:200]}", session)
+        if "keywords" in match_query["translated_fields"]:
+            _append_log(run, f"  关键词原文: {match_query['original_keywords']}", session)
+            _append_log(run, f"  关键词译文: {keywords_for_match}", session)
+    elif not except_translation:
+        _append_log(run, "使用原始兴趣/关键词进行英文论文匹配", session)
+
     scored: list[tuple[float, dict]] = []
     for meta in candidates:
         score = compute_match_score(
-            intent_text=task.intent_text or "",
-            keywords=task.keywords or "",
+            intent_text=intent_for_match,
+            keywords=keywords_for_match,
             categories=categories,
             title=meta.get("title", ""),
             abstract=meta.get("abstract", ""),
@@ -301,6 +330,12 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
 
         if _literature_exists(session, paper_id, task.visibility, owner_id):
             stats["skipped_dup"] += 1
+            paper = session.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+            if paper and not resolve_paper_pdf_path(paper) and paper.parse_status in (
+                "pending",
+                "download_failed",
+            ):
+                _try_download_paper_pdf(session, paper, meta, run, stats)
             _append_log(run, f"跳过已存在: {paper_id} {meta['title'][:60]}", session)
             continue
 

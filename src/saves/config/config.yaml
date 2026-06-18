@@ -3,9 +3,16 @@ enable_knowledge_base: true
 enable_knowledge_graph: true
 enable_reranker: false
 enable_search_engine: false
+filename: src/saves\config\config.yaml
 model_local_paths: {}
-model_name: gpt-3.5-turbo
-model_provider: openai
+model_name: deepseek-chat
+model_provider: deepseek
 reranker: bge-reranker-v2-m3
 save_dir: src/saves
 stream: true
+valuable_model_provider:
+- openai
+- deepseek
+- zhipu
+- dashscope
+- siliconflow

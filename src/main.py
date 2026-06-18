@@ -9,13 +9,14 @@ from src.api import router
 from fastapi.staticfiles import StaticFiles
 from src.models.base import init_db
 from src.services.scheduler_service import start_crawl_scheduler
+from src.utils.paths import UPLOADS_DIR, ensure_papers_dir
 
 get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    os.makedirs(os.path.join("uploads", "papers"), exist_ok=True)
+    ensure_papers_dir()
     init_db()
     start_crawl_scheduler()
     yield
@@ -23,7 +24,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(limits={"max_file_size": 50 * 1024 * 1024}, lifespan=lifespan)
 app.include_router(router)  # 创建路由模块，把多个路由统一管理
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 # CORS 设置
 app.add_middleware(

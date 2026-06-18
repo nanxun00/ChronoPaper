@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from src.api.deps import UserInDB, get_current_active_user, get_db
@@ -34,7 +35,31 @@ def list_private_papers(
     return literature_service.list_private_papers(db, current_user.userid, q=q, page=page, page_size=page_size)
 
 
-@router.get("/paper/{arxiv_id}")
+@router.get("/pdf/{arxiv_id:path}")
+def get_paper_pdf(
+    arxiv_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    pdf_path = literature_service.resolve_accessible_paper_pdf(db, arxiv_id, current_user.userid)
+    if not pdf_path:
+        paper_exists = literature_service.get_paper_detail(db, arxiv_id, current_user.userid)
+        if paper_exists is None:
+            from src.models.paper import Paper
+
+            if not db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first():
+                raise HTTPException(status_code=404, detail="论文不存在")
+            raise HTTPException(status_code=403, detail="无权查看该论文")
+        raise HTTPException(status_code=404, detail="本地 PDF 尚未下载")
+    safe_name = arxiv_id.replace("/", "_").replace(":", "_")
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=f"{safe_name}.pdf",
+    )
+
+
+@router.get("/paper/{arxiv_id:path}")
 def get_paper_detail(
     arxiv_id: str,
     current_user: UserInDB = Depends(get_current_active_user),

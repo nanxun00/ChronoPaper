@@ -3,12 +3,84 @@ from __future__ import annotations
 
 import os
 
+import requests
 from sqlalchemy.orm import Session
 
+from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import LiteratureEntry
 from src.models.paper import Paper
+from src.utils.paths import (
+    PAPERS_DIR,
+    ensure_papers_dir,
+    paper_pdf_path,
+    resolve_existing_file,
+)
 
-PAPERS_DIR = os.path.join("uploads", "papers")
+
+def resolve_paper_pdf_path(paper: Paper) -> str | None:
+    for path in _paper_pdf_candidates(paper):
+        resolved = resolve_existing_file(path)
+        if resolved:
+            return resolved
+    return None
+
+
+def _pdf_url_for_paper(paper: Paper) -> str | None:
+    url = paper.pdf_url
+    if paper.source == "openreview" or (url and str(url).strip().startswith("/")):
+        return resolve_openreview_pdf_url(url, paper.openreview_id or "")
+    return url or None
+
+
+def ensure_paper_pdf_downloaded(db: Session, paper: Paper) -> str | None:
+    """本地无文件时，按 pdf_url 拉取并缓存到 uploads/papers/。"""
+    existing = resolve_paper_pdf_path(paper)
+    if existing:
+        return existing
+
+    pdf_url = _pdf_url_for_paper(paper)
+    if not pdf_url:
+        return None
+
+    dest_path = str(paper_pdf_path(paper.arxiv_id))
+    ensure_papers_dir()
+
+    try:
+        with requests.get(pdf_url, stream=True, timeout=(10, 120)) as resp:
+            resp.raise_for_status()
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+        paper.pdf_path = dest_path
+        paper.pdf_url = pdf_url
+        paper.parse_status = "downloaded"
+        db.add(paper)
+        db.commit()
+        return dest_path
+    except Exception:
+        paper.parse_status = "download_failed"
+        if pdf_url != paper.pdf_url:
+            paper.pdf_url = pdf_url
+        db.add(paper)
+        db.commit()
+        return None
+
+
+def _can_access_paper(db: Session, arxiv_id: str, user_id: str) -> bool:
+    return get_paper_detail(db, arxiv_id, user_id) is not None
+
+
+def resolve_accessible_paper_pdf(db: Session, arxiv_id: str, user_id: str) -> str | None:
+    if not _can_access_paper(db, arxiv_id, user_id):
+        return None
+    paper = db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
+    if not paper:
+        return None
+    path = resolve_paper_pdf_path(paper)
+    if path:
+        return path
+    return ensure_paper_pdf_downloaded(db, paper)
 
 
 def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
@@ -18,6 +90,8 @@ def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
     data["visibility"] = entry.visibility
     data["listed_at"] = entry.created_at.strftime("%Y-%m-%d %H:%M:%S") if entry.created_at else ""
     data["source"] = paper.source or "arxiv"
+    data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
+    data["can_fetch_pdf"] = data["has_pdf"] or bool(_pdf_url_for_paper(paper))
     return data
 
 
@@ -25,33 +99,39 @@ def _paper_pdf_candidates(paper: Paper) -> list[str]:
     paths: list[str] = []
     if paper.pdf_path:
         paths.append(paper.pdf_path)
-    safe_name = paper.arxiv_id.replace("/", "_").replace(":", "_")
-    paths.append(os.path.join(PAPERS_DIR, f"{safe_name}.pdf"))
-    return paths
+    paths.append(str(paper_pdf_path(paper.arxiv_id)))
+    unique: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path not in seen:
+            seen.add(path)
+            unique.append(path)
+    return unique
 
 
 def _safe_remove_pdf(pdf_path: str) -> bool:
     if not pdf_path:
         return False
-    abs_papers = os.path.abspath(PAPERS_DIR)
-    abs_path = os.path.abspath(pdf_path)
+    abs_papers = str(PAPERS_DIR.resolve())
+    resolved = resolve_existing_file(pdf_path)
+    if not resolved:
+        return False
+    abs_path = os.path.abspath(resolved)
     if not abs_path.startswith(abs_papers + os.sep) and abs_path != abs_papers:
         return False
-    if os.path.isfile(abs_path):
-        os.remove(abs_path)
-        return True
-    return False
+    os.remove(abs_path)
+    return True
 
 
 def _remove_paper_files(paper: Paper) -> int:
     removed = 0
     seen: set[str] = set()
     for path in _paper_pdf_candidates(paper):
-        norm = os.path.abspath(path)
-        if norm in seen:
+        resolved = resolve_existing_file(path)
+        if not resolved or resolved in seen:
             continue
-        seen.add(norm)
-        if _safe_remove_pdf(path):
+        seen.add(resolved)
+        if _safe_remove_pdf(resolved):
             removed += 1
     return removed
 
@@ -211,6 +291,8 @@ def get_paper_detail(db: Session, arxiv_id: str, user_id: str) -> dict | None:
         return None
 
     data = paper.to_dict()
+    data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
+    data["can_fetch_pdf"] = data["has_pdf"] or bool(_pdf_url_for_paper(paper))
     if public:
         data["match_score"] = public.match_score
         data["visibility"] = "public"
