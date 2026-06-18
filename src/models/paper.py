@@ -2,7 +2,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, String, Text
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text
 
 from src.models.base import Base
 
@@ -10,7 +10,8 @@ from src.models.base import Base
 class Paper(Base):
     __tablename__ = "papers"
 
-    arxiv_id = Column(String(64), primary_key=True)
+    arxiv_id = Column(String(128), primary_key=True)
+    source = Column(String(32), nullable=False, default="arxiv")
     title = Column(Text, nullable=False, default="")
     authors = Column(Text, nullable=False, default="[]")
     abstract = Column(Text, nullable=False, default="")
@@ -20,6 +21,12 @@ class Paper(Base):
     pdf_url = Column(String(512), nullable=True)
     pdf_path = Column(String(512), nullable=True)
     parse_status = Column(String(32), nullable=False, default="pending")
+    venue = Column(String(255), nullable=True)
+    venue_type = Column(String(64), nullable=True)
+    citation_count = Column(Integer, nullable=True)
+    acceptance_status = Column(String(64), nullable=True)
+    review_rating = Column(Float, nullable=True)
+    openreview_id = Column(String(128), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -39,6 +46,8 @@ class Paper(Base):
         pub = self.published_at
         return {
             "arxiv_id": self.arxiv_id,
+            "paper_id": self.arxiv_id,
+            "source": self.source or "arxiv",
             "title": self.title,
             "authors": ", ".join(self.authors_list()),
             "abstract": self.abstract,
@@ -48,5 +57,11 @@ class Paper(Base):
             "abs_url": self.abs_url,
             "pdf_url": self.pdf_url,
             "parse_status": self.parse_status,
+            "venue": self.venue,
+            "venue_type": self.venue_type,
+            "citation_count": self.citation_count,
+            "acceptance_status": self.acceptance_status,
+            "review_rating": self.review_rating,
+            "openreview_id": self.openreview_id,
             "listed_at": self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else None,
         }

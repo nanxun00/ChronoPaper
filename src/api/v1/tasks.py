@@ -28,12 +28,15 @@ def _task_to_dict(t: CrawlTask, db: Session) -> dict:
         100 if latest_run and latest_run.status == "done" else 0
     )
     visibility_label = "公开文献" if t.visibility == "public" else "私有文献"
+    sources = getattr(t, "sources", None) or "arxiv"
     return {
         "id": t.id,
         "name": t.name,
         "type": "crawl",
         "intent_text": t.intent_text,
+        "sources": sources,
         "categories": t.categories,
+        "openreview_venues": getattr(t, "openreview_venues", None) or "",
         "keywords": t.keywords,
         "visibility": t.visibility,
         "visibility_label": visibility_label,
@@ -63,20 +66,31 @@ def list_tasks(
     return {"tasks": [_task_to_dict(t, db) for t in rows]}
 
 
+def _validate_crawl_sources(body: CrawlTaskCreate) -> None:
+    sources = [s.strip() for s in (body.sources or "arxiv").split(",") if s.strip()]
+    if not sources:
+        raise HTTPException(status_code=400, detail="请至少选择一种抓取数据源")
+    if "arxiv" in sources and not body.categories.strip():
+        raise HTTPException(status_code=400, detail="已选择 arXiv，请填写分类")
+    if "openreview" in sources and not body.openreview_venues.strip():
+        raise HTTPException(status_code=400, detail="已选择 OpenReview，请选择会议/venue")
+
+
 @router.post("/crawl")
 def create_crawl_task(
     body: CrawlTaskCreate,
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    if not body.categories.strip():
-        raise HTTPException(status_code=400, detail="请填写 arXiv 分类")
+    _validate_crawl_sources(body)
 
     row = CrawlTask(
         user_id=current_user.userid,
         name=body.name,
         intent_text=body.intent_text,
+        sources=body.sources or "arxiv",
         categories=body.categories,
+        openreview_venues=body.openreview_venues,
         keywords=body.keywords,
         visibility=body.visibility,
         schedule_time=body.schedule_time,

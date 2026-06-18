@@ -1,4 +1,4 @@
-"""抓取任务执行：拉取、打分、去重、入库、下载 PDF。"""
+"""抓取任务执行：多数据源拉取、打分、去重、入库、下载 PDF。"""
 from __future__ import annotations
 
 import json
@@ -6,17 +6,18 @@ import os
 import threading
 import traceback
 from datetime import datetime
-from typing import Callable
 
 import requests
 from sqlalchemy.orm import Session
 
+from src.integrations.arxiv.fetcher import arxiv_result_to_dict, fetch_arxiv_candidates
+from src.integrations.arxiv.matcher import compute_match_score
+from src.integrations.citations import fetch_citation_count
+from src.integrations.openreview.fetcher import fetch_openreview_candidates, fetch_review_rating
 from src.models.base import SessionLocal
 from src.models.crawl import CrawlTask, CrawlTaskRun
 from src.models.literature import LiteratureEntry
 from src.models.paper import Paper
-from src.integrations.arxiv.fetcher import arxiv_result_to_dict, fetch_arxiv_candidates
-from src.integrations.arxiv.matcher import compute_match_score
 from src.utils.logging_config import setup_logger
 
 logger = setup_logger("CrawlService")
@@ -43,17 +44,130 @@ def _download_pdf(pdf_url: str, dest_path: str) -> None:
                     f.write(chunk)
 
 
-def _literature_exists(session: Session, arxiv_id: str, visibility: str, user_id: str) -> bool:
+def _parse_csv_field(value: str) -> list[str]:
+    return [v.strip() for v in (value or "").replace("，", ",").split(",") if v.strip()]
+
+
+def _parse_sources(task: CrawlTask) -> list[str]:
+    raw = getattr(task, "sources", None) or "arxiv"
+    return _parse_csv_field(raw) or ["arxiv"]
+
+
+def _literature_exists(session: Session, paper_id: str, visibility: str, user_id: str) -> bool:
     return (
         session.query(LiteratureEntry)
         .filter(
-            LiteratureEntry.arxiv_id == arxiv_id,
+            LiteratureEntry.arxiv_id == paper_id,
             LiteratureEntry.visibility == visibility,
             LiteratureEntry.user_id == user_id,
         )
         .first()
         is not None
     )
+
+
+def _meta_from_arxiv(raw) -> dict:
+    meta = arxiv_result_to_dict(raw)
+    meta["paper_id"] = meta["arxiv_id"]
+    meta["source"] = "arxiv"
+    return meta
+
+
+def _collect_candidates(task: CrawlTask, run: CrawlTaskRun, session: Session) -> list[dict]:
+    sources = _parse_sources(task)
+    _append_log(run, f"抓取数据源: {', '.join(sources)}", session)
+    candidates: list[dict] = []
+
+    if "arxiv" in sources:
+        categories = task.categories or ""
+        if not categories.strip():
+            raise ValueError("已选择 arXiv 源，请填写 arXiv 分类")
+        raw_list = fetch_arxiv_candidates(categories)
+        candidates.extend(_meta_from_arxiv(raw) for raw in raw_list)
+        _append_log(run, f"从 arXiv 获取候选论文 {len(raw_list)} 篇", session)
+
+    if "openreview" in sources:
+        venues = getattr(task, "openreview_venues", None) or ""
+        if not venues.strip():
+            raise ValueError("已选择 OpenReview 源，请选择会议/venue")
+        or_list = fetch_openreview_candidates(venues, max_per_venue=task.max_papers_per_run * 3)
+        candidates.extend(or_list)
+        _append_log(run, f"从 OpenReview 获取候选论文 {len(or_list)} 篇", session)
+
+    if not sources:
+        raise ValueError("请至少选择一种抓取数据源")
+    return candidates
+
+
+def _enrich_openreview_meta(meta: dict) -> None:
+    if meta.get("source") != "openreview":
+        return
+    forum_id = meta.get("openreview_id")
+    if forum_id and meta.get("review_rating") is None:
+        meta["review_rating"] = fetch_review_rating(forum_id)
+    if meta.get("citation_count") is None:
+        meta["citation_count"] = fetch_citation_count(meta["paper_id"], meta.get("title", ""))
+
+
+def _upsert_paper(session: Session, meta: dict, run: CrawlTaskRun, stats: dict) -> Paper:
+    paper_id = meta["paper_id"]
+    paper = session.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+    if paper:
+        if meta.get("published_at") and not paper.published_at:
+            paper.published_at = meta["published_at"]
+        if meta.get("venue") and not paper.venue:
+            paper.venue = meta.get("venue")
+        if meta.get("acceptance_status"):
+            paper.acceptance_status = meta.get("acceptance_status")
+        if meta.get("review_rating") is not None:
+            paper.review_rating = meta.get("review_rating")
+        if meta.get("citation_count") is not None:
+            paper.citation_count = meta.get("citation_count")
+        session.add(paper)
+        session.commit()
+        _append_log(run, f"论文元数据已存在，更新扩展字段: {paper_id}", session)
+        return paper
+
+    paper = Paper(
+        arxiv_id=paper_id,
+        source=meta.get("source", "arxiv"),
+        title=meta["title"],
+        authors=json.dumps(meta.get("authors", []), ensure_ascii=False),
+        abstract=meta.get("abstract", ""),
+        categories=json.dumps(meta.get("categories", []), ensure_ascii=False),
+        published_at=meta.get("published_at"),
+        abs_url=meta.get("abs_url"),
+        pdf_url=meta.get("pdf_url"),
+        parse_status="pending",
+        venue=meta.get("venue"),
+        venue_type=meta.get("venue_type"),
+        citation_count=meta.get("citation_count"),
+        acceptance_status=meta.get("acceptance_status"),
+        review_rating=meta.get("review_rating"),
+        openreview_id=meta.get("openreview_id"),
+    )
+    session.add(paper)
+    session.commit()
+    stats["new_papers"] += 1
+
+    pdf_url = meta.get("pdf_url")
+    if pdf_url:
+        safe_name = paper_id.replace("/", "_").replace(":", "_")
+        pdf_path = os.path.join(PAPERS_DIR, f"{safe_name}.pdf")
+        try:
+            _download_pdf(pdf_url, pdf_path)
+            paper.pdf_path = pdf_path
+            paper.parse_status = "downloaded"
+            session.add(paper)
+            session.commit()
+            _append_log(run, f"已下载 PDF: {paper_id}", session)
+        except Exception as exc:
+            stats["download_failed"] += 1
+            paper.parse_status = "download_failed"
+            session.add(paper)
+            session.commit()
+            _append_log(run, f"PDF 下载失败 {paper_id}: {exc}", session)
+    return paper
 
 
 def execute_crawl_run(task_id: int, trigger_type: str = "manual") -> int:
@@ -115,28 +229,23 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
 
     _append_log(run, f"开始执行任务: {task.name}（入库目标: {'公开文献' if task.visibility == 'public' else '私有文献'}）", session)
 
-    categories = task.categories or ""
-    if not categories.strip():
-        raise ValueError("请填写 arXiv 分类，例如 cs.AI, cs.CL")
-
     run.progress = 10
     session.add(run)
     session.commit()
 
-    candidates = fetch_arxiv_candidates(categories)
+    candidates = _collect_candidates(task, run, session)
     stats["candidates"] = len(candidates)
-    _append_log(run, f"从 arXiv 获取候选论文 {len(candidates)} 篇", session)
+    categories = task.categories or ""
 
     scored: list[tuple[float, dict]] = []
-    for raw in candidates:
-        meta = arxiv_result_to_dict(raw)
+    for meta in candidates:
         score = compute_match_score(
             intent_text=task.intent_text or "",
             keywords=task.keywords or "",
             categories=categories,
-            title=meta["title"],
-            abstract=meta["abstract"],
-            paper_categories=meta["categories"],
+            title=meta.get("title", ""),
+            abstract=meta.get("abstract", ""),
+            paper_categories=meta.get("categories", []),
         )
         if score >= task.min_match_score:
             scored.append((score, meta))
@@ -153,53 +262,18 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
     owner_id = "" if task.visibility == "public" else task.user_id
 
     for idx, (score, meta) in enumerate(scored):
-        arxiv_id = meta["arxiv_id"]
-        if _literature_exists(session, arxiv_id, task.visibility, owner_id):
+        _enrich_openreview_meta(meta)
+        paper_id = meta["paper_id"]
+
+        if _literature_exists(session, paper_id, task.visibility, owner_id):
             stats["skipped_dup"] += 1
-            _append_log(run, f"跳过已存在: {arxiv_id} {meta['title'][:60]}", session)
+            _append_log(run, f"跳过已存在: {paper_id} {meta['title'][:60]}", session)
             continue
 
-        paper = session.query(Paper).filter(Paper.arxiv_id == arxiv_id).first()
-        if not paper:
-            paper = Paper(
-                arxiv_id=arxiv_id,
-                title=meta["title"],
-                authors=json.dumps(meta["authors"], ensure_ascii=False),
-                abstract=meta["abstract"],
-                categories=json.dumps(meta["categories"], ensure_ascii=False),
-                published_at=meta["published_at"],
-                abs_url=meta["abs_url"],
-                pdf_url=meta["pdf_url"],
-                parse_status="pending",
-            )
-            session.add(paper)
-            session.commit()
-            stats["new_papers"] += 1
-
-            if meta.get("pdf_url"):
-                pdf_path = os.path.join(PAPERS_DIR, f"{arxiv_id}.pdf")
-                try:
-                    _download_pdf(meta["pdf_url"], pdf_path)
-                    paper.pdf_path = pdf_path
-                    paper.parse_status = "downloaded"
-                    session.add(paper)
-                    session.commit()
-                    _append_log(run, f"已下载 PDF: {arxiv_id}", session)
-                except Exception as exc:
-                    stats["download_failed"] += 1
-                    paper.parse_status = "download_failed"
-                    session.add(paper)
-                    session.commit()
-                    _append_log(run, f"PDF 下载失败 {arxiv_id}: {exc}", session)
-        else:
-            if meta.get("published_at") and not paper.published_at:
-                paper.published_at = meta["published_at"]
-                session.add(paper)
-                session.commit()
-            _append_log(run, f"论文元数据已存在，仅新增文献条目: {arxiv_id}", session)
+        _upsert_paper(session, meta, run, stats)
 
         entry = LiteratureEntry(
-            arxiv_id=arxiv_id,
+            arxiv_id=paper_id,
             user_id=owner_id,
             visibility=task.visibility,
             match_score=score,
@@ -232,6 +306,5 @@ def is_task_running(task_id: int) -> bool:
 
 
 def cancel_task_run(task_id: int) -> bool:
-    """当前版本仅标记等待中的逻辑取消；运行中任务会自然结束。"""
     with _lock:
         return task_id in _running_tasks

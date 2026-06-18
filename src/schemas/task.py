@@ -5,7 +5,9 @@ from typing import Literal
 class CrawlTaskCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     intent_text: str = Field(default="")
-    categories: str = Field(...)
+    sources: str = Field(default="arxiv", description="逗号分隔: arxiv,openreview")
+    categories: str = Field(default="")
+    openreview_venues: str = Field(default="")
     keywords: str = Field(default="")
     visibility: Literal["public", "private"] = Field(default="public")
     schedule_time: str | None = None
@@ -17,7 +19,9 @@ class CrawlTaskCreate(BaseModel):
 class CrawlTaskUpdate(BaseModel):
     name: str | None = None
     intent_text: str | None = None
+    sources: str | None = None
     categories: str | None = None
+    openreview_venues: str | None = None
     keywords: str | None = None
     visibility: Literal["public", "private"] | None = None
     schedule_time: str | None = None

@@ -54,6 +54,51 @@ def ensure_mysql_database() -> None:
     bootstrap.dispose()
 
 
+def migrate_schema(engine, log) -> None:
+    """为已存在库补充新列（create_all 不会 ALTER 旧表）。"""
+    inspector = inspect(engine)
+    if "papers" not in inspector.get_table_names():
+        return
+
+    paper_cols = {c["name"] for c in inspector.get_columns("papers")}
+    alters = []
+    if "source" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'arxiv'")
+    if "venue" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN venue VARCHAR(255) NULL")
+    if "venue_type" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN venue_type VARCHAR(64) NULL")
+    if "citation_count" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN citation_count INT NULL")
+    if "acceptance_status" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN acceptance_status VARCHAR(64) NULL")
+    if "review_rating" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN review_rating FLOAT NULL")
+    if "openreview_id" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN openreview_id VARCHAR(128) NULL")
+
+    arxiv_col = next((c for c in inspector.get_columns("papers") if c["name"] == "arxiv_id"), None)
+    if arxiv_col and str(arxiv_col.get("type")).endswith("64"):
+        alters.append("ALTER TABLE papers MODIFY COLUMN arxiv_id VARCHAR(128) NOT NULL")
+        if "literature_entries" in inspector.get_table_names():
+            alters.append("ALTER TABLE literature_entries MODIFY COLUMN arxiv_id VARCHAR(128) NOT NULL")
+
+    if "crawl_tasks" in inspector.get_table_names():
+        task_cols = {c["name"] for c in inspector.get_columns("crawl_tasks")}
+        if "sources" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN sources VARCHAR(128) NOT NULL DEFAULT 'arxiv'")
+        if "openreview_venues" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN openreview_venues VARCHAR(1024) NOT NULL DEFAULT ''")
+
+    for ddl in alters:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(ddl))
+            log.info("Schema migrated: %s", ddl.split("ADD COLUMN")[-1].split("MODIFY")[-1][:40])
+        except Exception as exc:
+            log.warning("Schema migration skipped: %s (%s)", ddl[:60], exc)
+
+
 def init_db() -> None:
     """启动时创建已实现功能所需的 MySQL 表。"""
     from src.utils.logging_config import setup_logger
@@ -84,6 +129,8 @@ def init_db() -> None:
         settings.mysql_db,
         ", ".join(created),
     )
+
+    migrate_schema(engine, log)
 
     from src.models.user import ensure_default_admin
 

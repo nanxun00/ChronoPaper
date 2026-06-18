@@ -12,7 +12,7 @@ def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
     data["match_score"] = entry.match_score
     data["visibility"] = entry.visibility
     data["listed_at"] = entry.created_at.strftime("%Y-%m-%d %H:%M:%S") if entry.created_at else ""
-    data["source"] = "arxiv_crawl"
+    data["source"] = paper.source or "arxiv"
     return data
 
 
