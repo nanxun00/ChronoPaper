@@ -4,6 +4,9 @@
       <span class="item btn" @click="copyText(msg.text)"><CopyOutlined /></span>
       <span class="item btn" @click="likeThisResponse(msg)"><LikeOutlined /></span>
       <span class="item btn" @click="dislikeThisResponse(msg)"><DislikeOutlined /></span>
+      <span class="item btn delete-btn" @click="deleteThisTurn(msg)">
+        <DeleteOutlined />
+      </span>
       <span class="item"><GlobalOutlined /> {{ msg.model_name }}</span>
       <span
         class="item btn"
@@ -73,6 +76,7 @@ import {
   CopyOutlined,
   LikeOutlined,
   DislikeOutlined,
+  DeleteOutlined,
   FileOutlined,
   ClockCircleOutlined
 } from '@ant-design/icons-vue'
@@ -80,7 +84,13 @@ import GraphContainer from '@/components/graph/GraphContainer.vue'
 
 const props = defineProps({
   message: Object,
+  disabled: {
+    type: Boolean,
+    default: false,
+  },
 })
+
+const emit = defineEmits(['delete-turn'])
 
 const msg = ref(props.message)
 
@@ -110,6 +120,11 @@ const likeThisResponse = (msg) => {
 
 const dislikeThisResponse = (msg) => {
   console.log('Dislike this response:', msg)
+}
+
+const deleteThisTurn = (msg) => {
+  if (props.disabled) return
+  emit('delete-turn', msg.id)
 }
 
 // 使用 reactive 创建一个响应式对象来存储每个文件的抽屉状态
@@ -183,6 +198,16 @@ const getPercent = (value) => {
       }
       &:active {
         background: var(--gray-300);
+      }
+    }
+
+    &.delete-btn {
+      color: #f56c6c;
+      &:hover {
+        background: #fef0f0;
+      }
+      &:active {
+        background: #fde2e2;
       }
     }
   }

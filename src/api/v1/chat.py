@@ -1,26 +1,67 @@
 import json
 import asyncio
-from fastapi import APIRouter, Body
+import uuid
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import StreamingResponse, Response
 from concurrent.futures import ThreadPoolExecutor
+from sqlalchemy.orm import Session
+
+from src.api.deps import UserInDB, get_current_active_user, get_db
 from src.models.base import SessionLocal
 from src.services import literature_service
+from src.services.chat_persistence_service import (
+    build_assistant_message_metadata,
+    build_llm_history,
+    build_user_message_metadata,
+    conversation_detail,
+    create_conversation,
+    delete_conversation,
+    delete_message_turn,
+    extract_bind_paper_id,
+    get_conversation,
+    list_conversations,
+    persist_chat_turn,
+    update_conversation_bindings,
+    update_conversation_title,
+)
 from src.services.rag import HistoryManager
 from src.services.rag.startup import startup
 from src.utils.logging_config import setup_logger
-from src.api.v1.image import ocr_cache
 
 chat = APIRouter(prefix="/chat")
 router = chat
 logger = setup_logger("server-chat")
-# 创建线程池
 executor = ThreadPoolExecutor()
 
-refs_pool = {}
+refs_pool: dict[str, dict] = {}
+
+
+def _refs_set(user_id: str, res_id: str, refs) -> None:
+    refs_pool.setdefault(user_id, {})[res_id] = refs
+
+
+def _refs_get(user_id: str, res_id: str):
+    return refs_pool.get(user_id, {}).get(res_id)
+
+
+def _refs_pop(user_id: str, res_id: str):
+    return refs_pool.get(user_id, {}).pop(res_id, None)
 
 
 def _is_stream_enabled(meta: dict) -> bool:
     return meta.get("stream", True) is not False
+
+
+def _meta_for_persist(meta: dict) -> dict:
+    clean = {**meta}
+    cited = clean.get("cited_literature")
+    if isinstance(cited, list):
+        clean["cited_literature"] = [
+            {k: v for k, v in item.items() if k != "full_text"}
+            for item in cited
+            if isinstance(item, dict)
+        ]
+    return clean
 
 
 def _prepare_chat_query(
@@ -28,11 +69,12 @@ def _prepare_chat_query(
     history_manager: HistoryManager,
     meta: dict,
     literature_context: str,
+    user_id: str,
     cur_res_id: str,
 ) -> str:
     if meta.get("enable_retrieval"):
         new_query, refs = startup.retriever(query, history_manager.messages, meta)
-        refs_pool[cur_res_id] = refs
+        _refs_set(user_id, cur_res_id, refs)
     else:
         new_query = query
     if literature_context:
@@ -52,85 +94,207 @@ def _message_to_response_content(message) -> tuple[dict, str]:
     return response_content, response_content["content"]
 
 
+def _resolve_conversation(
+    db: Session,
+    user_id: str,
+    conv_id: str | None,
+) -> str:
+    if conv_id:
+        conv = get_conversation(db, user_id, conv_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+        return conv_id
+    conv = create_conversation(db, user_id)
+    return conv.conv_id
+
+
+@chat.get("/conversations")
+def list_user_conversations(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    rows = list_conversations(db, current_user.userid)
+    return {"conversations": [row.to_dict() for row in rows]}
+
+
+@chat.post("/conversations")
+def create_user_conversation(
+    body: dict = Body(default={}),
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    conv = create_conversation(
+        db,
+        current_user.userid,
+        title=body.get("title") or "新对话",
+        bind_paper_id=body.get("bind_paper_id"),
+        bind_doc_id=body.get("bind_doc_id"),
+        system_prompt=body.get("system_prompt"),
+    )
+    return conv.to_dict()
+
+
+@chat.get("/conversations/{conv_id}")
+def get_user_conversation_detail(
+    conv_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    detail = conversation_detail(db, current_user.userid, conv_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+    return detail
+
+
+@chat.patch("/conversations/{conv_id}")
+def patch_user_conversation(
+    conv_id: str,
+    body: dict = Body(...),
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    conv = None
+    if "title" in body:
+        conv = update_conversation_title(db, current_user.userid, conv_id, body.get("title") or "")
+    if "bind_paper_id" in body or "bind_doc_id" in body:
+        conv = update_conversation_bindings(
+            db,
+            current_user.userid,
+            conv_id,
+            bind_paper_id=body.get("bind_paper_id") if "bind_paper_id" in body else None,
+            bind_doc_id=body.get("bind_doc_id") if "bind_doc_id" in body else None,
+        )
+    if conv is None:
+        conv = get_conversation(db, current_user.userid, conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+    return conv.to_dict()
+
+
+@chat.delete("/conversations/{conv_id}")
+def delete_user_conversation(
+    conv_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    if not delete_conversation(db, current_user.userid, conv_id):
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+    return {"ok": True}
+
+
+@chat.delete("/conversations/{conv_id}/turns/{assistant_msg_id}")
+def delete_conversation_turn(
+    conv_id: str,
+    assistant_msg_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    detail = delete_message_turn(db, current_user.userid, conv_id, assistant_msg_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="消息不存在或无权访问")
+    return detail
+
+
 @chat.get("/")
 async def chat_get():
     return "Chat Get!"
 
+
 @chat.post("/")
 def chat_post(
-        query: str = Body(...),
-        meta: dict = Body(None),
-        history: list = Body(...),
-        cur_res_id: str = Body(...)):
-    '''
-        处理聊天的POST请求
-        参数：
-            - query: 用户的查询信息
-            - meta: 附加的元数据，用于控制聊天行为
-            - history: 聊天历史记录
-            - cur_res_id: 当前响应的ID
-        返回：
-            - StreamingResponse: 实时生成的聊天响应
-    '''
+    query: str = Body(...),
+    meta: dict = Body(None),
+    history: list = Body(default=[]),
+    cur_res_id: str = Body(...),
+    conv_id: str | None = Body(None),
+    user_msg_id: str | None = Body(None),
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
     meta = meta or {}
+    user_id = current_user.userid
+    conv_id = _resolve_conversation(db, user_id, conv_id)
+    user_msg_id = user_msg_id or f"msg-{uuid.uuid4().hex}"
+
     cited_raw = meta.get("cited_literature") or []
     literature_context = ""
     if cited_raw:
-        db = SessionLocal()
-        try:
-            enriched, literature_context = literature_service.prepare_cited_literature_for_chat(
-                db, cited_raw
-            )
-            meta = {**meta, "cited_literature": enriched}
-        finally:
-            db.close()
-    logger.debug(
-        "chat meta cited_literature count=%s context_len=%s",
-        len(meta.get("cited_literature") or []),
-        len(literature_context),
-    )
+        enriched, literature_context = literature_service.prepare_cited_literature_for_chat(
+            db, cited_raw, user_id=user_id
+        )
+        meta = {**meta, "cited_literature": enriched}
 
-    # 检查 meta 中是否包含 OCR 识别的 session_id
-    # session_id = meta.get("session_id") if meta else None
-    # if session_id and session_id in ocr_cache:
-    #     ocr_text = ocr_cache[session_id]["text"]
-    #     query = f"【OCR 识别内容】：{ocr_text}\n\n{query}"  # 将 OCR 结果拼接到 query 前
+    db_history = build_llm_history(db, conv_id)
+    history_manager = HistoryManager(db_history if conv_id else history)
 
-    # 初始化历史记录管理器
-    history_manager = HistoryManager(history)
+    def make_chunk(content, status, history=None):
+        return json.dumps(
+            {
+                "response": content,
+                "history": history,
+                "model_name": startup.config.model_name,
+                "status": status,
+                "meta": meta,
+                "conv_id": conv_id,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8") + b"\n"
 
-    def make_chunk(content, status, history):
-        '''
-            创建响应块
-            参数：
-                - content: 相应内容
-                - status: 响应状态
-                - history：当前历史记录
-            返回：
-                - bytes: 编码后的响应块
-        '''
-        return json.dumps({
-            "response": content,
-            "history": history,
-            "model_name": startup.config.model_name,
-            "status": status,
-            "meta": meta,
-        }, ensure_ascii=False).encode('utf-8') + b"\n"
+    def persist_turn(
+        assistant_content: str,
+        reasoning_content: str = "",
+        refs=None,
+    ) -> list[dict]:
+        user_meta = build_user_message_metadata(
+            ui_msg_id=user_msg_id,
+            images=meta.get("images") or [],
+            citations=cited_raw,
+        )
+        assistant_meta = build_assistant_message_metadata(
+            ui_msg_id=cur_res_id,
+            reasoning_content=reasoning_content,
+            refs=refs,
+            model_name=startup.config.model_name,
+            status="finished",
+            chat_meta=_meta_for_persist(meta),
+        )
+        persist_chat_turn(
+            db,
+            user_id,
+            conv_id,
+            user_msg_id=user_msg_id,
+            assistant_msg_id=cur_res_id,
+            user_content=query,
+            assistant_content=assistant_content,
+            user_metadata=user_meta,
+            assistant_metadata=assistant_meta,
+            bind_paper_id=extract_bind_paper_id(cited_raw),
+        )
+        return build_llm_history(db, conv_id)
 
     use_stream = _is_stream_enabled(meta)
 
     if not use_stream:
-        new_query = _prepare_chat_query(query, history_manager, meta, literature_context, cur_res_id)
+        new_query = _prepare_chat_query(
+            query, history_manager, meta, literature_context, user_id, cur_res_id
+        )
         messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get("history_round"))
         history_manager.add_user(query)
         message = startup.model.predict(messages, stream=False)
         response_content, content = _message_to_response_content(message)
+        refs = _refs_get(user_id, cur_res_id)
+        updated_history = persist_turn(
+            content,
+            reasoning_content=response_content.get("reasoning_content") or "",
+            refs=refs,
+        )
         payload = {
             "response": response_content,
-            "history": history_manager.update_ai(content),
+            "history": updated_history,
             "model_name": startup.config.model_name,
             "status": "finished",
             "meta": meta,
+            "conv_id": conv_id,
         }
         return Response(
             content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -138,166 +302,73 @@ def chat_post(
         )
 
     def generate_response():
-        '''
-            生成响应
-            该函数负责根据用户查询和历史记录生成聊天响应，如果启用了检索功能，他会首先检索相关信息
-            然后使用模型生成响应，生成的响应被切分为块，以便实时推送到客户端
-        '''
-
         if meta.get("enable_retrieval"):
-            chunk = make_chunk("", "searching", history=None)
-            yield chunk
+            yield make_chunk("", "searching", history=None)
 
-        new_query = _prepare_chat_query(query, history_manager, meta, literature_context, cur_res_id)
-
-        # 提交带有新查询的历史记录，并添加用户查询到历史记录中
-        messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get('history_round'))
+        new_query = _prepare_chat_query(
+            query, history_manager, meta, literature_context, user_id, cur_res_id
+        )
+        messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get("history_round"))
         history_manager.add_user(query)
         logger.debug(f"Web history: {history_manager.messages}")
 
         content = ""
-        # 初始化响应内容字典
-        response_content = {
-            'reasoning_content': '',
-            'content': ''
-        }
-        # 使用模型预测响应，并实时生成响应块
+        response_content = {"reasoning_content": "", "content": ""}
         for delta in startup.model.predict(messages, stream=True):
             if not delta.content:
                 continue
-            if startup.model.model_name=="deepseek-r1:32b" or startup.model.model_name=="deepseek-r1:14b":
-                if hasattr(delta, 'is_full') and delta.is_full:
-                    if hasattr(delta, 'reasoning_content'):
-                        response_content['reasoning_content'] = delta.reasoning_content
-                    response_content['content'] = delta.content
+            if startup.model.model_name in ("deepseek-r1:32b", "deepseek-r1:14b"):
+                if hasattr(delta, "is_full") and delta.is_full:
+                    if hasattr(delta, "reasoning_content"):
+                        response_content["reasoning_content"] = delta.reasoning_content
+                    response_content["content"] = delta.content
                     content = delta.content
                 else:
-                    if hasattr(delta, 'reasoning_content'):
-                        response_content['reasoning_content'] += delta.reasoning_content
-                    response_content['content'] += delta.content
+                    if hasattr(delta, "reasoning_content"):
+                        response_content["reasoning_content"] += delta.reasoning_content
+                    response_content["content"] += delta.content
                     content += delta.content
-
             else:
-                if hasattr(delta, 'is_full') and delta.is_full:
-                    response_content['content'] = delta.content
+                if hasattr(delta, "is_full") and delta.is_full:
+                    response_content["content"] = delta.content
                     content = delta.content
                 else:
-                    response_content['content'] += delta.content
+                    response_content["content"] += delta.content
                     content += delta.content
 
             chunk = make_chunk(response_content, "loading", history=history_manager.update_ai(content))
             yield chunk
-            #     if hasattr(delta, 'is_full') and delta.is_full:
-            #         if hasattr(delta, 'reasoning_content'):
-            #             response_content['reasoning_content'] = delta.reasoning_content
-            #             response_content['content'] = delta.content
-            #             content = delta.content
-            #         else:
-            #             import re
-            #             logger.info(type(delta.content))
-            #             think_pattern = r"<think>(.*?)</think>"
-            #             think_match = re.search(think_pattern, delta.content, re.DOTALL)
-            #             think_content = think_match.group(1).strip() if think_match else ""
-            #
-            #             # 使用正则表达式提取<think>标签之后的内容
-            #             remaining_pattern = r"</think>(.*)"
-            #             remaining_match = re.search(remaining_pattern, delta.content, re.DOTALL)
-            #             remaining_content = remaining_match.group(1).strip() if remaining_match else ""
-            #
-            #             # 打印结果
-            #             print("Content inside <think>:\n", think_content)
-            #             print("Content after <think>:\n", remaining_content)
-            #             response_content['reasoning_content'] = delta.content
-            #             response_content['content'] = delta.content
-            #             content = delta.content
-            #
-            #
-            #     else:
-            #         if hasattr(delta, 'reasoning_content'):
-            #             response_content['reasoning_content'] += delta.reasoning_content
-            #             response_content['content'] += delta.content
-            #             content += delta.content
-            #         else:
-            #             import re
-            #             whether_think = 1
-            #             if whether_think == 1:
-            #                 response_content['reasoning_content'] += delta.content
-            #             if delta.content == "</think>":
-            #                 whether_think = 0
-            #
-            #             if whether_think == 0:
-            #                 response_content['content'] += delta.content
-            #                 content += delta.content
-            #
-            # else:
-            #     if hasattr(delta, 'is_full') and delta.is_full:
-            #         response_content['content'] = delta.content
-            #         content = delta.content
-            #     else:
-            #         response_content['content'] += delta.content
-            #         content += delta.content
-            #
-            # chunk = make_chunk(response_content, "loading", history=history_manager.update_ai(content))
-            # yield chunk
 
+        refs = _refs_get(user_id, cur_res_id)
+        updated_history = persist_turn(
+            content,
+            reasoning_content=response_content.get("reasoning_content") or "",
+            refs=refs,
+        )
+        yield make_chunk(response_content, "finished", history=updated_history)
 
-    '''async def generate_response():
-        try:
-            # 模拟逐步生成响应
-            for delta in startup.model.predict(history_manager.messages, stream=True):
-                if not delta.content:
-                    continue
-                content += delta.content
-                chunk = make_chunk(content, "loading", history=history_manager.update_ai(content))
-                yield chunk
-        except asyncio.CancelledError:
-            # 处理任务取消的逻辑
-            logger.warning("Request was cancelled by client.")
-            raise'''
+    return StreamingResponse(generate_response(), media_type="application/json")
 
-    # 返回生成的响应流
-    return StreamingResponse(generate_response(), media_type='application/json')
 
 @chat.post("/call")
-async def call(query: str = Body(...), meta: dict = Body(None)):
-    '''
-        接收post请求，执行模型预测并返回结果
-        参数：
-            - query：str类型，必需，作为模型预测的输入
-            - meta：dict类型，可选，提供额外的元数据
-
-        返回:
-            - 一个包含预测结果的字典
-    '''
-    async def predict_async(query):
-        '''
-            异步预测函数，用于在异步环境中执行模型预测
-            参数：
-                - query：str类型，模型预测的输入
-            返回：
-                - 模型预测的结果
-        '''
-        # 获取当前的事件循环
+async def call(
+    query: str = Body(...),
+    meta: dict = Body(None),
+    current_user: UserInDB = Depends(get_current_active_user),
+):
+    async def predict_async(query_text):
         loop = asyncio.get_event_loop()
-        # 在事件循环中运行预测函数，并等待其完成
-        return await loop.run_in_executor(executor, startup.model.predict, query)
+        return await loop.run_in_executor(executor, startup.model.predict, query_text)
 
-    # 调用异步预测函数，并等待结果
     response = await predict_async(query)
-    # 记录日志，记录查询和响应的内容
     logger.debug({"query": query, "response": response.content})
-
     return {"response": response.content}
 
+
 @chat.get("/refs")
-def get_refs(cur_res_id: str):
-    '''
-        从refs_pool中获取并移除当前资源的引用信息
-        参数：
-            - cur_res_id:（str)当前资源的ID，用于在refs_pool中查找对应的引用信息
-        返回：
-            - dict: 包含从refs_pool中移除的引用信息的字典，如果未找到则为None
-    '''
-    global refs_pool
-    refs = refs_pool.pop(cur_res_id, None)
+def get_refs(
+    cur_res_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
+    refs = _refs_pop(current_user.userid, cur_res_id)
     return {"refs": refs}

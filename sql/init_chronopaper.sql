@@ -109,7 +109,37 @@ CREATE TABLE IF NOT EXISTS `literature_entries` (
     FOREIGN KEY (`run_id`) REFERENCES `crawl_task_runs` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- [6] 默认管理员 admin / 123456
+-- [6] 聊天会话
+CREATE TABLE IF NOT EXISTS `chat_conversation` (
+  `conv_id`        VARCHAR(64)  NOT NULL,
+  `user_id`        VARCHAR(255) NOT NULL,
+  `title`          VARCHAR(255) NOT NULL DEFAULT '新对话',
+  `bind_paper_id`  VARCHAR(128) NULL,
+  `bind_doc_id`    VARCHAR(64)  NULL,
+  `model_name`     VARCHAR(64)  NOT NULL DEFAULT '',
+  `system_prompt`  LONGTEXT     NULL,
+  `created_at`     DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `last_active_at` DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`conv_id`),
+  KEY `idx_chat_conv_user_time` (`user_id`, `last_active_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- [7] 聊天消息
+CREATE TABLE IF NOT EXISTS `chat_message` (
+  `msg_id`       VARCHAR(64)  NOT NULL,
+  `conv_id`      VARCHAR(64)  NOT NULL,
+  `role`         VARCHAR(16)  NOT NULL,
+  `content`      LONGTEXT     NOT NULL,
+  `total_tokens` INT          NOT NULL DEFAULT 0,
+  `metadata`     JSON         NULL,
+  `created_at`   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`msg_id`),
+  KEY `idx_chat_msg_conv_sort` (`conv_id`, `created_at`),
+  CONSTRAINT `fk_chat_message_conv_id`
+    FOREIGN KEY (`conv_id`) REFERENCES `chat_conversation` (`conv_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- [8] 默认管理员 admin / 123456
 INSERT INTO `users` (`userid`, `username`, `password`, `roleid`)
 VALUES ('admin', 'admin', '$2b$12$XbGyrM6BlwUSENpc0lXxIOlFsNSXJIrN/dCoa2LVOZS/SMXXIkPri', 1)
 ON DUPLICATE KEY UPDATE

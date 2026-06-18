@@ -120,7 +120,12 @@
           请求错误，请重试
         </div>
         <div v-else v-html="renderMarkdown(message)" class="message-md" @click="consoleMsg(message)"></div>
-        <RefsComponent v-if="message.role == 'received' && message.status == 'finished'" :message="message" />
+        <RefsComponent
+          v-if="message.role == 'received' && message.status == 'finished'"
+          :message="message"
+          :disabled="isStreaming"
+          @delete-turn="deleteMessageTurn"
+        />
       </div>
     </div>
     <div class="bottom">
@@ -215,14 +220,14 @@ import {
 import { onClickOutside } from '@vueuse/core'
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
-import { useConfigStore } from '@/stores'
+import { useConfigStore, useUserStore } from '@/stores'
 import { message } from 'ant-design-vue'
 import RefsComponent from '@/components/chat/RefsComponent.vue'
 import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
+import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 // import login from '@/components/login.vue'
-import { useUserStore } from '@/stores'
 
 
 const token = sessionStorage.getItem('token')
@@ -233,7 +238,7 @@ const props = defineProps({
   state: Object
 })
 
-const emit = defineEmits(['rename-title', 'newconv']);
+const emit = defineEmits(['rename-title', 'newconv', 'conv-created']);
 const configStore = useConfigStore()
 
 const { conv, state } = toRefs(props)
@@ -255,13 +260,11 @@ const removeCitation = (arxivId) => {
 const panel = ref(null)
 const modelCard = ref(null)
 const examples = ref([
-  '写一个冒泡排序',
-  '肉碱的分子量是多少？直接回答',
-  '总结大蒜的功效是什么？',
-  '今天天气怎么样？',
-  '吃饭吃出苍蝇可以索赔吗？',
-  '帮我写一个请假条',
-  '贾宝玉今年多少岁？',
+  '帮我总结一篇 Transformer 论文的核心贡献与创新点',
+  '对比 RAG 与微调两种方案在文献问答中的优劣',
+  '检索近一年关于大语言模型推理增强的代表性工作',
+  '这篇论文的实验设计有哪些局限？请结合摘要分析',
+  '根据引用的文献，写一段 Related Work 初稿',
 ])
 
 const opts = reactive({
@@ -270,6 +273,8 @@ const opts = reactive({
   openDetail: false,
   databases: [],
 })
+
+const metaStorageKey = computed(() => `chat-meta:${userStore.username || 'guest'}`)
 
 const DEFAULT_CHAT_META = {
   enable_retrieval: false,
@@ -285,7 +290,7 @@ const DEFAULT_CHAT_META = {
 
 const meta = reactive({
   ...DEFAULT_CHAT_META,
-  ...JSON.parse(localStorage.getItem('meta') || '{}'),
+  ...JSON.parse(localStorage.getItem(metaStorageKey.value) || '{}'),
 })
 
 const marked = new Marked(
@@ -466,18 +471,7 @@ const groupRefs = (id) => {
   scrollToBottom()
 }
 
-const simpleCall = (message) => {
-  return new Promise((resolve, reject) => {
-    fetch('/api/chat/call', {
-      method: 'POST',
-      body: JSON.stringify({ query: message, }),
-      headers: { 'Content-Type': 'application/json' }
-    })
-      .then((response) => response.json())
-      .then((data) => resolve(data))
-      .catch((error) => reject(error))
-  })
-}
+const simpleCall = (messageText) => callChat(messageText)
 
 const loadDatabases = () => {
   fetch('/api/data/', {
@@ -557,6 +551,10 @@ const applyChatPayload = (data, cur_res_id) => {
   if (data.history) {
     conv.value.history = data.history
   }
+  if (data.conv_id && !conv.value.conv_id) {
+    conv.value.conv_id = data.conv_id
+    emit('conv-created', data.conv_id)
+  }
 }
 
 const finishChatResponse = (cur_res_id) => {
@@ -582,22 +580,17 @@ const finishChatResponse = (cur_res_id) => {
   }
 }
 
-// 新函数用于处理 fetch 请求
-const fetchChatResponse = (user_input, cur_res_id, citedLiteraturePayload = []) => {
+const fetchChatResponse = (user_input, user_msg_id, cur_res_id, citedLiteraturePayload = []) => {
   const requestMeta = buildRequestMeta(citedLiteraturePayload)
   const useStream = requestMeta.stream !== false
 
-  fetch('/api/chat/', {
-    method: 'POST',
-    body: JSON.stringify({
-      query: user_input,
-      history: conv.value.history,
-      meta: requestMeta,
-      cur_res_id: cur_res_id,
-    }),
-    headers: {
-      'Content-Type': 'application/json',
-    }
+  postChat({
+    query: user_input,
+    history: conv.value.history,
+    meta: requestMeta,
+    cur_res_id: cur_res_id,
+    conv_id: conv.value.conv_id,
+    user_msg_id: user_msg_id,
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -653,21 +646,23 @@ const fetchChatResponse = (user_input, cur_res_id, citedLiteraturePayload = []) 
     });
 };
 
+const deleteMessageTurn = async (assistantMsgId) => {
+  if (!conv.value.conv_id || isStreaming.value) return
+  const assistantIdx = conv.value.messages.findIndex((m) => m.id === assistantMsgId)
+  if (assistantIdx < 0) return
+
+  try {
+    const data = await deleteMessageTurnApi(conv.value.conv_id, assistantMsgId)
+    conv.value.messages = data.messages || []
+    conv.value.history = data.history || []
+    message.success('已删除该轮对话')
+  } catch (err) {
+    message.error(err.message || '删除失败')
+  }
+}
+
 const fetchRefs = (cur_res_id) => {
-  return new Promise((resolve, reject) => {
-    fetch(`/api/chat/refs?cur_res_id=${cur_res_id}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json"
-      },
-    }).then(response => response.json())
-      .then(data => {
-        resolve(data.refs)
-      })
-      .catch((error) => {
-        reject(error)
-      })
-  })
+  return fetchChatRefs(cur_res_id).then((data) => data.refs)
 }
 
 // 更新后的 sendMessage 函数
@@ -680,7 +675,16 @@ const sendMessage = () => {
 
   if (user_input || citations.length) {
     isStreaming.value = true;
-    appendUserMessage(user_input || '请结合引用的文献回答', images, citations);
+    const user_msg_id = generateRandomHash(16);
+    conv.value.messages.push({
+      id: user_msg_id,
+      role: 'sent',
+      text: user_input || '请结合引用的文献回答',
+      images: images,
+      citations,
+      status: 'finished'
+    });
+    scrollToBottom();
     appendAiMessage("", null);
     const cur_res_id = conv.value.messages[conv.value.messages.length - 1].id;
     conv.value.inputText = '';
@@ -689,6 +693,7 @@ const sendMessage = () => {
 
     fetchChatResponse(
       finalInput || '请结合引用的文献进行总结或回答',
+      user_msg_id,
       cur_res_id,
       citations,
     );
@@ -883,7 +888,7 @@ watch(
   () => meta,
   (newMeta) => {
     const { cited_literature, ...persistMeta } = structuredClone(toRaw(newMeta))
-    localStorage.setItem('meta', JSON.stringify(persistMeta))
+    localStorage.setItem(metaStorageKey.value, JSON.stringify(persistMeta))
   },
   { deep: true }
 )
@@ -997,9 +1002,15 @@ watch(
   animation: slideInUp 0.5s ease-out;
 
   h1 {
-    margin-bottom: 20px;
+    margin-bottom: 12px;
     font-size: 24px;
     color: #333;
+  }
+
+  &__hint {
+    margin: 0 0 20px;
+    font-size: 14px;
+    color: var(--gray-600, #666);
   }
 
   .opts {

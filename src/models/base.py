@@ -28,8 +28,9 @@ def implemented_orm_models():
     from src.models.paper import Paper
     from src.models.crawl import CrawlTask, CrawlTaskRun
     from src.models.literature import LiteratureEntry
+    from src.models.chat import ChatConversation, ChatMessage
 
-    return [UserModel, Paper, CrawlTask, CrawlTaskRun, LiteratureEntry]
+    return [UserModel, Paper, CrawlTask, CrawlTaskRun, LiteratureEntry, ChatConversation, ChatMessage]
 
 
 def ensure_mysql_database() -> None:
@@ -52,6 +53,22 @@ def ensure_mysql_database() -> None:
             )
         )
     bootstrap.dispose()
+
+
+def repair_chat_conversation_fk(engine, log) -> None:
+    """移除 chat_conversation 上指向 users 的不兼容外键（charset/collation 不一致）。"""
+    inspector = inspect(engine)
+    if "chat_conversation" not in inspector.get_table_names():
+        return
+    for fk in inspector.get_foreign_keys("chat_conversation"):
+        if fk.get("referred_table") == "users":
+            fk_name = fk.get("name") or "chat_conversation_ibfk_1"
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE chat_conversation DROP FOREIGN KEY `{fk_name}`"))
+                log.info("Dropped incompatible chat_conversation FK: %s", fk_name)
+            except Exception as exc:
+                log.warning("Could not drop chat_conversation FK %s: %s", fk_name, exc)
 
 
 def migrate_schema(engine, log) -> None:
@@ -173,6 +190,7 @@ def init_db() -> None:
     tables = [model.__table__ for model in models]
     expected = sorted(t.name for t in tables)
 
+    repair_chat_conversation_fk(engine, log)
     Base.metadata.create_all(engine, tables=tables, checkfirst=True)
 
     existing = sorted(inspect(engine).get_table_names())

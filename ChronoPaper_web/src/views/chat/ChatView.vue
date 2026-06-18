@@ -2,113 +2,176 @@
   <div class="chat-container">
     <div class="conversations" :class="['conversations', { 'is-open': state.isSidebarOpen }]">
       <div class="actions">
-        <!-- <div class="action new" @click="addNewConv"><FormOutlined /></div> -->
-         <span style="font-weight: bold; user-select: none;">对话历史</span>
+        <span style="font-weight: bold; user-select: none;">对话历史</span>
         <div class="action close" @click="state.isSidebarOpen = false"><MenuOutlined /></div>
       </div>
       <div class="conversation-list">
-        <div class="conversation"
-          v-for="(state, index) in convs"
-          :key="index"
-          :class="{ active: curConvId === index }"
-          @click="goToConversation(index)">
-          <div class="conversation__title"><CommentOutlined /> &nbsp;{{ state.title }}</div>
-          <div class="conversation__delete" @click.stop="delConv(index)"><DeleteOutlined /></div>
+        <div
+          class="conversation"
+          v-for="conv in convs"
+          :key="conv.conv_id"
+          :class="{ active: curConvId === conv.conv_id }"
+          @click="goToConversation(conv.conv_id)"
+        >
+          <div class="conversation__title"><CommentOutlined /> &nbsp;{{ conv.title }}</div>
+          <div class="conversation__delete" @click.stop="delConv(conv.conv_id)"><DeleteOutlined /></div>
         </div>
       </div>
     </div>
     <ChatComponent
-      :conv="convs[curConvId]"
+      v-if="activeConv"
+      :conv="activeConv"
       :state="state"
       @rename-title="renameTitle"
-      @newconv="addNewConv"/>
+      @newconv="addNewConv"
+      @conv-created="onConvCreated"
+    />
   </div>
 </template>
 
 <script setup>
-import { reactive, ref, watch, onMounted } from 'vue'
-import { FormOutlined, MenuOutlined, DeleteOutlined, CommentOutlined } from '@ant-design/icons-vue'
+import { reactive, ref, computed, onMounted } from 'vue'
+import { MenuOutlined, DeleteOutlined, CommentOutlined } from '@ant-design/icons-vue'
+import { message } from 'ant-design-vue'
 import ChatComponent from '@/components/chat/ChatComponent.vue'
+import {
+  listConversations,
+  createConversation,
+  getConversation,
+  updateConversation,
+  deleteConversation,
+} from '@/api/chat'
 
-const convs = reactive(JSON.parse(localStorage.getItem('chat-convs')) || [
-  {
-    id: 0,
-    title: '新对话',
-    history: [],
-    messages: [],
-    inputText: ''
-  },
-])
-
+const convs = reactive([])
 const state = reactive({
   isSidebarOpen: true,
+  loading: false,
+})
+const curConvId = ref(null)
+
+const emptyConv = () => ({
+  conv_id: null,
+  title: '新对话',
+  history: [],
+  messages: [],
+  inputText: '',
 })
 
-const curConvId = ref(0)
+const activeConv = computed(() => convs.find((c) => c.conv_id === curConvId.value) || null)
 
-const generateRandomHash = (length) => {
-    let chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let hash = '';
-    for (let i = 0; i < length; i++) {
-        hash += chars.charAt(Math.floor(Math.random() * chars.length));
+const mapConvSummary = (row) => ({
+  conv_id: row.conv_id,
+  title: row.title || '新对话',
+  history: [],
+  messages: [],
+  inputText: '',
+})
+
+const loadConversationDetail = async (convId) => {
+  const detail = await getConversation(convId)
+  const target = convs.find((c) => c.conv_id === convId)
+  if (!target) return
+  target.title = detail.title || target.title
+  target.history = detail.history || []
+  target.messages = detail.messages || []
+}
+
+const loadConversations = async () => {
+  state.loading = true
+  try {
+    const data = await listConversations()
+    const rows = data.conversations || []
+    convs.splice(0, convs.length, ...rows.map(mapConvSummary))
+    if (convs.length === 0) {
+      await addNewConv()
+    } else {
+      curConvId.value = convs[0].conv_id
+      await loadConversationDetail(curConvId.value)
     }
-    return hash;
+  } catch (err) {
+    message.error(err.message || '加载对话失败')
+    convs.splice(0, convs.length, emptyConv())
+    curConvId.value = null
+  } finally {
+    state.loading = false
+  }
 }
 
-const renameTitle = (newTitle) => {
-  convs[curConvId.value].title = newTitle
+const renameTitle = async (newTitle) => {
+  const conv = activeConv.value
+  if (!conv?.conv_id || !newTitle) return
+  conv.title = newTitle
+  try {
+    await updateConversation(conv.conv_id, { title: newTitle })
+  } catch (err) {
+    console.error(err)
+  }
 }
 
-const goToConversation = (index) => {
-  curConvId.value = index
-  console.log(convs[curConvId.value])
+const goToConversation = async (convId) => {
+  if (curConvId.value === convId) return
+  curConvId.value = convId
+  const conv = convs.find((c) => c.conv_id === convId)
+  if (conv && conv.messages.length === 0) {
+    try {
+      await loadConversationDetail(convId)
+    } catch (err) {
+      message.error(err.message || '加载对话详情失败')
+    }
+  }
 }
 
-const addNewConv = () => {
-  curConvId.value = 0
+const addNewConv = async () => {
   if (convs.length > 0 && convs[0].messages.length === 0) {
+    curConvId.value = convs[0].conv_id
     return
   }
-  convs.unshift({
-    id: generateRandomHash(8),
-    title: `新对话`,
-    history: [],
-    messages: [],
-    inputText: ''
-  })
-}
-
-const delConv = (index) => {
-  convs.splice(index, 1)
-
-  if (index < curConvId.value) {
-    curConvId.value -= 1
-  } else if (index === curConvId.value) {
-    curConvId.value = 0
-  }
-
-  if (convs.length === 0) {
-    addNewConv()
+  try {
+    const row = await createConversation({ title: '新对话' })
+    const conv = mapConvSummary(row)
+    convs.unshift(conv)
+    curConvId.value = conv.conv_id
+  } catch (err) {
+    message.error(err.message || '创建对话失败')
   }
 }
 
-// Watch convs and save to localStorage
-watch(
-  () => convs,
-  (newStates) => {
-    localStorage.setItem('chat-convs', JSON.stringify(newStates))
-  },
-  { deep: true }
-)
+const onConvCreated = (convId) => {
+  const conv = activeConv.value
+  if (conv && !conv.conv_id) {
+    conv.conv_id = convId
+  }
+  if (!convs.find((c) => c.conv_id === convId) && conv) {
+    conv.conv_id = convId
+    convs.unshift(conv)
+  }
+  curConvId.value = convId
+}
 
-// Load convs from localStorage on mount
-onMounted(() => {
-  const savedSonvs = JSON.parse(localStorage.getItem('chat-convs'))
-  if (savedSonvs) {
-    for (let i = 0; i < savedSonvs.length; i++) {
-      convs[i] = savedSonvs[i]
+const delConv = async (convId) => {
+  const index = convs.findIndex((c) => c.conv_id === convId)
+  if (index === -1) return
+  try {
+    if (convId) {
+      await deleteConversation(convId)
     }
+    convs.splice(index, 1)
+    if (curConvId.value === convId) {
+      curConvId.value = convs[0]?.conv_id || null
+      if (curConvId.value) {
+        await loadConversationDetail(curConvId.value)
+      }
+    }
+    if (convs.length === 0) {
+      await addNewConv()
+    }
+  } catch (err) {
+    message.error(err.message || '删除对话失败')
   }
+}
+
+onMounted(() => {
+  loadConversations()
 })
 </script>
 
@@ -129,15 +192,15 @@ onMounted(() => {
 }
 
 .chat-container .conversations.is-open {
-  overflow: hidden; /* 确保内容不溢出 */
-  white-space: nowrap; /* 防止文本换行 */
-  flex: 1 1 auto; /* 当侧边栏打开时，占据可用空间 */
+  overflow: hidden;
+  white-space: nowrap;
+  flex: 1 1 auto;
 }
 .conversations {
-  width: 230px; /* 初始宽度 */
+  width: 230px;
   max-width: 230px;
   border-right: 1px solid var(--main-light-3);
-  overflow: hidden; /* 确保内容不溢出 */
+  overflow: hidden;
   max-height: 100%;
   background-color: var(--bg-sider);
 
@@ -186,9 +249,9 @@ onMounted(() => {
 
     &__title {
       color: var(--gray-700);
-      white-space: nowrap; /* 禁止换行 */
-      overflow: hidden;    /* 超出部分隐藏 */
-      text-overflow: ellipsis; /* 显示省略号 */
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     &__delete {
