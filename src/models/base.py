@@ -28,8 +28,21 @@ def implemented_orm_models():
     from src.models.literature import LiteratureEntry, Paper
     from src.models.crawl import CrawlTask, CrawlTaskRun
     from src.models.chat import ChatConversation, ChatMessage
+    from src.models.rag import EntityAlias, KnowledgeBaseFile, KnowledgeBaseRecord, TextChunk
 
-    return [UserModel, Paper, CrawlTask, CrawlTaskRun, LiteratureEntry, ChatConversation, ChatMessage]
+    return [
+        UserModel,
+        Paper,
+        CrawlTask,
+        CrawlTaskRun,
+        LiteratureEntry,
+        ChatConversation,
+        ChatMessage,
+        KnowledgeBaseRecord,
+        TextChunk,
+        KnowledgeBaseFile,
+        EntityAlias,
+    ]
 
 
 def ensure_mysql_database() -> None:
@@ -236,3 +249,15 @@ def init_db() -> None:
         log.info("Default admin user ready (admin / 123456)")
     except Exception as exc:
         log.warning("Could not seed admin user: %s", exc)
+
+    try:
+        from src.config import Config
+        from src.services.rag.database import DataBaseManager
+
+        cfg = Config()
+        if cfg.enable_knowledge_base:
+            dbm = DataBaseManager(cfg)
+            dbm.ensure_default_knowledge_base()
+            log.info("Default knowledge base ready")
+    except Exception as exc:
+        log.warning("Could not seed default knowledge base: %s", exc)

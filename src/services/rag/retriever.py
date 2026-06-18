@@ -1,4 +1,5 @@
 from src.integrations.llm.embedding import Reranker
+from src.services.rag.llm_filter import llm_extract_filter_cond
 from src.utils.logging_config import setup_logger
 
 logger = setup_logger("server-common")
@@ -86,8 +87,17 @@ class Retriever:
             }
 
         rw_query = self.rewrite_query(query, history, refs)
+        refs["rewritten_query"] = rw_query
 
-        kb = self.dbm.metaname2db[db_name]
+        kb_row = self.dbm.resolve_kb(db_name)
+        if not kb_row:
+            return {
+                "results": final_res,
+                "all_results": kb_res,
+                "rw_query": rw_query,
+                "message": f"Unknown knowledge base: {db_name}",
+            }
+
         logger.debug(f"{refs['meta']=}")
 
         meta = refs["meta"]
@@ -95,12 +105,21 @@ class Retriever:
         rerank_threshold = meta.get("rerankThreshold", 0.1)
         distance_threshold = meta.get("distanceThreshold", 0)
         top_k = meta.get("topK", 5)
+        user_id = meta.get("user_id") or meta.get("owner_user_id") or 0
 
-        all_kb_res = self.dbm.knowledge_base.search(rw_query, db_name, limit=max_query_count)
+        filter_json = llm_extract_filter_cond(query)
+        all_kb_res = self.dbm.search_knowledge_base(
+            rw_query,
+            db_name,
+            user_id=user_id,
+            filter_json=filter_json,
+            limit=max_query_count,
+        )
         for r in all_kb_res:
-            r["file"] = kb.id2file(r["entity"]["file_id"])
+            file_id = r["entity"].get("file_id")
+            if file_id:
+                r["file"] = self.dbm.id2file(kb_row.kb_id, file_id)
 
-        # use distance threshold to filter results
         if meta.get("mode") == "search":
             kb_res = all_kb_res
         else:
@@ -114,7 +133,7 @@ class Retriever:
 
         kb_res = kb_res[:top_k]
 
-        return {"results": kb_res, "all_results": all_kb_res, "rw_query": rw_query}
+        return {"results": kb_res, "all_results": all_kb_res, "rw_query": rw_query, "filter_json": filter_json}
 
     def rewrite_query(self, query, history, refs):
         """重写查询"""

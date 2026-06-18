@@ -73,6 +73,7 @@ def _prepare_chat_query(
     cur_res_id: str,
 ) -> str:
     if meta.get("enable_retrieval"):
+        meta = {**meta, "user_id": user_id}
         new_query, refs = startup.retriever(query, history_manager.messages, meta)
         _refs_set(user_id, cur_res_id, refs)
     else:

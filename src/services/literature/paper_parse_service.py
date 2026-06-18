@@ -28,6 +28,8 @@ from src.utils.paths import (
 
 logger = setup_logger("PaperParseService")
 
+CONTENT_LIST_NAME = "content_list.json"
+
 _parse_lock = threading.Lock()
 _parsing_papers: set[str] = set()
 
@@ -56,6 +58,14 @@ def _find_mineru_output_md(work_dir: Path) -> Path:
     return matches[0]
 
 
+def _copy_content_list(work_dir: Path, paper_root: Path) -> None:
+    candidates = sorted(work_dir.rglob("*_content_list.json"))
+    if not candidates:
+        candidates = sorted(work_dir.rglob("content_list.json"))
+    if candidates:
+        shutil.copy2(candidates[0], paper_root / CONTENT_LIST_NAME)
+
+
 def _finalize_mineru_output(work_dir: Path, paper_root: Path) -> None:
     md_src = _find_mineru_output_md(work_dir)
     images_src = md_src.parent / PAPER_IMAGES_DIR_NAME
@@ -70,6 +80,18 @@ def _finalize_mineru_output(work_dir: Path, paper_root: Path) -> None:
         for item in images_src.iterdir():
             if item.is_file():
                 shutil.copy2(item, images_dest / item.name)
+
+    _copy_content_list(work_dir, paper_root)
+
+
+def _schedule_paper_index(arxiv_id: str) -> None:
+    try:
+        from src.workers.index_tasks import index_paper_chunks_task
+
+        index_paper_chunks_task.delay(arxiv_id)
+        logger.info("queued vector index task for paper=%s", arxiv_id)
+    except Exception as exc:
+        logger.warning("Failed to queue index task for %s: %s", arxiv_id, exc)
 
 
 def parse_paper_with_mineru(arxiv_id: str, pdf_path: str | None = None) -> str:
@@ -113,7 +135,7 @@ def parse_paper_with_mineru(arxiv_id: str, pdf_path: str | None = None) -> str:
             f_dump_middle_json=False,
             f_dump_model_output=False,
             f_dump_orig_pdf=False,
-            f_dump_content_list=False,
+            f_dump_content_list=True,
         )
     except Exception as exc:
         if backend != "pipeline":
@@ -140,7 +162,7 @@ def parse_paper_with_mineru(arxiv_id: str, pdf_path: str | None = None) -> str:
                 f_dump_middle_json=False,
                 f_dump_model_output=False,
                 f_dump_orig_pdf=False,
-                f_dump_content_list=False,
+                f_dump_content_list=True,
             )
         else:
             raise
@@ -168,6 +190,7 @@ def _parse_one(session: Session, arxiv_id: str) -> bool:
             paper.parse_status = "parsed"
             session.add(paper)
             session.commit()
+        _schedule_paper_index(arxiv_id)
         return True
 
     pdf_path = resolve_paper_pdf_file(arxiv_id, paper.pdf_path)
@@ -188,6 +211,7 @@ def _parse_one(session: Session, arxiv_id: str) -> bool:
         session.add(paper)
         session.commit()
         logger.info("paper parsed: %s -> %s", arxiv_id, md_path)
+        _schedule_paper_index(arxiv_id)
         return True
     except Exception as exc:
         logger.exception("paper parse failed: %s", arxiv_id)

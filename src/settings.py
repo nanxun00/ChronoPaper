@@ -64,7 +64,11 @@ class Settings(BaseSettings):
     # --- Milvus / 知识库 ---
     milvus_uri: str = "http://localhost:19530"
     milvus_token: str = ""
-    milvus_db_name: str = "default"
+    milvus_db_name: str = "chronopaper"
+
+    # --- Celery / Redis ---
+    celery_broker_url: str = "redis://127.0.0.1:6379/0"
+    celery_result_backend: str = "redis://127.0.0.1:6379/1"
 
     save_dir: str | None = None
     kb_database_json: str = ""
