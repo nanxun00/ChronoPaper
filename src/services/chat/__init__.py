@@ -1,0 +1,31 @@
+from src.services.chat.persistence import (
+    build_assistant_message_metadata,
+    build_llm_history,
+    build_user_message_metadata,
+    conversation_detail,
+    create_conversation,
+    delete_conversation,
+    delete_message_turn,
+    extract_bind_paper_id,
+    get_conversation,
+    list_conversations,
+    persist_chat_turn,
+    update_conversation_bindings,
+    update_conversation_title,
+)
+
+__all__ = [
+    "build_assistant_message_metadata",
+    "build_llm_history",
+    "build_user_message_metadata",
+    "conversation_detail",
+    "create_conversation",
+    "delete_conversation",
+    "delete_message_turn",
+    "extract_bind_paper_id",
+    "get_conversation",
+    "list_conversations",
+    "persist_chat_turn",
+    "update_conversation_bindings",
+    "update_conversation_title",
+]

@@ -7,6 +7,7 @@ export function listPublicPapers(params = {}) {
   if (params.source) qs.set('source', params.source)
   if (params.min_semantic != null && params.min_semantic !== '') qs.set('min_semantic', String(params.min_semantic))
   if (params.min_quality != null && params.min_quality !== '') qs.set('min_quality', String(params.min_quality))
+  if (params.review_status) qs.set('review_status', params.review_status)
   if (params.page) qs.set('page', String(params.page))
   if (params.page_size) qs.set('page_size', String(params.page_size))
   const query = qs.toString()
@@ -19,6 +20,7 @@ export function listPrivatePapers(params = {}) {
   if (params.source) qs.set('source', params.source)
   if (params.min_semantic != null && params.min_semantic !== '') qs.set('min_semantic', String(params.min_semantic))
   if (params.min_quality != null && params.min_quality !== '') qs.set('min_quality', String(params.min_quality))
+  if (params.review_status) qs.set('review_status', params.review_status)
   if (params.page) qs.set('page', String(params.page))
   if (params.page_size) qs.set('page_size', String(params.page_size))
   const query = qs.toString()
@@ -31,6 +33,20 @@ export function getPaperDetail(arxivId) {
 
 export function deleteLiteratureEntries({ arxiv_ids, visibility }) {
   return apiJson('/api/literature/delete', {
+    method: 'POST',
+    body: JSON.stringify({ arxiv_ids, visibility }),
+  })
+}
+
+export function approveLiteratureEntries({ arxiv_ids, visibility }) {
+  return apiJson('/api/literature/approve', {
+    method: 'POST',
+    body: JSON.stringify({ arxiv_ids, visibility }),
+  })
+}
+
+export function rejectLiteratureEntries({ arxiv_ids, visibility }) {
+  return apiJson('/api/literature/reject', {
     method: 'POST',
     body: JSON.stringify({ arxiv_ids, visibility }),
   })

@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from src.api.deps import UserInDB, get_current_active_user, get_db
-from src.schemas.literature import LiteratureDeleteRequest
+from src.schemas.literature import LiteratureDeleteRequest, LiteratureReviewRequest
 from src.services import literature_service
 
 router = APIRouter(prefix="/literature", tags=["literature"])
@@ -19,6 +19,7 @@ def list_public_papers(
     source: str | None = Query(default=None, description="arxiv | openreview | openalex | upload"),
     min_semantic: float | None = Query(default=None, ge=0, le=100),
     min_quality: float | None = Query(default=None, ge=0, le=100),
+    review_status: str | None = Query(default=None, description="pending | approved | rejected"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: UserInDB = Depends(get_current_active_user),
@@ -32,6 +33,7 @@ def list_public_papers(
         source=source,
         min_semantic=min_semantic,
         min_quality=min_quality,
+        review_status=review_status,
         page=page,
         page_size=page_size,
     )
@@ -43,6 +45,7 @@ def list_private_papers(
     source: str | None = Query(default=None, description="arxiv | openreview | openalex | upload"),
     min_semantic: float | None = Query(default=None, ge=0, le=100),
     min_quality: float | None = Query(default=None, ge=0, le=100),
+    review_status: str | None = Query(default=None, description="pending | approved | rejected"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: UserInDB = Depends(get_current_active_user),
@@ -55,6 +58,7 @@ def list_private_papers(
         source=source,
         min_semantic=min_semantic,
         min_quality=min_quality,
+        review_status=review_status,
         page=page,
         page_size=page_size,
     )
@@ -70,7 +74,7 @@ def get_paper_pdf(
     if not pdf_path:
         paper_exists = literature_service.get_paper_detail(db, arxiv_id, current_user.userid)
         if paper_exists is None:
-            from src.models.paper import Paper
+            from src.models.literature import Paper
 
             if not db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first():
                 raise HTTPException(status_code=404, detail="论文不存在")
@@ -92,7 +96,7 @@ def get_paper_detail(
 ):
     data = literature_service.get_paper_detail(db, arxiv_id, current_user.userid)
     if data is None:
-        from src.models.paper import Paper
+        from src.models.literature import Paper
         if not db.query(Paper).filter(Paper.arxiv_id == arxiv_id).first():
             raise HTTPException(status_code=404, detail="论文不存在")
         raise HTTPException(status_code=403, detail="无权查看该论文")
@@ -121,6 +125,40 @@ async def upload_literature_pdf(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/approve")
+def approve_literature_entries(
+    body: LiteratureReviewRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = literature_service.approve_literature_entries(
+        db,
+        current_user.userid,
+        arxiv_ids=body.arxiv_ids,
+        visibility=body.visibility,
+    )
+    if result["approved"] == 0 and not result["already_approved"] and result["not_found"]:
+        raise HTTPException(status_code=404, detail="未找到可审核的文献")
+    return result
+
+
+@router.post("/reject")
+def reject_literature_entries(
+    body: LiteratureReviewRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = literature_service.reject_literature_entries(
+        db,
+        current_user.userid,
+        arxiv_ids=body.arxiv_ids,
+        visibility=body.visibility,
+    )
+    if result["rejected"] == 0 and result["not_found"]:
+        raise HTTPException(status_code=404, detail="未找到可审核的文献")
+    return result
 
 
 @router.post("/delete")

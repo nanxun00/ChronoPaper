@@ -8,7 +8,7 @@ export const CRAWL_SOURCE_OPTIONS = [
   {
     value: 'openreview',
     label: 'OpenReview',
-    description: '免费 · 评审分/录用状态 · 顶会录用池',
+    description: '免费 · 评审分/录用状态 · 按 CCF 分级过滤顶会录用池',
   },
   {
     value: 'openalex',

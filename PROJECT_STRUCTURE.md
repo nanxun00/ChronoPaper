@@ -88,17 +88,45 @@ api/
 
 ### 2.3 `src/services/` — 业务层
 
-| 文件 | 负责 |
-|------|------|
-| `crawl_service.py` | 抓取任务创建、执行、日志、去重入库 |
-| `literature_service.py` | 公开/私有文献列表、详情、权限判断 |
-| `parse_service.py` | PDF 解析流水线、更新 `parse_status` |
-| `vector_service.py` | 文本/图像向量写入与检索 |
-| `rag_service.py` | 带溯源的 RAG 问答 |
-| `idea_service.py` | Idea 匹配、每日重算 |
-| `timerag_service.py` | 时序时间线生成 |
-| `latex_service.py` | 编译队列与日志 |
-| `scheduler_service.py` | 定时任务注册（APScheduler） |
+按业务域分子目录（与 `api/v1` 模块对齐）：
+
+```
+services/
+├── literature/          # 文献列表、PDF 解析、质量评分
+│   ├── literature_service.py
+│   ├── paper_parse_service.py
+│   ├── paper_quality_assessment.py
+│   ├── quality_scorer.py
+│   └── parse_service.py
+├── crawl/               # 抓取任务、关键词规划、语义匹配
+│   ├── crawl_service.py
+│   ├── crawl_planner.py
+│   ├── crawl_planning_job.py
+│   ├── crawl_embedding.py
+│   ├── crawl_keyword_planner.py
+│   ├── crawl_mode_presets.py
+│   ├── crawl_relevance_filter.py
+│   ├── crawl_reranker.py
+│   ├── semantic_matcher.py
+│   └── suggested_paper_verifier.py
+├── chat/                # 对话持久化
+│   └── persistence.py
+├── scheduler/           # APScheduler 定时任务
+│   └── service.py
+├── translate/           # 翻译与抓取 query 预处理
+│   └── service.py
+├── rag/                 # 自建知识库、Milvus RAG、Neo4j 图谱
+│   └── ...
+└── stubs/               # 占位（idea / latex / timerag / vector / rag_service）
+```
+
+| 域 | 负责 |
+|----|------|
+| `literature/` | 公开/私有文献列表、详情、PDF 解析流水线、质量评分 |
+| `crawl/` | 抓取任务创建、执行、日志、去重入库 |
+| `chat/` | 会话与消息 MySQL 持久化 |
+| `scheduler/` | 定时抓取任务注册 |
+| `translate/` | 流式翻译、抓取匹配 query 预处理 |
 | `services/rag/` | 自建知识库、Milvus 向量、Neo4j 图谱、对话 Retriever（见 `services/rag/README.md`） |
 
 **规则：**
@@ -111,18 +139,29 @@ api/
 
 ### 2.4 `src/models/` — 数据库 ORM
 
-| 文件 | 表 / 实体 |
-|------|-----------|
-| `base.py` | engine、SessionLocal、init_db |
-| `user.py` | users |
-| `paper.py` | papers（全局 arxiv 元数据） |
-| `literature.py` | literature_entries（公开/私有列表） |
-| `crawl.py` | crawl_tasks、crawl_task_runs |
-| `idea.py` | ideas、idea_paper_scores |
-| `favorite.py` | user_favorites |
-| `private_doc.py` | 用户上传 PDF |
-| `latex.py` | latex_projects、compile_runs |
-| `chunk.py` | paper_chunks（解析块） |
+```
+models/
+├── base.py              # engine、SessionLocal、init_db
+├── auth/
+│   └── user.py          # users
+├── literature/
+│   ├── paper.py         # papers（全局 arxiv 元数据）
+│   └── entry.py         # literature_entries（公开/私有列表）
+├── crawl/
+│   └── task.py          # crawl_tasks、crawl_task_runs
+├── chat/
+│   └── conversation.py  # chat_conversation、chat_message
+└── stubs/               # 占位（idea / favorite / latex / chunk / private_doc）
+```
+
+| 域 | 表 / 实体 |
+|----|-----------|
+| `auth/user.py` | users |
+| `literature/paper.py` | papers |
+| `literature/entry.py` | literature_entries |
+| `crawl/task.py` | crawl_tasks、crawl_task_runs |
+| `chat/conversation.py` | chat_conversation、chat_message |
+| `stubs/` | ideas、user_favorites、latex_projects、paper_chunks 等待实现 |
 
 **规则：**
 
@@ -173,8 +212,8 @@ integrations/
 
 ### 2.8 `src/workers/` — 异步执行入口
 
-- `crawl_worker.py` → 调 `crawl_service.execute_crawl_run`
-- `parse_worker.py` → 调 `parse_service`
+- `crawl_worker.py` → 调 `services/crawl/crawl_service.py`
+- `parse_worker.py` → 调 `services/literature/paper_parse_service.py`
 - 线程/Celery 只放**启动与回调**，逻辑在 services
 
 ---
@@ -329,8 +368,8 @@ stores/
 
 | 功能 | 后端 | 前端 |
 |------|------|------|
-| 抓取任务 | `api/v1/tasks.py` + `services/crawl_service.py` | `api/tasks.js` + `views/tasks/` |
-| 文献列表 | `api/v1/literature.py` + `services/literature_service.py` | `api/literature.js` + `views/literature/` |
+| 抓取任务 | `api/v1/tasks.py` + `services/crawl/crawl_service.py` | `api/tasks.js` + `views/tasks/` |
+| 文献列表 | `api/v1/literature.py` + `services/literature/literature_service.py` | `api/literature.js` + `views/literature/` |
 | arXiv 拉取 | `integrations/arxiv/` | — |
 | PDF 解析 | `parsers/` + `services/parse_service.py` | — |
 | 对话 RAG | `api/v1/chat.py` + `services/rag/` | `views/chat/` + `components/chat/` |
@@ -358,7 +397,7 @@ stores/
 |--------|------|
 | `src/routers/*_router.py` | `src/api/v1/` |
 | `src/modules/` | `src/services/` + `src/integrations/` |
-| `src/login/user.py`、`user_sql.py` | `src/api/deps.py` + `src/models/user.py` |
+| `src/login/user.py`、`user_sql.py` | `src/api/deps.py` + `src/models/auth/user.py` |
 | `src/models/chat_model.py`、`embedding.py` | `src/integrations/llm/` |
 | `ChronoPaper_web/src/utils/api.js` | `src/api/client.js` |
 | `ChronoPaper_web/src/stores/user.js` 等 shim | `src/stores/index.js` |

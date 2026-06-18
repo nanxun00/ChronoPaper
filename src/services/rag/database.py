@@ -4,6 +4,7 @@ import time
 from src.parsers import pdf_simple as pdf2txt
 from src.utils import hashstr, setup_logger, is_text_pdf
 from src.integrations.llm.embedding import get_embedding_model
+from src.settings import get_settings
 
 logger = setup_logger("DataBaseManager")
 
@@ -12,7 +13,8 @@ class DataBaseManager:
 
     def __init__(self, config=None) -> None:
         self.config = config
-        self.database_path = os.path.join(config.save_dir, "data", "database.json")
+        settings = get_settings()
+        self.database_path = settings.kb_registry_path(config.save_dir)
         self.embed_model = get_embedding_model(config)
 
         if self.config.enable_knowledge_base:
@@ -29,6 +31,47 @@ class DataBaseManager:
 
         self._load_databases()
         self._update_database()
+        if self.config.enable_knowledge_base:
+            self._sync_local_collections()
+
+    def _kb_dimension(self, db: "DataBaseLite") -> int | None:
+        from src.config import EMBED_MODEL_INFO
+
+        if db.dimension:
+            return int(db.dimension)
+        model = db.embed_model or self.config.embed_model
+        info = EMBED_MODEL_INFO.get(model) or {}
+        return info.get("dimension")
+
+    def _sync_local_collections(self) -> None:
+        """按本地 database.json 与 Milvus 对齐：有则复用，无则创建 collection。"""
+        if not getattr(self, "knowledge_base", None):
+            return
+
+        for db in self.data["databases"]:
+            dimension = self._kb_dimension(db)
+            if not dimension:
+                logger.warning(
+                    "Skip Milvus sync for %s (%s): unknown embedding dimension",
+                    db.metaname,
+                    db.name,
+                )
+                continue
+            try:
+                created = self.knowledge_base.ensure_collection(db.metaname, dimension)
+                if created:
+                    logger.info(
+                        "Provisioned Milvus collection %s for local knowledge base %r",
+                        db.metaname,
+                        db.name,
+                    )
+            except Exception as exc:
+                logger.error(
+                    "Failed to sync Milvus collection %s (%s): %s",
+                    db.metaname,
+                    db.name,
+                    exc,
+                )
 
     def _load_databases(self):
         """将数据库的信息保存到本地的文件里面"""
@@ -66,12 +109,29 @@ class DataBaseManager:
     def get_databases(self):
         self._update_database()
         assert self.config.enable_knowledge_base, "知识库未启用"
-        knowledge_base_collections = self.knowledge_base.get_collection_names()
-        if len(self.data["databases"]) != len(knowledge_base_collections):
-            logger.warning(f"Database number not match, {knowledge_base_collections}")
+        self._sync_local_collections()
+
+        remote_collections = set(self.knowledge_base.get_collection_names())
+        local_metanames = {db.metaname for db in self.data["databases"]}
+        missing = local_metanames - remote_collections
+        if missing:
+            logger.warning("Local knowledge bases still missing on Milvus: %s", sorted(missing))
+
+        extra_remote = remote_collections - local_metanames
+        if extra_remote:
+            logger.debug("Milvus collections not registered in database.json: %s", sorted(extra_remote))
 
         for db in self.data["databases"]:
-            db.update(self.knowledge_base.get_collection_info(db.metaname))
+            dimension = self._kb_dimension(db)
+            try:
+                db.update(self.knowledge_base.get_collection_info(db.metaname, dimension=dimension))
+            except Exception as exc:
+                logger.warning("Failed to read Milvus collection %s: %s", db.metaname, exc)
+                db.update({
+                    "collection_name": db.metaname,
+                    "row_count": 0,
+                    "sync_error": str(exc),
+                })
 
         return {"databases": [db.to_dict() for db in self.data["databases"]]}
 
@@ -139,6 +199,7 @@ class DataBaseManager:
                 self.knowledge_base.add_documents(
                     docs=[node.text for node in nodes],
                     collection_name=db.metaname,
+                    dimension=self._kb_dimension(db),
                     file_id=file_id)
 
                 idx = self.get_idx_by_fileid(db, file_id)
@@ -157,9 +218,11 @@ class DataBaseManager:
         db = self.get_kb_by_id(db_id)
         if db is None:
             return None
-        else:
-            db.update(self.knowledge_base.get_collection_info(db.metaname))
-            return db.to_dict()
+        dimension = self._kb_dimension(db)
+        if dimension:
+            self.knowledge_base.ensure_collection(db.metaname, dimension)
+        db.update(self.knowledge_base.get_collection_info(db.metaname, dimension=dimension))
+        return db.to_dict()
 
     def read_text(self, file, params=None):
         print("33333")

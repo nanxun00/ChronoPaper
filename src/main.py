@@ -8,7 +8,7 @@ from src.utils.logging_config import setup_logger
 from src.api import router
 from fastapi.staticfiles import StaticFiles
 from src.models.base import init_db
-from src.services.scheduler_service import start_crawl_scheduler
+from src.services.scheduler import start_crawl_scheduler
 from src.utils.paths import UPLOADS_DIR, ensure_papers_dir
 
 get_settings()

@@ -42,6 +42,20 @@ class KnowledgeBase:
     def get_collection_names(self):
         return self.client.list_collections()
 
+    def has_collection(self, collection_name: str) -> bool:
+        return self.client.has_collection(collection_name=collection_name)
+
+    def ensure_collection(self, collection_name: str, dimension: int) -> bool:
+        """本地登记的知识库在 Milvus 上不存在时自动创建。返回是否新建。"""
+        if self.has_collection(collection_name):
+            return False
+        self.client.create_collection(
+            collection_name=collection_name,
+            dimension=dimension,
+        )
+        logger.info("Created Milvus collection %s (dim=%s)", collection_name, dimension)
+        return True
+
     def get_collections(self):
         collections_name = self.client.list_collections()
         collections = []
@@ -51,30 +65,38 @@ class KnowledgeBase:
 
         return collections
 
-    def get_collection_info(self, collection_name):
+    def get_collection_info(self, collection_name, dimension: int | None = None):
         logger.info(f"获取到collection_name：{collection_name}")
+        if not self.has_collection(collection_name):
+            if dimension:
+                self.ensure_collection(collection_name, dimension)
+            else:
+                return {
+                    "collection_name": collection_name,
+                    "row_count": 0,
+                    "missing": True,
+                }
         collection = self.client.describe_collection(collection_name)
         collection.update(self.client.get_collection_stats(collection_name))
-        # collection["id"] = hashstr(collection_name)
         return collection
 
     def add_collection(self, collection_name, dimension=None):
-        if self.client.has_collection(collection_name=collection_name):
+        if self.has_collection(collection_name):
             logger.warning(f"Collection {collection_name} already exists, drop it")
             self.client.drop_collection(collection_name=collection_name)
 
         self.client.create_collection(
             collection_name=collection_name,
-            dimension=dimension,  # The vectors we will use in this demo has 768 dimensions
+            dimension=dimension,
         )
 
-    def add_documents(self, docs, collection_name, **kwargs):
+    def add_documents(self, docs, collection_name, dimension=None, **kwargs):
         """添加已经分块之后的文本"""
-        # 检查 collection 是否存在
         import random
-        if not self.client.has_collection(collection_name=collection_name):
-            logger.error(f"Collection {collection_name} not found, create it")
-            # self.add_collection(collection_name)
+        if not self.has_collection(collection_name=collection_name):
+            if not dimension:
+                raise ValueError(f"Collection {collection_name} not found and dimension is required to create it")
+            self.ensure_collection(collection_name, dimension)
 
         vectors = self.embed_model.encode(docs)
 

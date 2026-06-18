@@ -8,6 +8,8 @@ from typing import Any
 
 import requests
 
+from src.integrations.openalex.ccf_venues import annotate_openreview_ccf, meta_matches_ccf_ranks
+
 OPENREVIEW_API = "https://api2.openreview.net/notes"
 OPENREVIEW_SEARCH_API = "https://api2.openreview.net/notes/search"
 OPENREVIEW_BASE = "https://openreview.net"
@@ -234,23 +236,37 @@ def _search_note_to_candidate(note: dict) -> dict[str, Any] | None:
     return _forum_content_to_candidate(forum, content, invitation_hint)
 
 
+def _normalize_ccf_ranks(ccf_ranks: list[str] | str | None) -> set[str]:
+    if not ccf_ranks:
+        return {"A", "B", "C"}
+    if isinstance(ccf_ranks, str):
+        items = [r.strip().upper() for r in ccf_ranks.replace("，", ",").split(",") if r.strip()]
+    else:
+        items = [str(r).strip().upper() for r in ccf_ranks if str(r).strip()]
+    return set(items) or {"A", "B", "C"}
+
+
 def fetch_openreview_by_keywords(
     search_query: str,
     *,
     max_results: int = 300,
     only_accepted: bool = True,
+    ccf_ranks: list[str] | str | None = "A,B,C",
+    max_scan: int = 800,
 ) -> list[dict[str, Any]]:
-    """按关键词检索 OpenReview（全局 search API，不再按 venue 拉全量）。"""
+    """按关键词全库检索 OpenReview，仅保留 CCF 分级内的已接收论文。"""
     query = (search_query or "").strip()
     if not query:
         raise ValueError("OpenReview 关键词检索需要兴趣描述或检索关键词")
 
+    allowed_ranks = _normalize_ccf_ranks(ccf_ranks)
     results: list[dict[str, Any]] = []
     seen_forums: set[str] = set()
     offset = 0
-    page_size = min(100, max_results)
+    page_size = 100
+    scanned = 0
 
-    while len(results) < max_results:
+    while len(results) < max_results and scanned < max_scan:
         resp = requests.get(
             OPENREVIEW_SEARCH_API,
             params={
@@ -267,6 +283,8 @@ def fetch_openreview_by_keywords(
         if not notes:
             break
         for note in notes:
+            if scanned >= max_scan or len(results) >= max_results:
+                break
             candidate = _search_note_to_candidate(note)
             if not candidate:
                 continue
@@ -274,16 +292,17 @@ def fetch_openreview_by_keywords(
             if not forum or forum in seen_forums:
                 continue
             seen_forums.add(forum)
+            scanned += 1
+            if only_accepted and not is_openreview_accepted_candidate(candidate):
+                continue
+            annotate_openreview_ccf(candidate)
+            if not meta_matches_ccf_ranks(candidate, allowed_ranks):
+                continue
             results.append(candidate)
-            if len(results) >= max_results:
-                break
         if len(notes) < page_size:
             break
         offset += len(notes)
         time.sleep(0.3)
-
-    if only_accepted:
-        results = [m for m in results if is_openreview_accepted_candidate(m)]
 
     return results
 

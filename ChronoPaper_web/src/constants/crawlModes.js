@@ -11,7 +11,7 @@ export const CRAWL_MODE_OPTIONS = [
   {
     value: 'explore',
     label: '领域探索',
-    description: 'OpenReview 顶会录用 + OpenAlex CCF A/B，启用质量分过滤；会议/分类仅作质量偏好',
+    description: 'OpenReview 顶会录用 + OpenAlex CCF A/B/C，启用质量分过滤；按 CCF 分级抓取',
   },
   {
     value: 'smart',
@@ -51,14 +51,9 @@ export function getCrawlModePreset(mode) {
         enable_smart_planning: false,
         sources: ['openreview', 'openalex'],
         categories: [],
-        openreview_venues: [
-          'ICLR.cc/2025/Conference/-/Submission',
-          'NeurIPS.cc/2024/Conference/-/Submission',
-          'ICML.cc/2024/Conference/-/Submission',
-          'ACL.org/2024/Conference/-/Submission',
-        ],
+        openreview_venues: [],
         openalex_venue_types: ['conference', 'journal'],
-        openalex_ccf_ranks: ['A', 'B'],
+        openalex_ccf_ranks: ['A', 'B', 'C'],
         openalex_year_from: CURRENT_YEAR - 3,
         openalex_year_to: CURRENT_YEAR,
         openalex_venue_names: '',

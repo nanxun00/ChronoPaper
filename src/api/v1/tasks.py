@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session
 from src.api.deps import UserInDB, get_current_active_user, get_db
 from src.models.crawl import CrawlTask, CrawlTaskRun
 from src.schemas.task import CrawlPlanRequest, CrawlTaskCreate, CrawlTaskUpdate
-from src.services.crawl_planner import generate_crawl_plan
-from src.services.crawl_mode_presets import CRAWL_MODE_LABELS
-from src.services.crawl_planning_job import cancel_smart_planning, is_smart_planning, schedule_smart_planning
-from src.services.crawl_service import is_task_running, request_cancel_task, run_task_async
-from src.services.scheduler_service import refresh_scheduler
+from src.services.crawl.crawl_planner import generate_crawl_plan
+from src.services.crawl.crawl_mode_presets import CRAWL_MODE_LABELS
+from src.services.crawl.crawl_planning_job import cancel_smart_planning, is_smart_planning, schedule_smart_planning
+from src.services.crawl.crawl_service import is_task_running, request_cancel_task, run_task_async
+from src.services.scheduler import refresh_scheduler
 from src.utils.datetime_fmt import format_display_datetime
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -124,8 +124,8 @@ def _validate_crawl_sources(body: CrawlTaskCreate) -> None:
     if "openalex" in sources:
         if not body.openalex_venue_types.strip():
             raise HTTPException(status_code=400, detail="OpenAlex 请至少选择一种文献类型")
-        if not body.openalex_ccf_ranks.strip():
-            raise HTTPException(status_code=400, detail="OpenAlex 请至少选择一种 CCF 分级")
+    if {"openreview", "openalex"} & set(sources) and not body.openalex_ccf_ranks.strip():
+        raise HTTPException(status_code=400, detail="请至少选择一种 CCF 分级")
 
 
 @router.post("/crawl-plan")
@@ -168,7 +168,7 @@ def create_crawl_task(
         intent_text=body.intent_text,
         sources="" if async_smart_plan else (body.sources or "arxiv"),
         categories="" if async_smart_plan else body.categories,
-        openreview_venues="" if async_smart_plan else body.openreview_venues,
+        openreview_venues="" if async_smart_plan else "",
         openalex_venue_types=body.openalex_venue_types if not async_smart_plan else "conference,journal",
         openalex_ccf_ranks=body.openalex_ccf_ranks if not async_smart_plan else "A,B,C",
         openalex_year_from=body.openalex_year_from,

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.models.base import SessionLocal
-from src.models.user import select_user_by_userid, select_user_by_username
+from src.models.auth import select_user_by_userid, select_user_by_username
 from src.utils.password import verify_password
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 

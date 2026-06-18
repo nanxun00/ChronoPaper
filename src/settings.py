@@ -61,10 +61,19 @@ class Settings(BaseSettings):
     neo4j_legacy_username: str = "neo4j"
     neo4j_legacy_password: str = ""
 
-    # --- Milvus ---
+    # --- Milvus / 知识库 ---
     milvus_uri: str = "http://localhost:19530"
     milvus_token: str = ""
     milvus_db_name: str = "default"
+
+    save_dir: str | None = None
+    kb_database_json: str = ""
+    enable_knowledge_base: bool | None = None
+    enable_knowledge_graph: bool | None = None
+    enable_reranker: bool | None = None
+    enable_search_engine: bool | None = None
+    embed_model: str | None = None
+    reranker: str | None = None
 
     # --- MinIO（可选）---
     minio_endpoint: str = ""
@@ -173,7 +182,7 @@ class Settings(BaseSettings):
         password = quote_plus(self.mysql_password)
         return (
             f"mysql+pymysql://{user}:{password}"
-            f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_db}?charset=utf8"
+            f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_db}?charset=utf8mb4"
         )
 
     def milvus_config(self) -> dict:
@@ -182,6 +191,14 @@ class Settings(BaseSettings):
             "token": self.milvus_token,
             "db_name": self.milvus_db_name,
         }
+
+    def kb_registry_path(self, save_dir: str | None = None) -> str:
+        """知识库本地登记表 database.json 路径。"""
+        if self.kb_database_json.strip():
+            p = Path(self.kb_database_json.strip())
+            return str(p if p.is_absolute() else PROJECT_ROOT / p)
+        base = save_dir or self.save_dir or "src/saves"
+        return str(PROJECT_ROOT / base / "data" / "database.json")
 
     def neo4j_config(self) -> dict:
         return {

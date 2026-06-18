@@ -1,1 +1,0 @@
-"""Idea match worker (placeholder)."""

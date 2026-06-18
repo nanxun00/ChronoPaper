@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS `literature_entries` (
   `user_id`     VARCHAR(255) NOT NULL DEFAULT '',
   `visibility`  VARCHAR(16)  NOT NULL,
   `match_score` FLOAT        NULL,
+  `review_status` VARCHAR(16) NOT NULL DEFAULT 'approved',
   `task_id`     INT          NULL,
   `run_id`      INT          NULL,
   `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,

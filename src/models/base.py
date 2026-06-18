@@ -24,10 +24,9 @@ def get_session():
 
 def implemented_orm_models():
     """已实现业务使用的 ORM（不含 Idea / LaTeX / favorite 等待实现模块）。"""
-    from src.models.user import UserModel
-    from src.models.paper import Paper
+    from src.models.auth import UserModel
+    from src.models.literature import LiteratureEntry, Paper
     from src.models.crawl import CrawlTask, CrawlTaskRun
-    from src.models.literature import LiteratureEntry
     from src.models.chat import ChatConversation, ChatMessage
 
     return [UserModel, Paper, CrawlTask, CrawlTaskRun, LiteratureEntry, ChatConversation, ChatMessage]
@@ -165,6 +164,20 @@ def migrate_schema(engine, log) -> None:
             alters.append("ALTER TABLE literature_entries ADD COLUMN quality_score FLOAT NULL")
         if "pool_type" not in entry_cols:
             alters.append("ALTER TABLE literature_entries ADD COLUMN pool_type VARCHAR(16) NULL")
+        if "review_status" not in entry_cols:
+            alters.append(
+                "ALTER TABLE literature_entries ADD COLUMN review_status VARCHAR(16) NOT NULL DEFAULT 'approved'"
+            )
+
+    table_names = set(inspector.get_table_names())
+    if "chat_message" in table_names:
+        alters.append(
+            "ALTER TABLE chat_message CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+        )
+    if "chat_conversation" in table_names:
+        alters.append(
+            "ALTER TABLE chat_conversation CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+        )
 
     for ddl in alters:
         try:
@@ -210,7 +223,7 @@ def init_db() -> None:
 
     migrate_schema(engine, log)
 
-    from src.models.user import ensure_default_admin
+    from src.models.auth import ensure_default_admin
 
     try:
         ensure_default_admin()

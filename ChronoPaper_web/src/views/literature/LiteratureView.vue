@@ -60,6 +60,14 @@
             />
             <a-button @click="searchPublicPapers">应用筛选</a-button>
             <a-button
+              type="primary"
+              :disabled="!publicSelectedKeys.length"
+              :loading="reviewing"
+              @click="confirmBatchApprove('public')"
+            >
+              批量通过 ({{ publicSelectedKeys.length }})
+            </a-button>
+            <a-button
               danger
               :disabled="!publicSelectedKeys.length"
               :loading="deleting"
@@ -86,9 +94,31 @@
                   {{ sourceLabel(record.source) }}
                 </a-tag>
               </template>
+              <template v-else-if="column.key === 'review_status'">
+                <a-tag :color="reviewStatusColor(record.review_status)">
+                  {{ reviewStatusLabel(record.review_status) }}
+                </a-tag>
+              </template>
               <template v-else-if="column.key === 'action'">
-                <a-space>
+                <a-space wrap>
                   <a-button type="link" size="small" @click="openPreview(record)">预览</a-button>
+                  <a-button
+                    v-if="record.review_status === 'pending'"
+                    type="link"
+                    size="small"
+                    @click="runApprove([record.arxiv_id], 'public')"
+                  >
+                    通过
+                  </a-button>
+                  <a-button
+                    v-if="record.review_status === 'pending'"
+                    type="link"
+                    size="small"
+                    danger
+                    @click="runReject([record.arxiv_id], 'public')"
+                  >
+                    不通过
+                  </a-button>
                   <a-button type="link" size="small" @click="toggleFavorite(record)">
                     {{ record.favorited ? '取消收藏' : '收藏' }}
                   </a-button>
@@ -139,6 +169,14 @@
             <a-input-number v-model:value="privateMinQuality" :min="0" :max="100" style="width: 72px" />
             <a-button @click="searchPrivatePapers">应用筛选</a-button>
             <a-button
+              type="primary"
+              :disabled="!privateSelectedKeys.length"
+              :loading="reviewing"
+              @click="confirmBatchApprove('private')"
+            >
+              批量通过 ({{ privateSelectedKeys.length }})
+            </a-button>
+            <a-button
               danger
               :disabled="!privateSelectedKeys.length"
               :loading="deleting"
@@ -165,9 +203,31 @@
                   {{ sourceLabel(record.source) }}
                 </a-tag>
               </template>
+              <template v-else-if="column.key === 'review_status'">
+                <a-tag :color="reviewStatusColor(record.review_status)">
+                  {{ reviewStatusLabel(record.review_status) }}
+                </a-tag>
+              </template>
               <template v-else-if="column.key === 'action'">
-                <a-space>
+                <a-space wrap>
                   <a-button type="link" size="small" @click="openPreview(record)">预览</a-button>
+                  <a-button
+                    v-if="record.review_status === 'pending'"
+                    type="link"
+                    size="small"
+                    @click="runApprove([record.arxiv_id], 'private')"
+                  >
+                    通过
+                  </a-button>
+                  <a-button
+                    v-if="record.review_status === 'pending'"
+                    type="link"
+                    size="small"
+                    danger
+                    @click="runReject([record.arxiv_id], 'private')"
+                  >
+                    不通过
+                  </a-button>
                   <a-button type="link" size="small" danger @click="confirmDeleteOne(record, 'private')">
                     删除
                   </a-button>
@@ -303,7 +363,7 @@ import { Modal, message } from 'ant-design-vue'
 import { PictureOutlined } from '@ant-design/icons-vue'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import PdfPreview from '@/components/literature/PdfPreview.vue'
-import { deleteLiteratureEntries, getPaperDetail, listPublicPapers, listPrivatePapers, uploadLiteraturePdf } from '@/api/literature'
+import { approveLiteratureEntries, deleteLiteratureEntries, getPaperDetail, listPublicPapers, listPrivatePapers, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
 import { SOURCE_LABELS } from '@/constants/openreviewVenues'
 import { useSelectionTranslate } from '@/composables/useSelectionTranslate'
 
@@ -313,6 +373,7 @@ const activeTab = ref('public')
 const loading = ref(false)
 const uploading = ref(false)
 const deleting = ref(false)
+const reviewing = ref(false)
 const searchLoading = ref(false)
 const previewOpen = ref(false)
 const previewItem = ref(null)
@@ -340,13 +401,14 @@ const searchModeOptions = [
 const literatureColumns = [
   { title: '标题', key: 'title', dataIndex: 'title', ellipsis: true },
   { title: '来源', key: 'source', width: 100 },
+  { title: '审核', key: 'review_status', width: 90 },
   { title: '会议/期刊', dataIndex: 'venue', width: 140, ellipsis: true },
   { title: 'CCF', dataIndex: 'venue_rank', width: 60 },
   { title: 'IF/citedness', dataIndex: 'journal_if', width: 100 },
   { title: '引用', dataIndex: 'citation_count', width: 70 },
   { title: '作者', dataIndex: 'authors', width: 150, ellipsis: true },
   { title: '发布时间', dataIndex: 'published_at', width: 120 },
-  { title: '操作', key: 'action', width: 180 },
+  { title: '操作', key: 'action', width: 260 },
 ]
 
 const publicRowSelection = computed(() => ({
@@ -398,6 +460,16 @@ const sourceLabel = (source) => SOURCE_LABELS[source] || source || 'arXiv'
 const sourceColor = (source) => {
   const map = { arxiv: 'blue', openreview: 'purple', openalex: 'green', upload: 'orange' }
   return map[source] || 'default'
+}
+
+const reviewStatusLabel = (status) => {
+  const map = { pending: '待审核', approved: '已通过', rejected: '未通过' }
+  return map[status] || '已通过'
+}
+
+const reviewStatusColor = (status) => {
+  const map = { pending: 'gold', approved: 'green', rejected: 'red' }
+  return map[status] || 'green'
 }
 
 const previewExternalUrl = computed(() => {
@@ -581,6 +653,61 @@ const confirmBatchDelete = (visibility) => {
     okType: 'danger',
     cancelText: '取消',
     onOk: () => runDelete([...keys], visibility),
+  })
+}
+
+const runApprove = async (arxivIds, visibility) => {
+  if (!arxivIds.length) return
+  reviewing.value = true
+  try {
+    const result = await approveLiteratureEntries({ arxiv_ids: arxivIds, visibility })
+    const parts = [`已通过 ${result.approved} 篇`]
+    if (result.queued_parse) parts.push(`已排队解析 ${result.queued_parse} 篇`)
+    if (result.already_approved?.length) parts.push(`${result.already_approved.length} 篇已是通过状态`)
+    message.success(parts.join('，'))
+    if (visibility === 'public') {
+      publicSelectedKeys.value = publicSelectedKeys.value.filter((k) => !arxivIds.includes(k))
+      await loadPublicPapers()
+    } else {
+      privateSelectedKeys.value = privateSelectedKeys.value.filter((k) => !arxivIds.includes(k))
+      await loadPrivatePapers()
+    }
+  } catch (err) {
+    message.error(err.message || '审核通过失败')
+  } finally {
+    reviewing.value = false
+  }
+}
+
+const runReject = async (arxivIds, visibility) => {
+  if (!arxivIds.length) return
+  reviewing.value = true
+  try {
+    const result = await rejectLiteratureEntries({ arxiv_ids: arxivIds, visibility })
+    message.success(`已标记 ${result.rejected} 篇为不通过`)
+    if (visibility === 'public') {
+      publicSelectedKeys.value = publicSelectedKeys.value.filter((k) => !arxivIds.includes(k))
+      await loadPublicPapers()
+    } else {
+      privateSelectedKeys.value = privateSelectedKeys.value.filter((k) => !arxivIds.includes(k))
+      await loadPrivatePapers()
+    }
+  } catch (err) {
+    message.error(err.message || '审核失败')
+  } finally {
+    reviewing.value = false
+  }
+}
+
+const confirmBatchApprove = (visibility) => {
+  const keys = visibility === 'public' ? publicSelectedKeys.value : privateSelectedKeys.value
+  if (!keys.length) return
+  Modal.confirm({
+    title: `确认批量通过 ${keys.length} 篇文献？`,
+    content: '通过后将下载 PDF（若尚未下载）并启动 MinerU 解析与质量评估。',
+    okText: '批量通过',
+    cancelText: '取消',
+    onOk: () => runApprove([...keys], visibility),
   })
 }
 

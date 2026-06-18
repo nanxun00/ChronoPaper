@@ -1,1 +1,0 @@
-"""MinIO object storage (placeholder)."""

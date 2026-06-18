@@ -72,20 +72,37 @@ class Config(SimpleConfig):
         os.makedirs(os.path.dirname(self.filename), exist_ok=True)
 
         self.load()
-        self._apply_env_secrets()
+        self._apply_env_overrides()
         self.handle_self()
 
-    def _apply_env_secrets(self):
-        """从 .env 注入数据库连接信息，覆盖 yaml 中的敏感配置。"""
+    def _apply_env_overrides(self):
+        """从 .env 注入连接信息与知识库配置；仅覆盖 .env 中显式设置的项。"""
         settings = get_settings()
         self["milvus"] = settings.milvus_config()
         self["neo4j"] = settings.neo4j_config()
+
+        optional_overrides = {
+            "save_dir": settings.save_dir,
+            "enable_knowledge_base": settings.enable_knowledge_base,
+            "enable_knowledge_graph": settings.enable_knowledge_graph,
+            "enable_reranker": settings.enable_reranker,
+            "enable_search_engine": settings.enable_search_engine,
+            "embed_model": settings.embed_model,
+            "reranker": settings.reranker,
+        }
+        for key, value in optional_overrides.items():
+            if value is not None:
+                self[key] = value
+
+        kb_path = settings.kb_registry_path(self.get("save_dir"))
+        self["kb_database_json"] = kb_path
 
     def _strip_secrets_for_save(self, data: dict) -> dict:
         """保存配置时移除敏感字段，避免写回 yaml。"""
         data = dict(data)
         data.pop("milvus", None)
         data.pop("neo4j", None)
+        data.pop("kb_database_json", None)
         return data
 
     def add_item(self, key, default, des=None, choices=None):

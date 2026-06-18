@@ -68,3 +68,32 @@ def venue_matches_ccf_ranks(venue_name: str, allowed_ranks: set[str]) -> bool:
     if rank is None:
         return False
     return rank in allowed_ranks
+
+
+def openreview_venue_text(meta: dict) -> str:
+    """拼接 OpenReview 候选的会议/邀请信息，供 CCF 匹配。"""
+    parts = [
+        meta.get("venue") or "",
+        meta.get("venue_display") or "",
+        meta.get("openreview_invitation") or "",
+    ]
+    cats = meta.get("categories")
+    if isinstance(cats, list) and cats:
+        parts.append(str(cats[0]))
+    return " ".join(str(p) for p in parts if p)
+
+
+def annotate_openreview_ccf(meta: dict) -> str | None:
+    rank = match_ccf_rank(openreview_venue_text(meta))
+    if rank:
+        meta["venue_rank"] = rank
+    return rank
+
+
+def meta_matches_ccf_ranks(meta: dict, allowed_ranks: set[str]) -> bool:
+    if not allowed_ranks:
+        return True
+    rank = meta.get("venue_rank") or annotate_openreview_ccf(meta)
+    if rank is None:
+        return False
+    return rank in allowed_ranks

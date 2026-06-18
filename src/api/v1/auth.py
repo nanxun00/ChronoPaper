@@ -9,7 +9,7 @@ from typing import Annotated
 from openai import BaseModel
 
 from src.login.config import config
-from src.models.user import InsertUser, UpdateUser, SelectUserByUserID
+from src.models.auth import InsertUser, UpdateUser, SelectUserByUserID
 
 ACCESS_TOKEN_EXPIRE_MINUTES = config["token"]["expires_time"]
 ACCESS_TOKEN_DEFAULT_MINUTES = config["token"]["default_expires_time"]

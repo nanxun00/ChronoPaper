@@ -1,1 +1,0 @@
-"""Text vector index (placeholder)."""

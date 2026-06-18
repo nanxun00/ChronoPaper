@@ -206,31 +206,22 @@
                   </a-select-opt-group>
                 </a-select>
               </a-form-item>
-              <a-form-item v-if="createForm.sources.includes('openreview')" label="OpenReview 会议偏好（质量过滤）">
-                <a-select
-                  v-model:value="createForm.openreview_venues"
-                  mode="multiple"
-                  placeholder="可选：偏好顶会，用于质量分加权（不参与检索）"
-                  style="width: 100%"
-                  show-search
-                  :filter-option="filterOpenReviewVenue"
-                  :max-tag-count="3"
+              <a-form-item
+                v-if="createForm.sources.includes('openreview') || createForm.sources.includes('openalex')"
+                label="CCF 分级"
+                required
+              >
+                <a-checkbox-group
+                  v-model:value="createForm.openalex_ccf_ranks"
                   @change="markManualMode"
                 >
-                  <a-select-opt-group
-                    v-for="group in OPENREVIEW_VENUE_GROUPS"
-                    :key="group.label"
-                    :label="group.label"
-                  >
-                    <a-select-option
-                      v-for="opt in group.options"
-                      :key="opt.value"
-                      :value="opt.value"
-                    >
-                      {{ opt.label }}
-                    </a-select-option>
-                  </a-select-opt-group>
-                </a-select>
+                  <a-checkbox v-for="opt in OPENALEX_CCF_RANK_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </a-checkbox>
+                </a-checkbox-group>
+                <p class="field-hint">
+                  OpenReview / OpenAlex 仅抓取所选 CCF 分级内的论文，不再按单场会议偏好过滤
+                </p>
               </a-form-item>
               <a-form-item v-if="createForm.sources.includes('openalex')" label="OpenAlex 综合抓取" required>
                 <a-form-item label="文献类型" :style="{ marginBottom: '12px' }">
@@ -239,16 +230,6 @@
                     @change="markManualMode"
                   >
                     <a-checkbox v-for="opt in OPENALEX_VENUE_TYPE_OPTIONS" :key="opt.value" :value="opt.value">
-                      {{ opt.label }}
-                    </a-checkbox>
-                  </a-checkbox-group>
-                </a-form-item>
-                <a-form-item label="CCF 分级" :style="{ marginBottom: '12px' }">
-                  <a-checkbox-group
-                    v-model:value="createForm.openalex_ccf_ranks"
-                    @change="markManualMode"
-                  >
-                    <a-checkbox v-for="opt in OPENALEX_CCF_RANK_OPTIONS" :key="opt.value" :value="opt.value">
                       {{ opt.label }}
                     </a-checkbox>
                   </a-checkbox-group>
@@ -364,8 +345,10 @@
           <a-descriptions-item label="数据源">{{ detailItem.sources || 'arxiv' }}</a-descriptions-item>
           <a-descriptions-item label="兴趣描述">{{ detailItem.intent_text || '—' }}</a-descriptions-item>
           <a-descriptions-item label="arXiv 分类偏好">{{ detailItem.categories || '—' }}</a-descriptions-item>
-          <a-descriptions-item label="OpenReview 会议偏好">{{ detailItem.openreview_venues || '—' }}</a-descriptions-item>
-          <a-descriptions-item v-if="(detailItem.sources || '').includes('openalex')" label="OpenAlex CCF">
+          <a-descriptions-item
+            v-if="(detailItem.sources || '').includes('openreview') || (detailItem.sources || '').includes('openalex')"
+            label="CCF 分级"
+          >
             {{ detailItem.openalex_ccf_ranks || '—' }}
           </a-descriptions-item>
           <a-descriptions-item v-if="(detailItem.sources || '').includes('openalex')" label="OpenAlex 年份">
@@ -409,7 +392,6 @@ import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import { apiJson } from '@/api'
 import { ARXIV_CATEGORY_GROUPS, ARXIV_CATEGORY_OPTIONS } from '@/constants/arxivCategories'
 import { CRAWL_SOURCE_OPTIONS } from '@/constants/crawlSources'
-import { OPENREVIEW_VENUE_GROUPS, OPENREVIEW_VENUE_OPTIONS } from '@/constants/openreviewVenues'
 import {
   CURRENT_YEAR,
   OPENALEX_CCF_RANK_OPTIONS,
@@ -441,7 +423,6 @@ const defaultCreateForm = () => ({
   intent_text: '',
   sources: ['arxiv'],
   categories: [],
-  openreview_venues: [],
   openalex_venue_types: ['conference', 'journal'],
   openalex_ccf_ranks: ['A', 'B', 'C'],
   openalex_year_from: CURRENT_YEAR - 2,
@@ -618,14 +599,6 @@ const filterArxivCategory = (input, option) => {
   return value.includes(q) || label.includes(q)
 }
 
-const filterOpenReviewVenue = (input, option) => {
-  const q = input.toLowerCase()
-  const value = String(option?.value ?? '').toLowerCase()
-  const meta = OPENREVIEW_VENUE_OPTIONS.find((o) => o.value === option?.value)
-  const label = (meta?.label ?? '').toLowerCase()
-  return value.includes(q) || label.includes(q)
-}
-
 const handleCreate = async () => {
   if (!createForm.value.intent_text?.trim()) {
     message.warning(createForm.value.crawl_mode === 'smart' ? '请填写研究领域描述' : '请填写研究兴趣描述')
@@ -642,8 +615,13 @@ const handleCreate = async () => {
         message.warning('OpenAlex 请至少选择一种文献类型')
         return Promise.reject()
       }
+    }
+    if (
+      createForm.value.sources.includes('openreview') ||
+      createForm.value.sources.includes('openalex')
+    ) {
       if (!createForm.value.openalex_ccf_ranks?.length) {
-        message.warning('OpenAlex 请至少选择一种 CCF 分级')
+        message.warning('请至少选择一种 CCF 分级')
         return Promise.reject()
       }
     }
@@ -679,7 +657,7 @@ const handleCreate = async () => {
       Object.assign(payload, {
         sources: createForm.value.sources.join(','),
         categories: createForm.value.categories.join(', '),
-        openreview_venues: createForm.value.openreview_venues.join(','),
+        openreview_venues: '',
         openalex_venue_types: createForm.value.openalex_venue_types.join(','),
         openalex_ccf_ranks: createForm.value.openalex_ccf_ranks.join(','),
         openalex_year_from: createForm.value.openalex_year_from,

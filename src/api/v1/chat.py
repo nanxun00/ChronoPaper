@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from src.api.deps import UserInDB, get_current_active_user, get_db
 from src.models.base import SessionLocal
 from src.services import literature_service
-from src.services.chat_persistence_service import (
+from src.services.chat import (
     build_assistant_message_metadata,
     build_llm_history,
     build_user_message_metadata,
