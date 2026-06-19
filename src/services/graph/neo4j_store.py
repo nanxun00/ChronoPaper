@@ -481,47 +481,342 @@ class PaperGraphStore:
         *,
         kb_id: str,
         user_id: str | int,
-        hops: int = 2,
+        hops: int = 1,
         limit: int = 30,
+        direction: str = "outgoing",
     ) -> dict[str, Any]:
-        """引用脉络：CITE 双向扩展。"""
+        """引用脉络：默认仅 outgoing（本文 → 参考文献），过滤 incoming 反向引用。"""
         if not paper_ids:
             return {"papers": [], "edges": [], "chunk_ids": []}
 
         uid = str(user_id or "0")
-        hops = max(1, min(int(hops), 3))
-        cypher = f"""
-        UNWIND $paper_ids AS pid
-        MATCH (p:Paper {{paper_id: pid, kb_id: $kb_id}})
-        WHERE NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid
-        OPTIONAL MATCH path = (p)-[:CITE*1..{hops}]-(other:Paper {{kb_id: $kb_id}})
-        WITH collect(DISTINCT p) + collect(DISTINCT other) AS ps
-        UNWIND ps AS paper
-        WITH DISTINCT paper
-        WHERE paper IS NOT NULL
-        RETURN paper.paper_id AS paper_id,
-               paper.title AS title,
-               paper.name AS name,
-               paper.year AS year,
-               paper.related_chunk_ids AS related_chunk_ids
-        LIMIT $limit
-        """
-        edge_cypher = """
-        UNWIND $paper_ids AS pid
-        MATCH (a:Paper {kb_id: $kb_id})-[r:CITE]->(b:Paper {kb_id: $kb_id})
-        WHERE a.paper_id = pid OR b.paper_id = pid
-        RETURN DISTINCT a.paper_id AS source, a.name AS source_name,
-               b.paper_id AS target, b.name AS target_name, type(r) AS rel_type
-        LIMIT $limit
-        """
+        hops = max(1, min(int(hops), 2))
+        dir_mode = (direction or "outgoing").lower()
+
+        if dir_mode == "outgoing":
+            edge_cypher = """
+            UNWIND $paper_ids AS pid
+            MATCH (a:Paper {paper_id: pid, kb_id: $kb_id})-[r:CITE]->(b:Paper {kb_id: $kb_id})
+            RETURN DISTINCT a.paper_id AS source,
+                   coalesce(a.name, a.title) AS source_name,
+                   b.paper_id AS target,
+                   coalesce(b.name, b.title) AS target_name,
+                   type(r) AS rel_type
+            LIMIT $limit
+            """
+            paper_cypher = """
+            UNWIND $paper_ids AS pid
+            MATCH (p:Paper {paper_id: pid, kb_id: $kb_id})
+            WHERE NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid
+            OPTIONAL MATCH (p)-[:CITE]->(cited:Paper {kb_id: $kb_id})
+            WITH p, collect(DISTINCT cited) AS cited_list
+            RETURN p.paper_id AS paper_id,
+                   p.title AS title,
+                   p.name AS name,
+                   p.related_chunk_ids AS related_chunk_ids,
+                   [c IN cited_list WHERE c IS NOT NULL |
+                    {paper_id: c.paper_id, title: c.title, name: c.name}] AS cited_papers
+            LIMIT $limit
+            """
+        else:
+            edge_cypher = """
+            UNWIND $paper_ids AS pid
+            MATCH (a:Paper {kb_id: $kb_id})-[r:CITE]->(b:Paper {kb_id: $kb_id})
+            WHERE a.paper_id = pid OR b.paper_id = pid
+            RETURN DISTINCT a.paper_id AS source, a.name AS source_name,
+                   b.paper_id AS target, b.name AS target_name, type(r) AS rel_type
+            LIMIT $limit
+            """
+            paper_cypher = f"""
+            UNWIND $paper_ids AS pid
+            MATCH (p:Paper {{paper_id: pid, kb_id: $kb_id}})
+            WHERE NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid
+            OPTIONAL MATCH path = (p)-[:CITE*1..{hops}]-(other:Paper {{kb_id: $kb_id}})
+            WITH collect(DISTINCT p) + collect(DISTINCT other) AS ps
+            UNWIND ps AS paper
+            WITH DISTINCT paper
+            WHERE paper IS NOT NULL
+            RETURN paper.paper_id AS paper_id,
+                   paper.title AS title,
+                   paper.name AS name,
+                   paper.related_chunk_ids AS related_chunk_ids
+            LIMIT $limit
+            """
+
         with self._session() as session:
-            papers = [dict(r) for r in session.run(cypher, paper_ids=paper_ids, kb_id=kb_id, uid=uid, limit=limit)]
-            edges = [dict(r) for r in session.run(edge_cypher, paper_ids=paper_ids, kb_id=kb_id, uid=uid, limit=limit)]
+            papers = [dict(r) for r in session.run(
+                paper_cypher, paper_ids=paper_ids, kb_id=kb_id, uid=uid, limit=limit,
+            )]
+            edges = [dict(r) for r in session.run(
+                edge_cypher, paper_ids=paper_ids, kb_id=kb_id, uid=uid, limit=limit,
+            )]
 
         chunk_ids: list[str] = []
         for row in papers:
             for cid in row.get("related_chunk_ids") or []:
-                if cid not in chunk_ids:
+                if cid and cid not in chunk_ids:
                     chunk_ids.append(cid)
 
         return {"papers": papers, "edges": edges, "chunk_ids": chunk_ids}
+
+    def resolve_paper_ids_for_models(
+        self,
+        model_names: list[str],
+        *,
+        kb_id: str,
+        user_id: str | int,
+        limit: int = 5,
+    ) -> list[str]:
+        if not model_names:
+            return []
+        uid = str(user_id or "0")
+        cypher = """
+        UNWIND $names AS model_name
+        MATCH (p:Paper {kb_id: $kb_id})-[:PROPOSE]->(m:Model {name: model_name})
+        WHERE (NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid)
+        RETURN DISTINCT p.paper_id AS paper_id
+        LIMIT $limit
+        """
+        with self._session() as session:
+            rows = session.run(cypher, names=model_names, kb_id=kb_id, uid=uid, limit=limit)
+            return [r["paper_id"] for r in rows if r.get("paper_id")]
+
+    def find_entities_by_keyword(
+        self,
+        label: str,
+        keyword: str,
+        *,
+        kb_id: str,
+        limit: int = 5,
+    ) -> list[str]:
+        if label not in {"Model", "Dataset", "Metric", "Paper"}:
+            return []
+        from src.services.graph.entity_normalize import clean_entity_name
+
+        raw = keyword.strip().lower()
+        cleaned = clean_entity_name(keyword)
+        if label == "Paper":
+            cypher = """
+            MATCH (p:Paper {kb_id: $kb_id})
+            WHERE toLower(p.title) CONTAINS $kw
+               OR toLower(p.name) CONTAINS $kw
+               OR p.paper_id CONTAINS $clean
+            RETURN DISTINCT p.paper_id AS name
+            LIMIT $limit
+            """
+        else:
+            cypher = f"""
+            MATCH (n:{label} {{kb_id: $kb_id}})
+            WHERE n.name = $kw OR n.name = $clean
+               OR n.name CONTAINS $kw OR n.name CONTAINS $clean
+               OR $clean CONTAINS n.name
+            RETURN DISTINCT n.name AS name
+            LIMIT $limit
+            """
+        with self._session() as session:
+            rows = session.run(cypher, kb_id=kb_id, kw=raw, clean=cleaned, limit=limit)
+            return [r["name"] for r in rows if r.get("name")]
+
+    def query_use_datasets(
+        self,
+        *,
+        kb_id: str,
+        user_id: str | int,
+        model_names: list[str] | None = None,
+        dataset_names: list[str] | None = None,
+        limit: int = 15,
+    ) -> dict[str, Any]:
+        uid = str(user_id or "0")
+        models = list(model_names or [])
+        datasets = list(dataset_names or [])
+        cypher = """
+        MATCH (p:Paper {kb_id: $kb_id})-[:PROPOSE]->(m:Model)
+        WHERE (NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid)
+          AND (size($models) = 0 OR m.name IN $models)
+        MATCH (p)-[r:USE_DATASET]->(d:Dataset)
+        WHERE size($datasets) = 0
+           OR d.name IN $datasets
+           OR any(dn IN $datasets WHERE d.name CONTAINS dn OR dn CONTAINS d.name)
+        RETURN DISTINCT p.paper_id AS paper_id,
+               p.name AS paper_name,
+               m.name AS model_name,
+               d.name AS dataset_name,
+               d.ref_chunk_ids AS ref_chunk_ids,
+               r.ref_chunk_id AS rel_chunk_id
+        LIMIT $limit
+        """
+        with self._session() as session:
+            rows = [dict(r) for r in session.run(
+                cypher,
+                kb_id=kb_id,
+                uid=uid,
+                models=models,
+                datasets=datasets,
+                limit=limit,
+            )]
+        return self._pack_relation_rows(rows, rel_type="USE_DATASET")
+
+    def query_evaluate_metrics(
+        self,
+        *,
+        kb_id: str,
+        user_id: str | int,
+        model_names: list[str] | None = None,
+        metric_names: list[str] | None = None,
+        limit: int = 15,
+    ) -> dict[str, Any]:
+        uid = str(user_id or "0")
+        models = list(model_names or [])
+        metrics = list(metric_names or [])
+        cypher = """
+        MATCH (p:Paper {kb_id: $kb_id})-[:PROPOSE]->(m:Model)
+        WHERE (NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid)
+          AND (size($models) = 0 OR m.name IN $models)
+        MATCH (p)-[r:EVALUATE_BY]->(metric:Metric)
+        WHERE size($metrics) = 0
+           OR metric.name IN $metrics
+           OR any(mn IN $metrics WHERE metric.name CONTAINS mn OR mn CONTAINS metric.name)
+        RETURN DISTINCT p.paper_id AS paper_id,
+               p.name AS paper_name,
+               m.name AS model_name,
+               metric.name AS metric_name,
+               metric.ref_chunk_ids AS ref_chunk_ids,
+               r.ref_chunk_id AS rel_chunk_id
+        LIMIT $limit
+        """
+        with self._session() as session:
+            rows = [dict(r) for r in session.run(
+                cypher,
+                kb_id=kb_id,
+                uid=uid,
+                models=models,
+                metrics=metrics,
+                limit=limit,
+            )]
+        edges = []
+        chunk_ids: list[str] = []
+        for row in rows:
+            src = row.get("paper_name") or row.get("paper_id")
+            tgt = row.get("metric_name")
+            if src and tgt:
+                edges.append({
+                    "source": src,
+                    "target": tgt,
+                    "rel_type": "EVALUATE_BY",
+                    "chunk_id": row.get("rel_chunk_id"),
+                })
+            for cid in row.get("ref_chunk_ids") or []:
+                if cid and cid not in chunk_ids:
+                    chunk_ids.append(cid)
+            cid = row.get("rel_chunk_id")
+            if cid and cid not in chunk_ids:
+                chunk_ids.append(cid)
+        return {"rows": rows, "edges": edges, "chunk_ids": chunk_ids}
+
+    def query_different_with(
+        self,
+        model_names: list[str],
+        *,
+        kb_id: str,
+        user_id: str | int,
+        limit: int = 15,
+    ) -> dict[str, Any]:
+        if not model_names:
+            return {"edges": [], "chunk_ids": [], "models": []}
+        uid = str(user_id or "0")
+        cypher = """
+        UNWIND $names AS model_name
+        MATCH (m:Model {name: model_name})-[r:DIFFERENT_WITH]-(other:Model)
+        OPTIONAL MATCH (p:Paper {kb_id: $kb_id})-[:PROPOSE]->(m)
+        WHERE (NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid)
+        RETURN DISTINCT m.name AS source,
+               other.name AS target,
+               type(r) AS rel_type,
+               r.ref_chunk_id AS chunk_id,
+               other.ref_chunk_ids AS ref_chunk_ids
+        LIMIT $limit
+        """
+        with self._session() as session:
+            rows = [dict(r) for r in session.run(
+                cypher, names=model_names, kb_id=kb_id, uid=uid, limit=limit,
+            )]
+        chunk_ids: list[str] = []
+        edges = []
+        for row in rows:
+            if row.get("source") and row.get("target"):
+                edges.append(row)
+            for cid in row.get("ref_chunk_ids") or []:
+                if cid and cid not in chunk_ids:
+                    chunk_ids.append(cid)
+            cid = row.get("chunk_id")
+            if cid and cid not in chunk_ids:
+                chunk_ids.append(cid)
+        return {"edges": edges, "chunk_ids": chunk_ids, "models": model_names}
+
+    def query_papers_summary(
+        self,
+        *,
+        kb_id: str,
+        user_id: str | int,
+        paper_ids: list[str] | None = None,
+        task_domain: str | None = None,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        uid = str(user_id or "0")
+        pids = list(paper_ids or [])
+        domain = (task_domain or "").strip().lower()
+        if pids:
+            cypher = """
+            UNWIND $paper_ids AS pid
+            MATCH (p:Paper {paper_id: pid, kb_id: $kb_id})
+            WHERE (NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid)
+            RETURN p.paper_id AS paper_id, p.title AS title, p.name AS name,
+                   p.innovation_summary AS innovation_summary,
+                   p.related_chunk_ids AS related_chunk_ids,
+                   p.task_domain AS task_domain
+            LIMIT $limit
+            """
+            params = {"paper_ids": pids, "kb_id": kb_id, "uid": uid, "limit": limit}
+        else:
+            cypher = """
+            MATCH (p:Paper {kb_id: $kb_id})
+            WHERE (NOT coalesce(p.is_private, false) OR p.owner_user_id = $uid)
+              AND ($domain = '' OR toLower(coalesce(p.task_domain, '')) CONTAINS $domain)
+            RETURN p.paper_id AS paper_id, p.title AS title, p.name AS name,
+                   p.innovation_summary AS innovation_summary,
+                   p.related_chunk_ids AS related_chunk_ids,
+                   p.task_domain AS task_domain
+            ORDER BY coalesce(p.year, 0) DESC
+            LIMIT $limit
+            """
+            params = {"kb_id": kb_id, "uid": uid, "domain": domain, "limit": limit}
+        with self._session() as session:
+            papers = [dict(r) for r in session.run(cypher, **params)]
+        chunk_ids: list[str] = []
+        for row in papers:
+            for cid in row.get("related_chunk_ids") or []:
+                if cid and cid not in chunk_ids:
+                    chunk_ids.append(cid)
+        return {"papers": papers, "chunk_ids": chunk_ids}
+
+    @staticmethod
+    def _pack_relation_rows(rows: list[dict], rel_type: str) -> dict[str, Any]:
+        edges = []
+        chunk_ids: list[str] = []
+        for row in rows:
+            src = row.get("paper_name") or row.get("paper_id")
+            tgt = row.get("dataset_name") or row.get("metric_name")
+            if src and tgt:
+                edges.append({
+                    "source": src,
+                    "target": tgt,
+                    "rel_type": rel_type,
+                    "chunk_id": row.get("rel_chunk_id"),
+                })
+            for cid in row.get("ref_chunk_ids") or []:
+                if cid and cid not in chunk_ids:
+                    chunk_ids.append(cid)
+            cid = row.get("rel_chunk_id")
+            if cid and cid not in chunk_ids:
+                chunk_ids.append(cid)
+        return {"rows": rows, "edges": edges, "chunk_ids": chunk_ids}

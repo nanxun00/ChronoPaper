@@ -304,14 +304,16 @@ async def get_graph_node(entity_name: str|None=None):
         返回：
             - dict: 包含查询结果和状态消息的字典
     '''
-    if entity_name:
-        logger.debug(f"Get graph node {entity_name}")
-        # 指定查询操作，获取指定实体名称的节点信息
-        result = startup.dbm.graph_base.query_node(entity_name=entity_name)
-        return {"result": startup.retriever.format_query_results(result), "message": "success"}
-    else:
+    try:
+        if entity_name:
+            logger.debug(f"Get graph node {entity_name}")
+            result = startup.dbm.graph_base.query_node(entity_name=entity_name)
+            return {"result": startup.retriever.format_general_results(result), "message": "success"}
         result = startup.dbm.graph_base.get_sample_nodes("neo4j", "10000")
         return {"result": startup.retriever.format_general_results(result), "message": "success"}
+    except Exception as exc:
+        logger.exception("Get graph node failed entity=%s: %s", entity_name, exc)
+        raise HTTPException(status_code=500, detail=f"图谱检索失败: {exc}") from exc
 
 @data.get("/graph/nodes")
 async def get_graph_nodes(kgdb_name: str, num: int, include_cite: bool = True):

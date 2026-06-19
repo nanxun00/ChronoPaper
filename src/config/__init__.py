@@ -53,7 +53,7 @@ class Config(SimpleConfig):
         # TODO
         self.add_item("save_dir", default="src/saves", des="保存目录")   # 保存目录
         # 功能选项
-        self.add_item("enable_reranker", default=False, des="是否开启重排序")
+        self.add_item("enable_reranker", default=True, des="是否开启重排序")
         self.add_item("enable_knowledge_base", default=False, des="是否开启知识库")
         self.add_item("enable_knowledge_graph", default=False, des="是否开启知识图谱")
         self.add_item("enable_search_engine", default=False, des="是否开启搜索引擎")

@@ -13,6 +13,7 @@ from src.services.graph.extraction import (
     extract_section_batch,
     fallback_entity_description,
     merge_extraction_batches,
+    resolve_task_domain,
 )
 from src.services.graph.neo4j_store import PaperGraphStore
 from src.services.rag.startup import startup
@@ -37,6 +38,34 @@ def _group_chunks_by_section(chunks: list[TextChunk]) -> dict[str, list[dict[str
             continue
         groups[section].append({"chunk_id": chunk.chunk_id, "chunk_text": chunk.chunk_text})
     return groups
+
+
+def _load_known_task_domains(session, kb_id: str, store: PaperGraphStore, owner_user_id: str) -> list[str]:
+    """从图谱与向量库分块中汇总已收录领域，供抽取时对齐。"""
+    domains: set[str] = set()
+    try:
+        for domain in store.list_task_domains(kb_id=kb_id, user_id=owner_user_id, limit=100):
+            if domain and str(domain).strip():
+                domains.add(str(domain).strip())
+    except Exception as exc:
+        logger.debug("list_task_domains skipped: %s", exc)
+
+    rows = (
+        session.query(TextChunk.task_domain)
+        .filter(
+            TextChunk.kb_id == kb_id,
+            TextChunk.is_deleted == 0,
+            TextChunk.task_domain.isnot(None),
+            TextChunk.task_domain != "",
+        )
+        .distinct()
+        .limit(100)
+        .all()
+    )
+    for (domain,) in rows:
+        if domain and str(domain).strip():
+            domains.add(str(domain).strip())
+    return sorted(domains)
 
 
 def _backfill_task_domain(
@@ -114,6 +143,7 @@ def index_paper_graph(
         is_private = any(c.resource_type == "private" for c in chunks)
         owner = owner_user_id or next((c.owner_user_id for c in chunks if c.owner_user_id), "0")
         section_groups = _group_chunks_by_section(chunks)
+        known_task_domains = _load_known_task_domains(session, kb_id, store, owner)
 
         batches = []
         for section_type, section_chunks in section_groups.items():
@@ -126,12 +156,13 @@ def index_paper_graph(
                 abstract=paper.abstract,
                 section_type=section_type,
                 chunks=section_chunks,
+                known_task_domains=known_task_domains,
             )
             batches.append(batch)
 
-        merged = merge_extraction_batches(batches)
+        merged = merge_extraction_batches(batches, known_task_domains=known_task_domains)
         relations_std, _, entity_chunks = build_std_relations(paper_id, merged)
-        task_domain = merged.get("task_domain")
+        task_domain = resolve_task_domain(merged.get("task_domain"), known_task_domains)
         year = paper.published_at.year if paper.published_at else None
 
         all_chunk_ids = [c.chunk_id for c in chunks]

@@ -1,7 +1,7 @@
 embed_model: zhipu-embedding-3
 enable_knowledge_base: true
 enable_knowledge_graph: true
-enable_reranker: false
+enable_reranker: true
 enable_search_engine: false
 model_local_paths:
   bge-reranker-v2-m3: local/BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e

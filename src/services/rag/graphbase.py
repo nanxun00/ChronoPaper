@@ -270,41 +270,104 @@ class GraphDatabase:
         """
         tx.run(query)
 
-    def query_node(self, entity_name, hops=2, **kwargs):
-        # TODO 添加判断节点数量为 0 停止检索
-        if kwargs.get("exact_match"):
-            raise NotImplemented("not implement for `exact_match`")
-        else:
-            return self.query_by_vector(entity_name=entity_name, **kwargs)
-
-    def query_by_vector(self, entity_name, threshold=0.9, kgdb_name='neo4j', hops=2, num_of_res=5):
-        results = self.query_by_vector_tep(entity_name=entity_name)
-
-        # 筛选出分数高于阈值的实体
-        qualified_entities = [result[0] for result in results[:num_of_res] if result[1] > threshold]
-
-        # 对每个合格的实体进行查询
-        all_query_results = []
-        for entity in qualified_entities:
-            query_result = self.query_specific_entity(entity_name=entity, hops=hops, kgdb_name=kgdb_name)
-            all_query_results.extend(query_result)
-
-        return all_query_results
-
-    def query_by_vector_tep(self, entity_name, kgdb_name='neo4j'):
-        """向量查询"""
+    def query_node(self, entity_name, hops=2, kgdb_name='neo4j', **kwargs):
+        """按名称检索实体并返回其邻域子图（兼容 Phase1 节点结构）。"""
+        keyword = (entity_name or "").strip()
+        if not keyword:
+            return []
+        hops = max(1, min(int(hops or 2), 3))
         self.use_database(kgdb_name)
-        def query(tx, text):
-            embedding = self.get_embedding(text)
-            result = tx.run("""
-            CALL db.index.vector.queryNodes('entityEmbeddings', 10, $embedding)
-            YIELD node AS similarEntity, score
-            RETURN similarEntity.name AS name, score
-            """, embedding=embedding)
+
+        def _find_seeds(tx, kw: str, limit: int = 5):
+            kw_lower = kw.lower()
+            rows = tx.run(
+                """
+                MATCH (n)
+                WHERE (n:Paper OR n:Model OR n:Dataset OR n:Metric OR n:Venue)
+                  AND (
+                    toLower(coalesce(n.name, '')) CONTAINS $kw_lower
+                    OR toLower(coalesce(n.title, '')) CONTAINS $kw_lower
+                    OR toLower(coalesce(n.paper_id, '')) CONTAINS $kw_lower
+                  )
+                RETURN n
+                LIMIT $limit
+                """,
+                kw_lower=kw_lower,
+                limit=limit,
+            )
+            return [row["n"] for row in rows]
+
+        def _expand(tx, seed_ids: list[str], hop_count: int, limit: int = 300):
+            if not seed_ids:
+                return []
+            result = tx.run(
+                f"""
+                MATCH (seed)
+                WHERE elementId(seed) IN $seed_ids
+                MATCH (seed)-[r*1..{hop_count}]-(neighbor)
+                UNWIND r AS rel
+                RETURN DISTINCT startNode(rel) AS n, rel AS r, endNode(rel) AS m
+                LIMIT $limit
+                """,
+                seed_ids=seed_ids,
+                limit=limit,
+            )
             return result.values()
 
         with self.driver.session() as session:
-            return session.execute_read(query, entity_name)
+            seeds = session.execute_read(_find_seeds, keyword)
+            if not seeds:
+                return []
+            seed_ids = [n.element_id for n in seeds]
+            rows = session.execute_read(_expand, seed_ids, hops)
+            if rows:
+                return rows
+            return [(seed, None, None) for seed in seeds]
+
+    def query_by_vector(self, entity_name, threshold=0.9, kgdb_name='neo4j', hops=2, num_of_res=5):
+        """实体检索；无向量索引时回退到名称模糊匹配。"""
+        _ = threshold, num_of_res
+        return self.query_node(entity_name, hops=hops, kgdb_name=kgdb_name)
+
+    def query_by_vector_tep(self, entity_name, kgdb_name='neo4j'):
+        """向量相似实体名；索引不存在时回退到名称 CONTAINS 匹配。"""
+        self.use_database(kgdb_name)
+
+        def _vector_query(tx, text):
+            embedding = self.get_embedding(text)
+            result = tx.run(
+                """
+                CALL db.index.vector.queryNodes('entityEmbeddings', 10, $embedding)
+                YIELD node AS similarEntity, score
+                RETURN similarEntity.name AS name, score
+                """,
+                embedding=embedding,
+            )
+            return result.values()
+
+        def _name_query(tx, kw: str, limit: int = 10):
+            kw_lower = kw.lower()
+            rows = tx.run(
+                """
+                MATCH (n)
+                WHERE (n:Paper OR n:Model OR n:Dataset OR n:Metric OR n:Venue)
+                  AND toLower(coalesce(n.name, '')) CONTAINS $kw_lower
+                RETURN n.name AS name, 1.0 AS score
+                LIMIT $limit
+                """,
+                kw_lower=kw_lower,
+                limit=limit,
+            )
+            return rows.values()
+
+        with self.driver.session() as session:
+            try:
+                return session.execute_read(_vector_query, entity_name)
+            except Exception as exc:
+                if "entityEmbeddings" not in str(exc) and "vector schema index" not in str(exc):
+                    raise
+                logger.warning("Vector index missing, fallback to name search: %s", exc)
+                return session.execute_read(_name_query, entity_name)
 
     def query_specific_entity(self, entity_name, kgdb_name='neo4j', hops=2):
         """查询指定实体三元组信息"""

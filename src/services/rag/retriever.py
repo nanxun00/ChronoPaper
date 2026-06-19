@@ -6,6 +6,16 @@ from typing import Any
 
 logger = setup_logger("server-common")
 
+_SECTION_WEIGHT = {
+    "experiment": 0.12,
+    "result": 0.12,
+    "method": 0.04,
+    "intro": 0.02,
+    "abstract": 0.0,
+    "reference": 0.01,
+    "title": 0.0,
+}
+
 
 def _is_sota_query(q: str) -> bool:
     q = q.lower()
@@ -15,9 +25,15 @@ def _is_sota_query(q: str) -> bool:
     )
 
 
-def _is_citation_query(q: str) -> bool:
-    q = q.lower()
-    return any(k in q for k in ("引用", "cite", "citation", "参考文献", "被引", "引用关系", "引用网络"))
+def _query_needs_hyde(query: str) -> bool:
+    q = (query or "").lower()
+    return any(
+        k in q
+        for k in (
+            "动机", "原理", "创新", "概述", "为什么", "整体流程", "架构",
+            "motivation", "overview", "why", "innovation", "architecture",
+        )
+    )
 
 
 def _strip_entity_suffix(name: str) -> str:
@@ -150,9 +166,14 @@ class Retriever:
         self.config = config
         self.dbm = dbm
         self.model = model
-
-        if self.config.enable_reranker:
-            self.reranker = Reranker(config)
+        self.use_reranker = bool(getattr(config, "enable_reranker", True))
+        self.reranker = None
+        if self.use_reranker:
+            try:
+                self.reranker = Reranker(config)
+            except Exception as exc:
+                logger.warning("Reranker unavailable, disabled: %s", exc)
+                self.use_reranker = False
 
     def retrieval(self, query, history, meta):
 
@@ -168,55 +189,27 @@ class Retriever:
         if not refs or len(refs) == 0:
             return query
 
-        external_parts = []
+        from src.integrations.llm.prompts import knowbase_qa_template
+        from src.services.rag.retrieval_fusion import build_fused_external
 
         kb_res = refs.get("knowledge_base", {}).get("results", [])
-        if kb_res:
-            kb_text = "\n".join(f"{r['id']}: {r['entity']['text']}" for r in kb_res)
-            external_parts.extend(["知识库信息:", kb_text])
-
-        db_res = refs.get("graph_base", {}).get("results", {})
-        graph_chunks = db_res.get("chunks") or []
-        if graph_chunks:
-            chunk_text = "\n".join(
-                f"{c['chunk_id']}: {c.get('chunk_text', '')[:800]}" for c in graph_chunks[:8]
-            )
-            external_parts.extend(["图谱原文证据:", chunk_text])
-
-        if db_res.get("nodes") and len(db_res["nodes"]) > 0:
-            db_text = "\n".join(
-                [
-                    f"{edge.get('source_name')}和{edge.get('target_name')}的关系是{edge.get('type')}"
-                    for edge in db_res.get("edges", [])
-                ]
-            )
-            if db_text:
-                external_parts.extend(["图数据库关系:", db_text])
-
-        chain = db_res.get("chain_summary")
-        if chain:
-            external_parts.extend(["模型时序链:", chain])
-
-        sota_summary = db_res.get("sota_summary")
-        if sota_summary:
-            external_parts.extend(["领域SOTA:", sota_summary])
-
-        cite_summary = db_res.get("cite_summary")
-        if cite_summary:
-            external_parts.extend(["引用脉络:", cite_summary])
-
-        from src.integrations.llm.prompts import knowbase_qa_template
-        if external_parts and len(external_parts) > 0:
-            external = "\n\n".join(external_parts)
+        db_res = refs.get("graph_base", {}).get("results", {}) or {}
+        intent = db_res.get("intent") or refs.get("graph_intent") or ""
+        external = build_fused_external(
+            kb_res,
+            db_res,
+            intent=intent,
+            use_graph=bool(meta.get("use_graph")),
+        )
+        if external:
             query = knowbase_qa_template.format(external=external, query=query)
-
         return query
 
     def query_classification(self, query):
         raise NotImplementedError
 
-    def query_graph(self, query, history, refs):
-        empty = {
+    def _empty_graph_results(self) -> dict:
+        return {
             "results": {
                 "nodes": [],
                 "edges": [],
@@ -224,187 +217,77 @@ class Retriever:
                 "chain_summary": "",
                 "sota_summary": "",
                 "cite_summary": "",
+                "intent": "",
             }
         }
+
+    def _resolve_graph_kb(self, meta: dict) -> tuple[str, str | int]:
+        db_name = meta.get("db_name") or ""
+        kb_row = self.dbm.resolve_kb(db_name) if db_name else None
+        kb_id = kb_row.kb_id if kb_row else self.dbm.get_default_public_kb_id()
+        user_id = meta.get("user_id") or meta.get("owner_user_id") or 0
+        return kb_id, user_id
+
+    def _route_intent_by_entities(self, intent: str, entities: dict[str, list[str]]) -> str:
+        if entities.get("Metric") and intent in {"General_Summary", "Model_Improve"}:
+            return "Metric_Eval"
+        if entities.get("Dataset") and intent in {"General_Summary", "Model_Improve"}:
+            return "Dataset_Use"
+        return intent
+
+    def query_graph(self, query, history, refs):
+        empty = self._empty_graph_results()
         if not refs["meta"].get("use_graph"):
             return empty
         if not self.config.enable_knowledge_graph or not self.dbm.graph_store:
             return empty
 
         meta = refs["meta"]
-        db_name = meta.get("db_name") or ""
-        kb_row = self.dbm.resolve_kb(db_name) if db_name else None
-        if not kb_row:
-            kb_id = self.dbm.get_default_public_kb_id()
-        else:
-            kb_id = kb_row.kb_id
-        user_id = meta.get("user_id") or meta.get("owner_user_id") or 0
-
-        from src.services.graph.entity_normalize import normalize_entity
-
-        entities = refs.get("entities") or []
-        model_names: list[str] = []
-        for entity in entities:
-            name = _strip_entity_suffix((entity or "").strip())
-            if not name:
-                continue
-            std = normalize_entity(name, "Model")
-            if std:
-                model_names.append(std)
-
+        kb_id, user_id = self._resolve_graph_kb(meta)
         store = self.dbm.graph_store
-        if not model_names:
-            for entity in entities:
-                name = _strip_entity_suffix((entity or "").strip())
-                if not name:
-                    continue
-                found = store.find_models_by_keyword(name, kb_id=kb_id, user_id=user_id, limit=3)
-                model_names.extend(found)
-        model_names = list(dict.fromkeys(model_names))[:5]
 
-        graph_data: dict = {"models": [], "edges": [], "chunk_ids": []}
-        if model_names:
-            graph_data = store.query_temporal_chain(
-                model_names,
-                kb_id=kb_id,
-                user_id=user_id,
-                limit=20,
-            )
+        from src.services.graph.graph_query_router import (
+            classify_graph_intent,
+            resolve_typed_entities,
+            run_intent_graph_query,
+        )
 
-        paper_ids: list[str] = []
-        for m in graph_data.get("models") or []:
-            for pid in m.get("paper_ids") or []:
-                if pid and pid not in paper_ids:
-                    paper_ids.append(pid)
+        typed_entities = refs.get("typed_entities") or []
+        if not typed_entities:
+            flat = refs.get("entities") or []
+            typed_entities = [{"raw_name": e, "entity_type": "Model"} for e in flat if (e or "").strip()]
 
-        task_domain = _infer_task_domain(query, entities, store=store, kb_id=kb_id, user_id=user_id)
-        sota_data: dict = {"models": [], "chunk_ids": []}
-        if task_domain and (_is_sota_query(query) or not model_names):
-            sota_data = store.query_sota_models(
-                task_domain=task_domain,
-                kb_id=kb_id,
-                user_id=user_id,
-                limit=10,
-            )
-            for row in sota_data.get("models") or []:
-                pid = row.get("paper_id")
-                if pid and pid not in paper_ids:
-                    paper_ids.append(pid)
+        entities = resolve_typed_entities(
+            typed_entities,
+            store,
+            kb_id=kb_id,
+            user_id=user_id,
+        )
 
-        cite_data: dict = {"papers": [], "edges": [], "chunk_ids": []}
-        if paper_ids or _is_citation_query(query):
-            cite_data = store.query_citation_network(
-                paper_ids,
-                kb_id=kb_id,
-                user_id=user_id,
-                hops=2,
-                limit=30,
-            )
+        flat_names = refs.get("entities") or []
+        task_domain = _infer_task_domain(query, flat_names, store=store, kb_id=kb_id, user_id=user_id)
 
-        if (
-            not graph_data.get("models")
-            and not sota_data.get("models")
-            and not cite_data.get("edges")
-            and not cite_data.get("papers")
-        ):
-            return empty
+        intent = classify_graph_intent(query, self.model)
+        intent = self._route_intent_by_entities(intent, entities)
+        logger.debug("graph intent=%s entities=%s", intent, entities)
 
-        chunk_ids: list[str] = []
-        for src in (graph_data, sota_data, cite_data):
-            for cid in src.get("chunk_ids") or []:
-                if cid not in chunk_ids:
-                    chunk_ids.append(cid)
-        chunks = _fetch_chunks_by_ids(chunk_ids)
+        results = run_intent_graph_query(
+            store,
+            query,
+            intent,
+            entities,
+            kb_id=kb_id,
+            user_id=user_id,
+            task_domain=task_domain,
+            fetch_chunks_fn=_fetch_chunks_by_ids,
+        )
 
-        nodes: list[dict] = []
-        edges: list[dict] = []
-        seen_nodes: set[str] = set()
+        if not results.get("nodes") and not results.get("edges") and not results.get("chunks"):
+            if not results.get("chain_summary") and not results.get("sota_summary") and not results.get("cite_summary"):
+                return empty
 
-        def _add_node(node_id: str, name: str, ntype: str):
-            if not node_id or node_id in seen_nodes:
-                return
-            seen_nodes.add(node_id)
-            nodes.append({"id": node_id, "name": name, "type": ntype})
-
-        chain_parts = []
-        for m in graph_data.get("models") or []:
-            name = m.get("name")
-            if not name:
-                continue
-            _add_node(name, name, "Model")
-            year = m.get("birth_year")
-            if year:
-                chain_parts.append(f"{name}({year})")
-        for e in graph_data.get("edges") or []:
-            src, tgt = e.get("source"), e.get("target")
-            if src:
-                _add_node(src, src, "Model")
-            if tgt:
-                _add_node(tgt, tgt, "Model")
-            edges.append(
-                {
-                    "id": f"{src}-{tgt}",
-                    "type": rel_label_zh(e.get("rel_type") or "IMPROVE_FROM"),
-                    "source_id": src,
-                    "target_id": tgt,
-                    "source_name": src,
-                    "target_name": tgt,
-                }
-            )
-
-        sota_lines: list[str] = []
-        for row in sota_data.get("models") or []:
-            model = row.get("model")
-            if not model:
-                continue
-            _add_node(model, model, "Model")
-            ds = ", ".join(d for d in (row.get("datasets") or []) if d)
-            metrics = ", ".join(x for x in (row.get("metrics") or []) if x)
-            paper_title = row.get("paper_title") or row.get("paper_id") or ""
-            year = row.get("year") or row.get("paper_year")
-            sota_lines.append(
-                f"{model}({year or '?'}) | 论文:{paper_title} | 数据集:{ds or '-'} | 指标:{metrics or '-'}"
-            )
-            pid = row.get("paper_id")
-            if pid:
-                _add_node(pid, paper_title or pid, "Paper")
-
-        for p in cite_data.get("papers") or []:
-            pid = p.get("paper_id")
-            pname = p.get("name") or p.get("title") or pid
-            if pid:
-                _add_node(pid, pname, "Paper")
-
-        cite_lines: list[str] = []
-        for e in cite_data.get("edges") or []:
-            src = e.get("source_name") or e.get("source")
-            tgt = e.get("target_name") or e.get("target")
-            cite_lines.append(f"{src} → 引用 → {tgt}")
-            edges.append(
-                {
-                    "id": f"{e.get('source')}-{e.get('target')}-cite",
-                    "type": rel_label_zh("CITE"),
-                    "source_id": e.get("source"),
-                    "target_id": e.get("target"),
-                    "source_name": src,
-                    "target_name": tgt,
-                }
-            )
-
-        chain_summary = " → ".join(chain_parts) if chain_parts else ""
-        sota_summary = "\n".join(sota_lines) if sota_lines else ""
-        cite_summary = "\n".join(cite_lines[:15]) if cite_lines else ""
-
-        return {
-            "results": {
-                "nodes": nodes,
-                "edges": edges,
-                "chunks": chunks,
-                "chain_summary": chain_summary,
-                "sota_summary": sota_summary,
-                "cite_summary": cite_summary,
-            }
-        }
+        refs["graph_intent"] = intent
+        return {"results": results}
 
     def query_knowledgebase(self, query, history, refs):
         """查询知识库"""
@@ -470,45 +353,79 @@ class Retriever:
         else:
             kb_res = [r for r in all_kb_res if r["distance"] >= distance_threshold]
 
-        if self.config.enable_reranker:
+        if self.use_reranker and self.reranker:
             for r in kb_res:
                 r["rerank_score"] = self.reranker.compute_score([rw_query, r["entity"]["text"]], normalize=True)[0]
             kb_res.sort(key=lambda x: x["rerank_score"], reverse=True)
             kb_res = [_res for _res in kb_res if _res["rerank_score"] > rerank_threshold]
+
+        for r in kb_res:
+            section = ((r.get("entity") or {}).get("section_type") or "").lower()
+            boost = _SECTION_WEIGHT.get(section, 0.0)
+            base = r.get("rerank_score", r.get("distance", 0))
+            r["_sort_score"] = base + boost
+        kb_res.sort(key=lambda x: x["_sort_score"], reverse=True)
 
         kb_res = kb_res[:top_k]
 
         return {"results": kb_res, "all_results": all_kb_res, "rw_query": rw_query, "filter_json": filter_json}
 
     def rewrite_query(self, query, history, refs):
-        """重写查询"""
-        rewrite_query_span = refs["meta"].get("rewriteQuery", "off")
-        if rewrite_query_span == "off":
-            rewritten_query = query
+        """重写查询；抽象/动机类默认 HyDE，其余保持原问句或轻量改写。"""
+        rewrite_query_span = refs["meta"].get("rewriteQuery")
+        if rewrite_query_span is None or rewrite_query_span == "":
+            use_hyde = _query_needs_hyde(query)
+            use_rewrite = use_hyde
+        elif rewrite_query_span == "off":
+            use_hyde = False
+            use_rewrite = False
+        elif rewrite_query_span == "hyde":
+            use_hyde = True
+            use_rewrite = True
         else:
-            from src.integrations.llm.prompts import rewritten_query_prompt_template
+            use_hyde = False
+            use_rewrite = True
 
-            history_query = [entry["content"] for entry in history if entry["role"] == "user"] if history else ""
-            rewritten_query_prompt = rewritten_query_prompt_template.format(history=history_query, query=query)
-            rewritten_query = self.model.predict(rewritten_query_prompt).content
+        if not use_rewrite:
+            return query
 
-        if rewrite_query_span == "hyde":
+        from src.integrations.llm.prompts import rewritten_query_prompt_template
+
+        history_query = [entry["content"] for entry in history if entry["role"] == "user"] if history else ""
+        rewritten_query_prompt = rewritten_query_prompt_template.format(history=history_query, query=query)
+        rewritten_query = self.model.predict(rewritten_query_prompt).content
+
+        if use_hyde:
             hy_doc = self.model.predict(rewritten_query).content
             rewritten_query = f"{rewritten_query} {hy_doc}"
 
         return rewritten_query
 
     def reco_entities(self, query, history, refs):
-        """识别句子中的实体/关键词（供图谱检索）。"""
+        """识别句子中的实体/关键词（供图谱检索），并写入 refs['typed_entities']。"""
         query = refs.get("rewritten_query", query)
 
-        entities = []
+        entities: list[str] = []
+        refs["typed_entities"] = []
         if refs["meta"].get("use_graph"):
-            from src.integrations.llm.prompts import keywords_prompt_template
+            from src.integrations.llm.prompts import graph_typed_entities_prompt_template
+            from src.services.graph.graph_query_router import (
+                classify_graph_intent,
+                parse_typed_entities_raw,
+                resolve_typed_entities,
+                run_intent_graph_query,
+                sanitize_entity_raw,
+            )
 
-            prompt = keywords_prompt_template.format(text=query)
+            prompt = graph_typed_entities_prompt_template.format(text=query)
             raw = self.model.predict(prompt).content
-            entities = [e.strip() for e in raw.split("<->") if e.strip()]
+            typed = []
+            for item in parse_typed_entities_raw(raw):
+                clean = sanitize_entity_raw(item.get("raw_name") or "")
+                if clean:
+                    typed.append({**item, "raw_name": clean})
+            refs["typed_entities"] = typed
+            entities = [t["raw_name"] for t in typed if t.get("raw_name")]
 
         return entities
 
@@ -549,7 +466,15 @@ class Retriever:
         formatted_results = {"nodes": [], "edges": []}
 
         for item in results:
-            relationship = item[1]
+            relationship = item[1] if len(item) > 1 else None
+            if relationship is None:
+                solo = item[0]
+                if solo is not None and hasattr(solo, "element_id"):
+                    node = _build_node_info(solo, _node_display_name(solo))
+                    if node["id"] not in [n["id"] for n in formatted_results["nodes"]]:
+                        formatted_results["nodes"].append(node)
+                continue
+
             source_name = _node_display_name(item[0])
             target_name = _node_display_name(item[2]) if len(item) > 2 else "unknown"
 

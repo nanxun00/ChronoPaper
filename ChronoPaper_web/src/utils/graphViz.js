@@ -176,9 +176,74 @@ export function filterGraphByDomain(graphData, domain) {
 
 export const CITE_REL_TYPES = new Set(['CITE', '引用'])
 
+/** 左下角 Toggle Switch：节点类型过滤项 */
+export const GRAPH_NODE_TYPE_TOGGLES = [
+  { key: 'Paper', label: '论文' },
+  { key: 'Model', label: '模型' },
+  { key: 'Dataset', label: '数据集' },
+  { key: 'Metric', label: '评测指标' },
+  { key: 'Venue', label: '会议期刊' },
+]
+
+/** 左下角 Toggle Switch：关系类型过滤项 */
+export const GRAPH_REL_TYPE_TOGGLES = [
+  { key: 'USE_DATASET', label: '使用数据集' },
+  { key: 'DIFFERENT_WITH', label: '对比差异' },
+  { key: 'EVALUATE_BY', label: '评测关系' },
+  { key: 'IMPROVE_FROM', label: '改进自' },
+  { key: 'EXTEND_FROM', label: '延伸自' },
+  { key: 'PROPOSE', label: '提出' },
+  { key: 'PUBLISH_AT', label: '发表于' },
+]
+
+const REL_LABEL_ZH_TO_KEY = {
+  提出: 'PROPOSE',
+  改进自: 'IMPROVE_FROM',
+  对比差异: 'DIFFERENT_WITH',
+  使用数据集: 'USE_DATASET',
+  评测指标: 'EVALUATE_BY',
+  评测关系: 'EVALUATE_BY',
+  延伸自: 'EXTEND_FROM',
+  发表于: 'PUBLISH_AT',
+  引用: 'CITE',
+  作者: 'WRITTEN_BY',
+  关联: 'RELATION',
+}
+
+export function createDefaultNodeTypeFilters() {
+  return Object.fromEntries(GRAPH_NODE_TYPE_TOGGLES.map(({ key }) => [key, true]))
+}
+
+export function createDefaultRelTypeFilters() {
+  return Object.fromEntries(GRAPH_REL_TYPE_TOGGLES.map(({ key }) => [key, true]))
+}
+
+export function normalizeRelTypeKey(edge) {
+  const raw = String(edge?.rel_type || '').trim()
+  if (raw) return raw.toUpperCase()
+  const label = String(edge?.type || '').trim()
+  return REL_LABEL_ZH_TO_KEY[label] || label.toUpperCase()
+}
+
+export function findFocalNodeIds(graphData, query) {
+  const q = String(query || '').trim().toLowerCase()
+  if (!q) return new Set()
+  const ids = new Set()
+  for (const node of graphData?.nodes || []) {
+    const hay = [
+      node?.name,
+      node?.id,
+      node?.paper_id,
+      node?.title,
+    ].filter(Boolean).join(' ').toLowerCase()
+    if (hay.includes(q)) ids.add(node.id)
+  }
+  return ids
+}
+
 export function isCiteEdge(edge) {
-  const raw = String(edge?.rel_type || '').toUpperCase()
-  if (raw === 'CITE') return true
+  const relKey = normalizeRelTypeKey(edge)
+  if (relKey === 'CITE') return true
   return CITE_REL_TYPES.has(edge?.type)
 }
 
@@ -201,9 +266,82 @@ export function filterGraphData(graphData, options = {}) {
   return { nodes: filteredNodes, edges }
 }
 
+export function filterGraphByRelTypes(graphData, relTypeFilters = {}, options = {}) {
+  const { includeCite = false } = options
+  const enabled = new Set(
+    Object.entries(relTypeFilters)
+      .filter(([, on]) => on)
+      .map(([key]) => key.toUpperCase()),
+  )
+
+  const edges = (graphData?.edges || []).filter((edge) => {
+    if (!includeCite && isCiteEdge(edge)) return false
+    const relKey = normalizeRelTypeKey(edge)
+    if (relKey === 'CITE') return includeCite
+    return enabled.has(relKey)
+  })
+
+  return { nodes: graphData?.nodes || [], edges }
+}
+
+export function filterGraphByNodeTypes(graphData, nodeTypeFilters = {}, focalNodeIds = new Set()) {
+  const focal = focalNodeIds instanceof Set ? focalNodeIds : new Set(focalNodeIds)
+  const enabled = new Set()
+  for (const [type, on] of Object.entries(nodeTypeFilters || {})) {
+    if (on) enabled.add(type)
+  }
+
+  const nodes = (graphData?.nodes || []).filter(
+    (node) => enabled.has(node.type) || focal.has(node.id),
+  )
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  const edges = (graphData?.edges || []).filter(
+    (edge) => nodeIds.has(edge.source_id) && nodeIds.has(edge.target_id),
+  )
+  return { nodes, edges }
+}
+
+export function pruneDisconnectedNodes(graphData, protectedNodeIds = new Set()) {
+  const protectedIds = protectedNodeIds instanceof Set
+    ? protectedNodeIds
+    : new Set(protectedNodeIds)
+  const connected = new Set(protectedIds)
+  for (const edge of graphData?.edges || []) {
+    connected.add(edge.source_id)
+    connected.add(edge.target_id)
+  }
+  const nodes = (graphData?.nodes || []).filter((node) => connected.has(node.id))
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  const edges = (graphData?.edges || []).filter(
+    (edge) => nodeIds.has(edge.source_id) && nodeIds.has(edge.target_id),
+  )
+  return { nodes, edges }
+}
+
 export function applyGraphViewFilters(graphData, options = {}) {
-  const { includeCite = false, domain = '', highlightQuery = '' } = options
-  let data = filterGraphData(graphData, { includeCite })
+  const {
+    includeCite = false,
+    domain = '',
+    highlightQuery = '',
+    nodeTypeFilters = null,
+    relTypeFilters = null,
+    focalNodeIds = null,
+  } = options
+
+  const focal = focalNodeIds instanceof Set
+    ? focalNodeIds
+    : new Set(focalNodeIds || [])
+
+  let data = graphData
+  if (relTypeFilters) {
+    data = filterGraphByRelTypes(data, relTypeFilters, { includeCite })
+  } else {
+    data = filterGraphData(data, { includeCite })
+  }
+  if (nodeTypeFilters) {
+    data = filterGraphByNodeTypes(data, nodeTypeFilters, focal)
+  }
+  data = pruneDisconnectedNodes(data, focal)
   data = filterGraphByDomain(data, domain)
 
   const hasHighlight = Boolean(String(highlightQuery || '').trim())
@@ -220,7 +358,11 @@ export function formatGraphPayload(graphData, options = {}) {
     maxLabelLen = 14,
     colorByDomain = false,
     highlightQuery = '',
+    focalNodeIds = null,
   } = options
+  const focal = focalNodeIds instanceof Set
+    ? focalNodeIds
+    : new Set(focalNodeIds || [])
   const nodes = graphData?.nodes || []
   const edges = graphData?.edges || []
   const hasHighlight = Boolean(String(highlightQuery || '').trim())
@@ -233,6 +375,7 @@ export function formatGraphPayload(graphData, options = {}) {
       const dimmed = hasHighlight && !highlighted
       const taskDomain = node.task_domain || ''
       const fill = resolveNodeFill(node, { colorByDomain })
+      const isFocal = focal.has(node.id)
       return {
         id: node.id,
         data: {
@@ -249,6 +392,7 @@ export function formatGraphPayload(graphData, options = {}) {
           ccfRank: node.ccf_rank || '',
           venueType: node.venue_type || '',
           dimmed,
+          isFocal,
           rawNode: node,
         },
         style: {
@@ -256,8 +400,8 @@ export function formatGraphPayload(graphData, options = {}) {
           fillOpacity: dimmed ? 0.18 : 1,
           strokeOpacity: dimmed ? 0.2 : 1,
           labelOpacity: dimmed ? 0.25 : 1,
-          lineWidth: highlighted && hasHighlight ? 3 : 1,
-          stroke: highlighted && hasHighlight ? '#1677ff' : '#fff',
+          lineWidth: isFocal ? 3 : (highlighted && hasHighlight ? 3 : 1),
+          stroke: isFocal ? '#fa8c16' : (highlighted && hasHighlight ? '#1677ff' : '#fff'),
         },
       }
     }),

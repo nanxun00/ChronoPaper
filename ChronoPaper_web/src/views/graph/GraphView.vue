@@ -48,13 +48,20 @@
           @keydown.enter="onHighlightChange"
         />
         <a-checkbox v-model:checked="state.colorByDomain">领域配色</a-checkbox>
-        <a-checkbox v-model:checked="state.includeCite">显示引用边</a-checkbox>
         <a-checkbox v-model:checked="state.showEdgeLabels">关系标签</a-checkbox>
         <input v-model.number="sampleNodeCount" type="number" min="10" max="200" step="10">
         <a-button @click="loadSampleNodes" :loading="state.fetching">获取节点</a-button>
       </div>
     </div>
-    <div class="main" id="container" ref="container" v-show="graphData.nodes.length > 0"></div>
+    <div class="graph-main">
+      <div class="main" id="container" ref="container" v-show="graphData.nodes.length > 0"></div>
+      <GraphFilterPanel
+        v-show="graphData.nodes.length > 0"
+        v-model:node-types="state.nodeTypeFilters"
+        v-model:rel-types="state.relTypeFilters"
+        v-model:include-cite="state.includeCite"
+      />
+    </div>
     <a-empty v-show="graphData.nodes.length === 0" style="padding: 4rem 0;" />
 
     <GraphNodeDrawer v-model:open="state.drawerOpen" :node="state.drawerNode" />
@@ -83,11 +90,15 @@ import { useConfigStore } from '@/stores'
 import { UploadOutlined } from '@ant-design/icons-vue';
 import HeaderComponent from '@/components/common/HeaderComponent.vue';
 import GraphNodeDrawer from '@/components/graph/GraphNodeDrawer.vue';
+import GraphFilterPanel from '@/components/graph/GraphFilterPanel.vue';
 import {
   applyGraphViewFilters,
   bindPaperNodeClick,
+  createDefaultNodeTypeFilters,
+  createDefaultRelTypeFilters,
   createGraphOptions,
   DEFAULT_SAMPLE_COUNT,
+  findFocalNodeIds,
   formatGraphPayload,
 } from '@/utils/graphViz';
 
@@ -114,6 +125,8 @@ const graphData = reactive({
   edges: [],
 });
 
+const focalNodeIds = ref(new Set())
+
 const state = reactive({
   fetching: false,
   loadingGraphInfo: false,
@@ -129,6 +142,8 @@ const state = reactive({
   colorByDomain: false,
   drawerOpen: false,
   drawerNode: null,
+  nodeTypeFilters: createDefaultNodeTypeFilters(),
+  relTypeFilters: createDefaultRelTypeFilters(),
 })
 
 const domainOptions = computed(() =>
@@ -140,14 +155,22 @@ const applyGraphFilters = () => {
     includeCite: state.includeCite,
     domain: state.selectedDomain || '',
     highlightQuery: state.highlightQuery,
+    nodeTypeFilters: state.nodeTypeFilters,
+    relTypeFilters: state.relTypeFilters,
+    focalNodeIds: focalNodeIds.value,
   })
   graphData.nodes = filtered.nodes
   graphData.edges = filtered.edges
 }
 
-const setGraphResult = (result) => {
+const updateFocalNodes = (query = state.searchInput) => {
+  focalNodeIds.value = findFocalNodeIds(rawGraphData, query)
+}
+
+const setGraphResult = (result, searchQuery = state.searchInput) => {
   rawGraphData.nodes = result?.nodes || []
   rawGraphData.edges = result?.edges || []
+  updateFocalNodes(searchQuery)
   applyGraphFilters()
 }
 
@@ -176,6 +199,7 @@ const getGraphData = () => {
     maxLabelLen: 14,
     colorByDomain: state.colorByDomain,
     highlightQuery: state.highlightQuery,
+    focalNodeIds: focalNodeIds.value,
   })
 }
 
@@ -213,7 +237,7 @@ const addDocumentByFile = () => {
 const loadSampleNodes = () => {
   state.fetching = true
   const num = Math.max(10, Math.min(200, Number(sampleNodeCount.value) || DEFAULT_SAMPLE_COUNT))
-  // 始终拉取核心边 + 引用边，由前端 includeCite 开关控制展示
+  // 始终拉取核心边 + 引用边，由左下角 Toggle 开关控制展示
   fetch(`/api/data/graph/nodes?kgdb_name=neo4j&num=${num}&include_cite=true`)
     .then((res) => {
       console.log(res)
@@ -225,7 +249,7 @@ const loadSampleNodes = () => {
     })
     .then(async (data) => {
       console.log(data)
-      setGraphResult(data.result)
+      setGraphResult(data.result, '')
       console.log(graphData)
       await nextTick()
       randerGraph()
@@ -237,26 +261,19 @@ const loadSampleNodes = () => {
 }
 
 const onSearch = () => {
-  const cur_embed_model = configStore.config.embed_model;
-  if (cur_embed_model !== 'zhipu-embedding-3') {
-    message.error('当前不支持实体检索，请在设置中选择向量模型为 zhipu-embedding-3');
-    return;
-  }
-
-  // 如果检索参数为空，调用 loadSampleNodes 方法
   if (!state.searchInput.trim()) {
     loadSampleNodes();
     return;
   }
 
   state.searchLoading = true;
-  let apiUrl = `/api/data/graph/node/?entity_name=${state.searchInput}`;
+  const apiUrl = `/api/data/graph/node/?entity_name=${encodeURIComponent(state.searchInput.trim())}`;
 
   fetch(apiUrl)
     .then((res) => {
       if (!res.ok) {
-        return res.json().then(errorData => {
-          throw new Error(errorData.message || `查询失败：${res.status} ${res.statusText}`);
+        return res.json().then((errorData) => {
+          throw new Error(errorData.detail || errorData.message || `查询失败：${res.status} ${res.statusText}`);
         });
       }
       return res.json();
@@ -266,7 +283,7 @@ const onSearch = () => {
       if (!data.result || !data.result.nodes || !data.result.edges) {
         throw new Error('返回数据格式不正确');
       }
-      setGraphResult(data.result);
+      setGraphResult(data.result, state.searchInput.trim());
       if (graphData.nodes.length === 0) {
         message.info('未找到相关实体');
       }
@@ -345,6 +362,16 @@ watch(
     await nextTick()
     randerGraph()
   },
+)
+
+watch(
+  () => [state.nodeTypeFilters, state.relTypeFilters],
+  async () => {
+    applyGraphFilters()
+    await nextTick()
+    randerGraph()
+  },
+  { deep: true },
 )
 
 watch(
@@ -581,12 +608,17 @@ const deleteofFile = () => {
 
 #container {
   background: #F7F7F7;
-  margin: 20px 24px;
   border-radius: 16px;
-  width: calc(100% - 48px);
+  width: 100%;
   height: calc(100vh - 200px);
   resize: horizontal;
   overflow: hidden;
+}
+
+.graph-main {
+  position: relative;
+  margin: 20px 24px;
+  width: calc(100% - 48px);
 }
 
 .database-empty {

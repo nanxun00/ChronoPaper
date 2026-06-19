@@ -5,6 +5,8 @@ import json
 import re
 from typing import Any
 
+from collections import Counter
+
 from src.integrations.llm.prompts import graph_extraction_prompt_template
 from src.services.graph.entity_normalize import EntityAliasCache, normalize_entity
 from src.utils.logging_config import setup_logger
@@ -42,6 +44,43 @@ def _format_chunks_for_prompt(chunks: list[dict[str, Any]]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+def format_known_domains_for_prompt(domains: list[str] | None) -> str:
+    items = [str(d).strip() for d in (domains or []) if str(d or "").strip()]
+    if not items:
+        return "（暂无已收录领域，请自行概括简短中文领域名）"
+    return "\n".join(f"- {d}" for d in items)
+
+
+def resolve_task_domain(candidate: str | None, known_domains: list[str] | None) -> str | None:
+    """将 LLM 返回的领域对齐到系统已有领域（精确或语义包含匹配）。"""
+    text = str(candidate or "").strip()
+    if not text:
+        return None
+
+    known = [str(d).strip() for d in (known_domains or []) if str(d or "").strip()]
+    if not known:
+        return text
+
+    if text in known:
+        return text
+
+    text_lower = text.lower()
+    for domain in known:
+        if domain.lower() == text_lower:
+            return domain
+
+    # 优先匹配更长的已知领域（更具体），避免「分割」误匹配
+    matched = [
+        domain
+        for domain in sorted(known, key=len, reverse=True)
+        if domain.lower() in text_lower or text_lower in domain.lower()
+    ]
+    if matched:
+        return matched[0]
+
+    return text
+
+
 def extract_section_batch(
     model,
     *,
@@ -50,6 +89,7 @@ def extract_section_batch(
     abstract: str,
     section_type: str,
     chunks: list[dict[str, Any]],
+    known_task_domains: list[str] | None = None,
 ) -> dict[str, Any]:
     if not chunks:
         return {}
@@ -58,6 +98,7 @@ def extract_section_batch(
         section_type=section_type,
         title=title or "",
         abstract=(abstract or "")[:2000],
+        known_domains=format_known_domains_for_prompt(known_task_domains),
         chunks=_format_chunks_for_prompt(chunks),
     )
     response = model.predict(prompt)
@@ -67,10 +108,15 @@ def extract_section_batch(
     data.setdefault("relations_raw", [])
     data.setdefault("task_domain", None)
     data.setdefault("innovation_summary", "")
+    data["task_domain"] = resolve_task_domain(data.get("task_domain"), known_task_domains)
     return data
 
 
-def merge_extraction_batches(batches: list[dict[str, Any]]) -> dict[str, Any]:
+def merge_extraction_batches(
+    batches: list[dict[str, Any]],
+    *,
+    known_task_domains: list[str] | None = None,
+) -> dict[str, Any]:
     merged: dict[str, Any] = {
         "task_domain": None,
         "innovation_summary": "",
@@ -80,11 +126,12 @@ def merge_extraction_batches(batches: list[dict[str, Any]]) -> dict[str, Any]:
     summaries: list[str] = []
     entity_map: dict[tuple[str, str], dict[str, Any]] = {}
     seen_rels: set[tuple[str, str, str, str]] = set()
+    domain_votes: list[str] = []
 
     for batch in batches:
-        td = batch.get("task_domain")
-        if td and not merged["task_domain"]:
-            merged["task_domain"] = td
+        td = resolve_task_domain(batch.get("task_domain"), known_task_domains)
+        if td:
+            domain_votes.append(td)
         summary = (batch.get("innovation_summary") or "").strip()
         if summary:
             summaries.append(summary)
@@ -122,6 +169,8 @@ def merge_extraction_batches(batches: list[dict[str, Any]]) -> dict[str, Any]:
 
     merged["raw_entities"] = list(entity_map.values())
     merged["innovation_summary"] = "；".join(summaries[:3])
+    if domain_votes:
+        merged["task_domain"] = Counter(domain_votes).most_common(1)[0][0]
     return merged
 
 

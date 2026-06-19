@@ -56,6 +56,35 @@ keywords_prompt_template = """
 <文本>{text}</文本>
 """
 
+graph_typed_entities_prompt_template = """
+从用户问题中抽取图谱检索实体，仅输出合法 JSON，不要解释。
+
+实体类型仅限：Model、Dataset、Metric、Paper
+- Model：方法/网络/模型名（如 TISS-Net、U-Net）
+- Dataset：数据集、成像模态、benchmark（如 BraTS、T1、FLAIR）
+- Metric：评价指标（如 Dice、SSIM、ASSD）
+- Paper：论文标题或简称（若明确提及）
+
+<问题>{text}</问题>
+
+输出格式：
+{{"entities": [{{"raw_name": "TISS-Net", "entity_type": "Model"}}, {{"raw_name": "Dice", "entity_type": "Metric"}}]}}
+若无实体则 {{"entities": []}}
+"""
+
+graph_intent_prompt_template = """
+对用户学术问答做意图分类，只返回以下标签之一（纯文本，无其他内容）：
+
+Model_Improve — 模型改进链、基于前人工作、提出/改进关系
+Dataset_Use — 使用哪些数据集、输入模态、BraTS 等
+Metric_Eval — 评价指标、Dice、SSIM、性能度量
+Compare_SOTA — SOTA、对比、优于基线、与 XX 比较
+Citation_Relate — 引用、参考文献、相关工作
+General_Summary — 原理、动机、创新点、整体架构流程（非上述专项）
+
+<问题>{text}</问题>
+"""
+
 graph_extraction_prompt_template = """
 你是学术论文知识图谱抽取助手。请从给定论文片段中抽取实体与关系，仅输出合法 JSON，不要输出任何解释文字。
 
@@ -63,6 +92,10 @@ graph_extraction_prompt_template = """
 章节类型：{section_type}
 论文标题：{title}
 论文摘要（参考）：{abstract}
+
+<系统已收录领域类型>
+{known_domains}
+</系统已收录领域类型>
 
 <片段列表>
 {chunks}
@@ -73,7 +106,9 @@ graph_extraction_prompt_template = """
 2. 关系类型仅限：PROPOSE、IMPROVE_FROM、DIFFERENT_WITH、USE_DATASET、EVALUATE_BY、EXTEND_FROM。
 3. PROPOSE/USE_DATASET/EVALUATE_BY/EXTEND_FROM 的 source 为当前论文（paper_id）；IMPROVE_FROM/DIFFERENT_WITH 在 Model 之间。
 4. 每条实体/关系必须标注 chunk_id（来自片段列表）。
-5. task_domain 为论文细分领域，必须使用简体中文（如「图像分割」「目标检测」「脑肿瘤分割」），即使论文原文为英文也须译为中文；无法判断则 null。
+5. task_domain 为论文细分领域，必须使用简体中文。
+   - 系统已收录领域见下方列表；若论文属于其中某一类（含同义、近义、上下位关系），必须**原样返回列表中的字符串**，不得改写、拆分或近义替换。
+   - 与列表均明显不匹配时，再新造简短领域名（如「图像分割」）；无法判断则 null。
 6. innovation_summary 为本片段创新点摘要，使用简体中文，无则空字符串。
 7. 每个 raw_entities 条目必须包含 description：用 1～2 句简体中文说明该实体含义与用途，不得留空。
    - Metric：说明衡量对象、含义，若有公式请写出（如 Dice：2|A∩B|/(|A|+|B|)）。

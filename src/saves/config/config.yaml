@@ -1,7 +1,7 @@
 embed_model: zhipu-embedding-3
 enable_knowledge_base: true
 enable_knowledge_graph: true
-enable_reranker: false
+enable_reranker: true
 enable_search_engine: false
 filename: src/saves\config\config.yaml
 model_local_paths:

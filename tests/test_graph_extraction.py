@@ -1,4 +1,8 @@
-from src.services.graph.extraction import merge_extraction_batches, collect_entities_for_upsert
+from src.services.graph.extraction import (
+    collect_entities_for_upsert,
+    merge_extraction_batches,
+    resolve_task_domain,
+)
 
 
 def test_merge_extraction_batches_keeps_longer_description():
@@ -68,3 +72,22 @@ def test_collect_entities_for_upsert_includes_relation_endpoints():
     items = collect_entities_for_upsert("paper:1", merged, relations_std)
     names = {i["std_name"] for i in items}
     assert names == {"tissnet", "t1", "dice"}
+
+
+def test_resolve_task_domain_prefers_known_canonical():
+    known = ["脑肿瘤分割", "图像分割"]
+    assert resolve_task_domain("脑肿瘤分割与图像合成", known) == "脑肿瘤分割"
+    assert resolve_task_domain("图像分割", known) == "图像分割"
+    assert resolve_task_domain("目标检测", known) == "目标检测"
+
+
+def test_merge_extraction_batches_votes_normalized_domain():
+    known = ["脑肿瘤分割"]
+    merged = merge_extraction_batches(
+        [
+            {"task_domain": "脑肿瘤分割与图像合成", "raw_entities": [], "relations_raw": []},
+            {"task_domain": "脑肿瘤分割", "raw_entities": [], "relations_raw": []},
+        ],
+        known_task_domains=known,
+    )
+    assert merged["task_domain"] == "脑肿瘤分割"
