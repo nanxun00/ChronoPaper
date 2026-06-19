@@ -20,7 +20,9 @@ MIN_STANDALONE_LEN = 50
 MIN_NON_CORE_LEN = 80
 
 HIGH_VALUE_SECTIONS = frozenset({"abstract", "intro", "method", "experiment", "conclusion"})
-HIGH_VALUE_BLOCK_TYPES = frozenset({"table", "equation"})
+HIGH_VALUE_BLOCK_TYPES = frozenset({"table", "equation", "figure"})
+TABLE_MAX_CHUNK_LEN = 20_000
+EQUATION_MAX_CHUNK_LEN = 2_000
 
 _SECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
     "abstract": ("abstract", "summary", "摘要"),
@@ -58,6 +60,18 @@ _JOURNAL_HEADER_RE = re.compile(
     r"^(neurocomputing|elsevier|springer|ieee|acm|nature)\b.*(\(\d{4}\)|vol\.|volume)",
     re.I,
 )
+_JOURNAL_BOILERPLATE_RE = re.compile(
+    r"(contents lists available|journal homepage|sciencedirect|elsevier\.com/locate)",
+    re.I,
+)
+_RUNNING_HEADER_RE = re.compile(r"^[.\s]*[A-Z]\.\s+[\w\s,]+\bet al\.\s*$", re.I)
+_RUNNING_HEADER_ET_AL_RE = re.compile(
+    r"^(?:[.\s]*)?(?:[A-Z]\.\s+)?[\w\s,.']+\bet\s+al\.?\s*$",
+    re.I,
+)
+_NUMBERED_HEADER_RE = re.compile(r"^\d+(?:\.\d+)*\.?\s+\S")
+_FIGURE_CAPTION_RE = re.compile(r"^Fig\.?\s*\d+", re.I)
+_TABLE_LABEL_RE = re.compile(r"^Table\s+\d+", re.I)
 _AFFILIATION_RE = re.compile(
     r"(university|school of|department|institute|laboratory|college|hospital|"
     r"center for|academy|ueestc|uestc)",
@@ -113,6 +127,9 @@ def _block_text(block: dict[str, Any]) -> str:
 
 def _map_block_type(block: dict[str, Any]) -> str:
     raw = str(block.get("type") or "text").lower()
+    text = _block_text(block)
+    if _FIGURE_CAPTION_RE.match(text.strip()):
+        return "figure"
     if raw in {"title", "text", "table", "equation", "list", "code", "chart", "image"}:
         if raw == "list":
             return "list"
@@ -139,8 +156,53 @@ def _effective_len(text: str) -> int:
     return len(re.sub(r"\s+", "", text or ""))
 
 
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text or "").strip()
+
+
+def _is_table_fragment(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t.startswith("<table") or "</table>" in t:
+        return True
+    if re.search(r"</tr>|<td[\s>]", t, re.I):
+        return True
+    if re.search(r"±\s*[\d.{\\}]", t) and ("</td>" in t or "<td" in t):
+        return True
+    return False
+
+
+def _is_table_like_block(blk: _PreparedBlock) -> bool:
+    if blk.block_type == "table":
+        return True
+    return _is_table_fragment(blk.text)
+
+
+def _is_figure_caption_text(text: str) -> bool:
+    return bool(_FIGURE_CAPTION_RE.match((text or "").strip()))
+
+
+def _is_boilerplate_short_line(text: str) -> bool:
+    plain = _strip_html(text)
+    compact = _effective_len(plain)
+    if compact < 8:
+        return True
+    if _JOURNAL_BOILERPLATE_RE.search(plain):
+        return True
+    if _RUNNING_HEADER_RE.match(plain):
+        return True
+    if _RUNNING_HEADER_ET_AL_RE.match(plain):
+        return True
+    if compact < 60 and _EMAIL_RE.search(plain) and "corresponding" not in plain.lower():
+        return True
+    if compact < 48 and plain.lower() in {"neurocomputing"}:
+        return True
+    return False
+
+
 def _is_author_line(text: str) -> bool:
-    t = text.strip()
+    t = _strip_html(text)
     if not t or len(t) > 280:
         return False
     if _EMAIL_RE.search(t) or _CORRESPONDING_RE.search(t):
@@ -157,7 +219,7 @@ def _is_author_line(text: str) -> bool:
 
 
 def _is_affiliation_line(text: str) -> bool:
-    t = text.strip()
+    t = _strip_html(text)
     if not t or len(t) > 320:
         return False
     return bool(_AFFILIATION_RE.search(t))
@@ -166,13 +228,13 @@ def _is_affiliation_line(text: str) -> bool:
 def _is_front_matter_line(text: str, block_type: str) -> bool:
     if block_type == "title":
         return True
-    t = text.strip()
-    if not t:
+    plain = _strip_html(text)
+    if not plain:
         return False
-    if _is_author_line(t) or _is_affiliation_line(t):
+    if _is_author_line(text) or _is_affiliation_line(text):
         return True
-    if len(t) <= 180 and (t.count(",") >= 2 or re.search(r"\d{1,2}[,\s]", t[:12])):
-        return _is_author_line(t) or _is_affiliation_line(t)
+    if re.search(r"<sup>", text, re.I) and (_AFFILIATION_RE.search(plain) or "," in plain):
+        return True
     return False
 
 
@@ -180,6 +242,8 @@ def _should_drop_block(text: str, block_type: str, section_type: str) -> bool:
     t = (text or "").strip()
     if not t:
         return True
+    if _is_table_fragment(t):
+        return False
     compact = _effective_len(t)
 
     if _PURE_DIGIT_RE.match(t):
@@ -196,9 +260,13 @@ def _should_drop_block(text: str, block_type: str, section_type: str) -> bool:
         return True
     if _BOILERPLATE_RE.search(t) and section_type != "method":
         return True
-    if _AUTHOR_BIO_RE.search(t) and compact < 420:
+    if _AUTHOR_BIO_RE.search(t) and compact < 420 and section_type != "reference":
+        return True
+    if _is_boilerplate_short_line(t):
         return True
     if compact < MIN_STANDALONE_LEN and _JOURNAL_HEADER_RE.match(t):
+        return True
+    if _RUNNING_HEADER_ET_AL_RE.match(_strip_html(t)):
         return True
     if compact < MIN_STANDALONE_LEN and re.match(r"^https?://", t, re.I):
         return True
@@ -273,10 +341,7 @@ def _merge_front_matter(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
                 if nxt.block_type == "title" and _infer_section_from_title(nxt.text):
                     break
                 if not _is_front_matter_line(nxt.text, nxt.block_type):
-                    if _effective_len(nxt.text) > 220:
-                        break
-                    if not (_is_author_line(nxt.text) or _is_affiliation_line(nxt.text)):
-                        break
+                    break
                 parts.append(nxt.text)
                 j += 1
 
@@ -299,6 +364,19 @@ def _merge_front_matter(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
     return out
 
 
+def _is_section_header_text(text: str, block_type: str) -> bool:
+    t = (text or "").strip()
+    if not t or len(t) > 80:
+        return False
+    if block_type == "title":
+        return True
+    if _NUMBERED_HEADER_RE.match(t):
+        return True
+    if len(t) < 60 and re.match(r"^\d*\.?\s*\w", t):
+        return True
+    return False
+
+
 def _merge_section_headers(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
     """将 Abstract/Introduction 等短标题与紧随其后的正文合并。"""
     if not blocks:
@@ -308,18 +386,142 @@ def _merge_section_headers(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]
     i = 0
     while i < len(blocks):
         blk = blocks[i]
-        if (
-            blk.block_type == "title"
-            and blk.section_type in HIGH_VALUE_SECTIONS
-            and len(blk.text.strip()) < 48
-            and i + 1 < len(blocks)
-            and blocks[i + 1].section_type == blk.section_type
-        ):
-            nxt = blocks[i + 1]
+        if not _is_section_header_text(blk.text, blk.block_type):
+            out.append(blk)
+            i += 1
+            continue
+
+        parts = [blk.text.strip()]
+        page_num = blk.page_num
+        bbox = blk.bbox
+        section = blk.section_type
+        j = i + 1
+        while j < len(blocks):
+            nxt = blocks[j]
+            if nxt.section_type not in {section, "text"}:
+                break
+            if _is_section_header_text(nxt.text, nxt.block_type):
+                parts.append(nxt.text.strip())
+                j += 1
+                continue
+            if nxt.block_type in {"text", "title"} and not _is_table_like_block(nxt):
+                parts.append(nxt.text.strip())
+                j += 1
+            break
+
+        if len(parts) > 1:
             out.append(
                 _PreparedBlock(
-                    f"{blk.text.strip()}\n{nxt.text.strip()}".strip(),
-                    block_type=nxt.block_type,
+                    "\n".join(p for p in parts if p),
+                    block_type="text",
+                    section_type=section,
+                    page_num=page_num,
+                    bbox=bbox,
+                )
+            )
+            i = j
+            continue
+        out.append(blk)
+        i += 1
+    return out
+
+
+def _merge_consecutive_tables(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    """整张表格（含 MinerU 拆出的 HTML 行片段）合并为一个 chunk。"""
+    if not blocks:
+        return blocks
+
+    out: list[_PreparedBlock] = []
+    i = 0
+    while i < len(blocks):
+        blk = blocks[i]
+        if not _is_table_like_block(blk):
+            out.append(blk)
+            i += 1
+            continue
+
+        parts = [blk.text.strip()]
+        page_num = blk.page_num
+        section = blk.section_type
+        bbox = blk.bbox
+        j = i + 1
+        while j < len(blocks):
+            nxt = blocks[j]
+            if _is_table_like_block(nxt):
+                parts.append(nxt.text.strip())
+                j += 1
+                continue
+            if (
+                nxt.block_type == "text"
+                and nxt.section_type == section
+                and _TABLE_LABEL_RE.match(nxt.text.strip())
+                and len(nxt.text) < 700
+            ):
+                parts.append(nxt.text.strip())
+                j += 1
+                continue
+            break
+
+        out.append(
+            _PreparedBlock(
+                "\n".join(p for p in parts if p),
+                block_type="table",
+                section_type=section,
+                page_num=page_num,
+                bbox=bbox,
+            )
+        )
+        i = j
+    return out
+
+
+def _merge_figure_captions(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    """图题与前后紧邻正文合并，避免 Fig.N 单独成块。"""
+    if not blocks:
+        return blocks
+
+    out: list[_PreparedBlock] = []
+    i = 0
+    while i < len(blocks):
+        blk = blocks[i]
+        is_caption = blk.block_type == "figure" or (
+            blk.block_type in {"text", "table"} and _is_figure_caption_text(blk.text) and len(blk.text) < 320
+        )
+        if is_caption:
+            caption = blk.text.strip()
+            if out and out[-1].section_type == blk.section_type and out[-1].block_type in {"text", "table", "figure"}:
+                prev = out[-1]
+                prev.text = f"{prev.text}\n{caption}".strip()
+                if prev.block_type == "table" and _is_figure_caption_text(caption):
+                    prev.block_type = "text"
+                i += 1
+                continue
+            if i + 1 < len(blocks) and blocks[i + 1].section_type == blk.section_type:
+                nxt = blocks[i + 1]
+                if nxt.block_type == "text" and not _is_figure_caption_text(nxt.text):
+                    out.append(
+                        _PreparedBlock(
+                            f"{caption}\n{nxt.text.strip()}".strip(),
+                            block_type="text",
+                            section_type=blk.section_type,
+                            page_num=blk.page_num,
+                            bbox=blk.bbox,
+                        )
+                    )
+                    i += 2
+                    continue
+        elif (
+            blk.block_type == "text"
+            and re.search(r"\bFig\.?\s*\d+", blk.text, re.I)
+            and not _is_figure_caption_text(blk.text)
+            and i + 1 < len(blocks)
+            and blocks[i + 1].section_type == blk.section_type
+            and _is_figure_caption_text(blocks[i + 1].text)
+        ):
+            out.append(
+                _PreparedBlock(
+                    f"{blk.text.strip()}\n{blocks[i + 1].text.strip()}".strip(),
+                    block_type="text",
                     section_type=blk.section_type,
                     page_num=blk.page_num,
                     bbox=blk.bbox,
@@ -332,12 +534,164 @@ def _merge_section_headers(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]
     return out
 
 
+def _merge_equation_context(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    """公式与前后紧邻说明合并为方法类正文块。"""
+    if not blocks:
+        return blocks
+
+    out: list[_PreparedBlock] = []
+    i = 0
+    while i < len(blocks):
+        blk = blocks[i]
+        if blk.block_type != "equation":
+            out.append(blk)
+            i += 1
+            continue
+
+        parts: list[str] = []
+        if (
+            out
+            and out[-1].block_type == "text"
+            and out[-1].section_type in {"method", "experiment", "intro"}
+            and len(out[-1].text) < 900
+        ):
+            parts.append(out.pop().text)
+        parts.append(blk.text.strip())
+        j = i + 1
+        if (
+            j < len(blocks)
+            and blocks[j].block_type == "text"
+            and blocks[j].section_type == blk.section_type
+            and len(blocks[j].text) < 500
+            and not _is_table_like_block(blocks[j])
+        ):
+            parts.append(blocks[j].text.strip())
+            j += 1
+
+        out.append(
+            _PreparedBlock(
+                "\n\n".join(p for p in parts if p),
+                block_type="text",
+                section_type=blk.section_type,
+                page_num=blk.page_num,
+                bbox=blk.bbox,
+            )
+        )
+        i = j
+    return out
+
+
+def _merge_author_bios(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    """参考文献区作者简介合并为一个大块。"""
+    if not blocks:
+        return blocks
+
+    out: list[_PreparedBlock] = []
+    i = 0
+    while i < len(blocks):
+        blk = blocks[i]
+        if blk.section_type == "reference" and (
+            _AUTHOR_BIO_RE.search(blk.text) or (len(blk.text) < 320 and re.search(r"received (his|her)", blk.text, re.I))
+        ):
+            parts = ["作者简介"]
+            page_num = blk.page_num
+            bbox = blk.bbox
+            j = i
+            while j < len(blocks) and blocks[j].section_type == "reference":
+                cur = blocks[j]
+                if _AUTHOR_BIO_RE.search(cur.text) or (
+                    len(cur.text) < 360
+                    and re.search(r"(professor|researcher|ph\.?d|university|received)", cur.text, re.I)
+                ):
+                    parts.append(cur.text.strip())
+                    j += 1
+                    continue
+                if j == i:
+                    break
+                break
+            if len(parts) > 1:
+                out.append(
+                    _PreparedBlock(
+                        "\n".join(parts),
+                        block_type="text",
+                        section_type="reference",
+                        page_num=page_num,
+                        bbox=bbox,
+                    )
+                )
+                i = j
+                continue
+        out.append(blk)
+        i += 1
+    return out
+
+
+def _merge_adjacent_short_lines(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    """短碎行并入相邻正文（页眉页脚、单行图注等）。"""
+    if not blocks:
+        return blocks
+
+    out: list[_PreparedBlock] = []
+    for blk in blocks:
+        if _is_core_block(blk) or blk.block_type in {"table", "figure"}:
+            out.append(blk)
+            continue
+        if _effective_len(blk.text) >= MIN_NON_CORE_LEN:
+            out.append(blk)
+            continue
+        if _is_boilerplate_short_line(blk.text):
+            if out and out[-1].block_type == "text":
+                continue
+            continue
+        if out and out[-1].section_type == blk.section_type:
+            out[-1].text = f"{out[-1].text}\n{blk.text.strip()}".strip()
+            continue
+        if out:
+            out[-1].text = f"{out[-1].text}\n{blk.text.strip()}".strip()
+            continue
+        out.append(blk)
+    return out
+
+
 def _is_core_block(blk: _PreparedBlock) -> bool:
     if blk.section_type in HIGH_VALUE_SECTIONS or blk.section_type == "title":
         return True
     if blk.block_type in HIGH_VALUE_BLOCK_TYPES:
         return True
     return False
+
+
+def _merge_orphan_section_headers(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    """极短编号标题（如 3. Methods）并入下一块。"""
+    if not blocks:
+        return blocks
+
+    out: list[_PreparedBlock] = []
+    i = 0
+    while i < len(blocks):
+        blk = blocks[i]
+        if (
+            _NUMBERED_HEADER_RE.match(blk.text.strip())
+            and len(blk.text.strip()) < 36
+            and i + 1 < len(blocks)
+            and not _is_table_like_block(blocks[i + 1])
+        ):
+            nxt = blocks[i + 1]
+            merged_type = "text" if nxt.block_type in {"text", "title", "equation"} else nxt.block_type
+            out.append(
+                _PreparedBlock(
+                    f"{blk.text.strip()}\n{nxt.text.strip()}".strip(),
+                    block_type=merged_type,
+                    section_type=blk.section_type,
+                    page_num=blk.page_num,
+                    bbox=blk.bbox,
+                )
+            )
+            i += 2
+            continue
+        out.append(blk)
+        i += 1
+    return out
 
 
 def _merge_short_non_core(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
@@ -440,7 +794,13 @@ def _emit_chunks(
             "section_type": blk.section_type,
             "block_type": blk.block_type,
         }
-        split_threshold = LONG_SPLIT_THRESHOLD if _is_core_block(blk) else chunk_size
+        split_threshold = chunk_size
+        if blk.block_type == "table":
+            split_threshold = TABLE_MAX_CHUNK_LEN
+        elif blk.block_type == "equation":
+            split_threshold = EQUATION_MAX_CHUNK_LEN
+        elif _is_core_block(blk):
+            split_threshold = LONG_SPLIT_THRESHOLD
         chunks.extend(
             _split_long_text(
                 blk.text,
@@ -472,6 +832,12 @@ def chunk_paper_content_list(
     prepared = _prepare_blocks(content_list)
     prepared = _merge_front_matter(prepared)
     prepared = _merge_section_headers(prepared)
+    prepared = _merge_consecutive_tables(prepared)
+    prepared = _merge_figure_captions(prepared)
+    prepared = _merge_equation_context(prepared)
+    prepared = _merge_author_bios(prepared)
+    prepared = _merge_adjacent_short_lines(prepared)
+    prepared = _merge_orphan_section_headers(prepared)
     prepared = _merge_short_non_core(prepared)
     return _emit_chunks(
         prepared,

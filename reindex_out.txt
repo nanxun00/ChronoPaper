@@ -1,0 +1,106 @@
+﻿E:\conda_config\envs\chronopaper\python.exe : E:\conda_config\envs\chronopaper\Lib\site-packages\requests\__init__.py:1
+13: RequestsDependencyWarning: urllib3 (2.7.0) or chardet (7.4.3)/charset_normalizer (3.4.7) doesn't match a supported 
+version!
+所在位置 C:\Users\25484\AppData\Local\Temp\ps-script-d6d7f4e5-2d30-4558-afe4-19f5e1ba7d53.ps1:116 字符: 59
++ ... NG="utf-8"; E:\conda_config\envs\chronopaper\python.exe scripts/reind ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (E:\conda_config...ported version!:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  warnings.warn(
+INFO:ChronoPaper:Selecting model from deepseek with deepseek-chat
+INFO:EmbeddingModel:Zhipu Embedding model loaded
+INFO:KnowledgeBase:Milvus ready collection=paper_text_chunk dim=2048 db=default
+INFO:server-graphbase:Connecting to Neo4j at bolt://101.132.70.68:8043 (db=neo4j)
+INFO:server-graphbase:Connected to Neo4j at bolt://101.132.70.68:8043, {'database_name': 'neo4j', 'entity_count': 112, 
+'relationship_count': 109, 'triples_count': 109, 'labels': ['Paper', 'Model', 'Dataset', 'Metric', 'Venue'], 'status': 
+'open'}
+INFO:EmbeddingModel:Creating new state for process eb042273
+INFO:EmbeddingModel:Encoding 0 to 20 with 91 messages
+INFO:EmbeddingModel:Encoding 20 to 40 with 91 messages
+INFO:EmbeddingModel:Encoding 40 to 60 with 91 messages
+INFO:EmbeddingModel:Encoding 60 to 80 with 91 messages
+INFO:EmbeddingModel:Encoding 80 to 100 with 91 messages
+=== 閲嶆柊鍏ュ簱 ===
+{
+  "status": "ok",
+  "chunks_indexed": 91,
+  "after": {
+    "total": 91,
+    "short_lt_80": 1,
+    "by_block_type": {
+      "title": 2,
+      "text": 77,
+      "table": 4,
+      "list": 8
+    },
+    "by_section_type": {
+      "title": 1,
+      "text": 1,
+      "intro": 13,
+      "method": 42,
+      "experiment": 5,
+      "conclusion": 6,
+      "reference": 23
+    },
+    "samples": [
+      {
+        "chunk_id": "318600021798912",
+        "block_type": "title",
+        "section_type": "title",
+        "len": 1400,
+        "preview": "TISS-net: Brain tumor image synthesis and segmentation using cascaded dual-task networks and error-prediction consistenc"
+      },
+      {
+        "chunk_id": "318600021803008",
+        "block_type": "text",
+        "section_type": "text",
+        "len": 1760,
+        "preview": "Accurate segmentation of brain tumors from medical images is important for diagnosis and treatment planning, and it ofte"
+      },
+      {
+        "chunk_id": "318600021803009",
+        "block_type": "text",
+        "section_type": "intro",
+        "len": 825,
+        "preview": "1. Introduction\nBrain and other Central Nervous System (CNS) tumors are one of the most common types of cancers, with an"
+      },
+      {
+        "chunk_id": "318600021803010",
+        "block_type": "text",
+        "section_type": "intro",
+        "len": 1282,
+        "preview": "Currently, Magnetic Resonance Imaging (MRI) is an important tool for diagnosis and treatment management of brain tumors "
+      },
+      {
+        "chunk_id": "318600021803011",
+        "block_type": "text",
+        "section_type": "intro",
+        "len": 149,
+        "preview": "鈬?Corresponding author at: School of Mechanical and Electrical Engineering, University of Electronic Science and Technol"
+      },
+      {
+        "chunk_id": "318600021807104",
+        "block_type": "text",
+        "section_type": "intro",
+        "len": 1115,
+        "preview": "In clinical practice, since obtaining multiple sequences is timeconsuming and expensive, some modalities may be missing "
+      },
+      {
+        "chunk_id": "318600021807105",
+        "block_type": "text",
+        "section_type": "intro",
+        "len": 1426,
+        "preview": "To tackle these problems, synthesizing a missing target modality from one or more available modalities for the downstrea"
+      },
+      {
+        "chunk_id": "318600021807106",
+        "block_type": "text",
+        "section_type": "intro",
+        "len": 799,
+        "preview": "To overcome this issue, end-to-end medical image synthesis and segmentation methods have been proposed recently [36]. Ho"
+      }
+    ]
+  },
+  "graph": null
+}

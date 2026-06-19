@@ -86,6 +86,36 @@ def soft_delete_kb_chunks(session: Session, kb: KnowledgeBase, kb_id: str) -> No
     kb.delete_by_kb_id(kb_id)
 
 
+def soft_delete_paper_chunks(
+    session: Session,
+    kb: KnowledgeBase,
+    *,
+    kb_id: str,
+    paper_id: str,
+) -> int:
+    """软删除指定论文在知识库中的分块，并清理 Milvus 向量。"""
+    rows = (
+        session.query(TextChunk.chunk_id)
+        .filter(
+            TextChunk.kb_id == kb_id,
+            TextChunk.paper_id == paper_id,
+            TextChunk.is_deleted == 0,
+        )
+        .all()
+    )
+    chunk_ids = [r[0] for r in rows]
+    if not chunk_ids:
+        return 0
+    session.query(TextChunk).filter(
+        TextChunk.kb_id == kb_id,
+        TextChunk.paper_id == paper_id,
+    ).update({"is_deleted": 1})
+    session.commit()
+    kb.delete_by_chunk_ids(chunk_ids)
+    logger.info("soft deleted paper chunks paper=%s kb=%s count=%s", paper_id, kb_id, len(chunk_ids))
+    return len(chunk_ids)
+
+
 def fetch_chunks_by_ids(session: Session, chunk_ids: list[str]) -> list[TextChunk]:
     if not chunk_ids:
         return []

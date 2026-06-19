@@ -55,6 +55,12 @@ def _sample_tissnet_blocks() -> list[dict]:
         },
         {
             "type": "text",
+            "text": "References",
+            "text_level": 1,
+            "page_idx": 6,
+        },
+        {
+            "type": "text",
             "text": "Jian Wang received his Ph.D. from UESTC and is currently a professor at the same school.",
             "page_idx": 6,
         },
@@ -70,11 +76,55 @@ def test_drop_noise_blocks():
         "text",
         "text",
     )
-    assert _should_drop_block(
+    assert _should_drop_block("Wu, D. Guo, L. Wang et al.", "text", "text")
+    assert not _should_drop_block(
         "Jian Wang received his Ph.D. from UESTC and is currently a professor at the same school.",
         "text",
         "reference",
     )
+
+
+def test_merge_author_bios_in_reference():
+    rows = chunk_paper_content_list(
+        _sample_tissnet_blocks(),
+        kb_id="test_kb",
+        paper_id="doi:test",
+    )
+    bio_chunks = [r for r in rows if "作者简介" in r["chunk_text"] or "received his Ph.D" in r["chunk_text"]]
+    assert len(bio_chunks) == 1
+    assert "作者简介" in bio_chunks[0]["chunk_text"]
+
+
+def test_table_stays_single_chunk():
+    blocks = [
+        {"type": "table", "table_body": "<table><tr><td>A</td><td>B</td></tr>", "page_idx": 2},
+        {"type": "text", "text": "<tr><td>1</td><td>2</td></tr>", "page_idx": 2},
+        {"type": "text", "text": "</table>", "page_idx": 2},
+    ]
+    rows = chunk_paper_content_list(blocks, kb_id="t", paper_id="doi:test")
+    table_rows = [r for r in rows if r["block_type"] == "table"]
+    assert len(table_rows) == 1
+    assert "<table>" in table_rows[0]["chunk_text"]
+    assert "</table>" in table_rows[0]["chunk_text"] or "2</td>" in table_rows[0]["chunk_text"]
+
+
+def test_merge_fig_caption_with_body():
+    blocks = [
+        {
+            "type": "text",
+            "text": "Overall synthesis loss is shown in Fig. 4 for illustration.",
+            "page_idx": 3,
+        },
+        {
+            "type": "text",
+            "text": "Fig. 4. Illustration of our proposed synthesis loss.",
+            "page_idx": 3,
+        },
+    ]
+    rows = chunk_paper_content_list(blocks, kb_id="t", paper_id="doi:test")
+    assert len(rows) == 1
+    assert "Fig. 4" in rows[0]["chunk_text"]
+    assert "Overall synthesis" in rows[0]["chunk_text"]
 
 
 def test_merge_title_authors_affiliations():
