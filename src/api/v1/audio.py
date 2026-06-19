@@ -1,77 +1,54 @@
-import json
+import asyncio
 import os
 import shutil
-from fastapi import FastAPI, File, UploadFile, APIRouter, Depends
-from dashscope import MultiModalConversation
-import dashscope
+from pathlib import Path
 
-from src.api.deps import get_current_user
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
+from src.integrations.xfyun_asr import transcribe_audio_file
 from src.settings import get_settings
 from src.utils import setup_logger
 
 _settings = get_settings()
-dashscope.api_key = _settings.dashscope_api_key
-
-# 初始化日志
 logger = setup_logger("server-audio")
 
-# 设置文件上传的目录
-# UPLOAD_DIR = r"E:\TYUT\ipbd工作\Private-domain-model-material\src\saves\audio"
-UPLOAD_DIR = r"src/saves/audio"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+UPLOAD_DIR = Path("src/saves/audio")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# 设置 DashScope API Key（从 .env 读取）
-
-# 定义路由
 audio = APIRouter(prefix="/audio")
 router = audio
 
+
+def _save_upload(file: UploadFile) -> Path:
+    suffix = Path(file.filename or "recording.webm").suffix or ".webm"
+    filename = f"{os.urandom(8).hex()}{suffix}"
+    file_path = UPLOAD_DIR / filename
+    with file_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    return file_path
+
+
 @audio.post("/upload")
-async def create_audio_file(file: UploadFile = File(...),
-                            ):
-    def load_file(file):
-        # 生成文件名
-        filename = f"{file.filename}_{os.urandom(8).hex()}.wav"
-        file_path = os.path.join(UPLOAD_DIR, filename)  # 使用 os.path.join 拼接路径
+async def create_audio_file(file: UploadFile = File(...)):
+    if not _settings.xfyun_app_id or not _settings.xfyun_api_key or not _settings.xfyun_api_secret:
+        raise HTTPException(status_code=500, detail="科大讯飞语音识别未配置，请在 .env 中设置 XFYUN_APP_ID / XFYUN_API_KEY / XFYUN_API_SECRET")
 
-        # 保存文件
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+    file_path = _save_upload(file)
+    try:
+        text = await asyncio.to_thread(
+            transcribe_audio_file,
+            file_path,
+            app_id=_settings.xfyun_app_id,
+            api_key=_settings.xfyun_api_key,
+            api_secret=_settings.xfyun_api_secret,
+        )
+    except ValueError as exc:
+        logger.warning("Audio validation failed for %s: %s", file_path, exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("XFyun ASR failed for %s", file_path)
+        raise HTTPException(status_code=502, detail=f"语音识别失败: {exc}") from exc
+    finally:
+        file_path.unlink(missing_ok=True)
 
-        return {"filename": filename, "file_path": file_path}
-
-    def convert(file_path):
-        # 确保路径格式正确
-        full_path = r"file://" + file_path.replace("\\", "/")  # 替换反斜杠为正斜杠
-        messages = [
-            {
-                "role": "user",
-                "content": [{"audio": full_path}],
-            }
-        ]
-
-        response = MultiModalConversation.call(model="qwen-audio-asr", messages=messages)
-        response_dict = json.loads(str(response))
-
-        if response_dict.get("output") and response_dict["output"].get("choices"):
-            choices = response_dict["output"]["choices"]
-            if choices and choices[0].get("message") and choices[0]["message"].get("content"):
-                content = choices[0]["message"]["content"]
-                if content and content[0].get("text"):
-                    text_content = content[0]["text"]
-                    return text_content
-                else:
-                    logger.error("No text content found in response.")
-            else:
-                logger.error("No choices or message found in response.")
-        else:
-            logger.error("No output found in response.")
-
-        return None
-
-    # 加载文件并获取文件路径
-    file_info = load_file(file)
-    file_path = file_info.get("file_path")
-
-    # 调用转换函数
-    return convert(file_path)
+    return text or ""

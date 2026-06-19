@@ -235,6 +235,7 @@ import { useConfigStore, useUserStore } from '@/stores'
 import { message } from 'ant-design-vue'
 import RefsComponent from '@/components/chat/RefsComponent.vue'
 import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
+import { audioBlobToWav16k } from '@/utils/audioPcm'
 import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
@@ -899,6 +900,9 @@ const handleerror = () => {
 }
 
 // 语音识别功能
+const RECORDING_MIME = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+  ? 'audio/webm;codecs=opus'
+  : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/wav')
 // 是否处于正在录音的状态
 let isRecording = ref(false);
 // 用于录音
@@ -915,8 +919,9 @@ async function toggleRecording() {
     try {
       // 请求麦克风权限并获取音频流
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder.value = new MediaRecorder(stream);
-      mediaRecorder.value.start(); // 开始录音
+      mediaRecorder.value = new MediaRecorder(stream, { mimeType: RECORDING_MIME });
+      audioChunks.value = [];
+      mediaRecorder.value.start(250);
       isRecording.value = true; // 更新录音状态为 true
 
       // 添加“开始录音”消息到对话框
@@ -945,7 +950,10 @@ async function toggleRecording() {
 function stopRecording() {
   if (isRecording.value) {
     if (mediaRecorder.value) {
-      mediaRecorder.value.stop(); // 停止录音
+      if (typeof mediaRecorder.value.requestData === 'function') {
+        mediaRecorder.value.requestData();
+      }
+      mediaRecorder.value.stop();
       const stream = mediaRecorder.value.stream;
       if (stream) {
         stream.getTracks().forEach(track => track.stop()); // 停止音频流
@@ -971,33 +979,41 @@ async function processRecording() {
     return;
   }
 
-  // 合并音频数据块为一个完整的音频文件
-  const audioBlob = new Blob(audioChunks.value, { type: "audio/wav" });
-  const file = new File([audioBlob], "recording.wav", { type: "audio/wav" });
-  const formData = new FormData();
-  formData.append("file", file);
-
   try {
-    const response = await fetch("/api/audio/upload", {
-      method: "POST",
+    const recordedBlob = new Blob(audioChunks.value, { type: RECORDING_MIME });
+    const wavBlob = await audioBlobToWav16k(recordedBlob);
+    const file = new File([wavBlob], 'recording.wav', { type: 'audio/wav' });
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch('/api/audio/upload', {
+      method: 'POST',
+      headers: uploadHeaders.value,
       body: formData,
     });
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errBody = await response.json().catch(() => ({}))
+      const detail = typeof errBody === 'string' ? errBody : (errBody?.detail || '')
+      throw new Error(detail || `HTTP error! status: ${response.status}`)
     }
-    const data = await response.json(); // 获取识别结果
+    const data = await response.json()
+    const text = typeof data === 'string' ? data : (data?.text || data?.detail || '')
 
-    // 更新输入框内容
-    conv.value.inputText += data;
-
-    // 如果音频处理成功，删除对话框中的“音频处理中...”消息
     const messages = conv.value.messages;
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage && lastMessage.text === "音频处理中...") {
-      messages.pop(); // 删除最后一条消息
+    if (lastMessage && lastMessage.text === '音频处理中...') {
+      messages.pop();
     }
+
+    if (!text) {
+      message.warning('未识别到语音内容，请靠近麦克风并说话至少 1 秒');
+      return
+    }
+
+    conv.value.inputText += text
   } catch (error) {
-    console.error("Upload failed:", error.message);
+    console.error('Upload failed:', error.message);
+    message.error(error.message || '语音识别失败');
 
     // 如果音频处理失败，更新对话框中的消息为“音频处理失败”
     const messages = conv.value.messages;
