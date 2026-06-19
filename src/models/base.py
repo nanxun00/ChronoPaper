@@ -291,6 +291,14 @@ def init_db() -> None:
         log.warning("Could not seed admin user: %s", exc)
 
     try:
+        from src.services.graph.entity_normalize import EntityAliasCache
+
+        EntityAliasCache.get().reload()
+        log.info("Entity alias cache loaded")
+    except Exception as exc:
+        log.warning("Could not load entity alias cache: %s", exc)
+
+    try:
         from src.config import Config
         from src.services.rag.database import DataBaseManager
 

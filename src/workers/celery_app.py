@@ -11,7 +11,7 @@ celery_app = Celery(
     "chronopaper",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["src.workers.index_tasks"],
+    include=["src.workers.index_tasks", "src.workers.graph_tasks"],
 )
 
 celery_app.conf.update(

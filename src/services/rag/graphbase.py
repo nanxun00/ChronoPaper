@@ -26,17 +26,29 @@ class GraphDatabase:
 
     def start(self):
         neo4j_cfg = self.config.neo4j or {}
-        uri = neo4j_cfg.get("uri", "neo4j://localhost:7687")
+        uri = neo4j_cfg.get("uri", "bolt://localhost:7687")
         username = neo4j_cfg.get("username", "neo4j")
         password = neo4j_cfg.get("password", "")
-        logger.info(f"Connecting to Neo4j at {uri}/{self.kgdb_name}")
+        connect_uri = self._driver_uri(uri)
+        logger.info("Connecting to Neo4j at %s (db=%s)", connect_uri, self.kgdb_name)
         try:
-            self.driver = GD.driver(f"{uri}/neo4j", auth=(username, password))
+            self.driver = GD.driver(connect_uri, auth=(username, password))
             self.status = "open"
-            logger.info(f"Connected to Neo4j at {uri}/neo4j, {self.get_database_info()}")
+            logger.info("Connected to Neo4j at %s, %s", connect_uri, self.get_database_info())
         except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}, {uri}, neo4j, {username}")
+            logger.error("Failed to connect to Neo4j: %s, %s, %s", e, connect_uri, username)
             self.config.enable_knowledge_graph = False
+
+    @staticmethod
+    def _driver_uri(uri: str) -> str:
+        """单实例 Community 用 bolt://；neo4j://host:port 自动转为 bolt 避免 routing 错误。"""
+        uri = (uri or "bolt://localhost:7687").strip().rstrip("/")
+        if uri.startswith("bolt://"):
+            return uri
+        if uri.startswith("neo4j://"):
+            host_port = uri.replace("neo4j://", "", 1).split("/", 1)[0]
+            return f"bolt://{host_port}"
+        return uri
 
 
     def close(self):

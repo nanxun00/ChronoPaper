@@ -35,15 +35,20 @@ class KnowledgeBaseService:
         self.embed_model = get_embedding_model(config)
         self.knowledge_base = KnowledgeBase(config, self.embed_model) if config.enable_knowledge_base else None
         self.graph_base = None
+        self.graph_store = None
         if config.enable_knowledge_base and config.enable_knowledge_graph:
             try:
                 from src.services.rag.graphbase import GraphDatabase
 
                 self.graph_base = GraphDatabase(config, self.embed_model)
                 self.graph_base.start()
+                from src.services.graph.neo4j_store import PaperGraphStore
+
+                self.graph_store = PaperGraphStore(self.graph_base.driver, self.graph_base.kgdb_name)
             except Exception as exc:
                 logger.warning("Knowledge graph disabled due to init error: %s", exc)
                 self.graph_base = None
+                self.graph_store = None
         self._maps: dict[str, Any] = {}
         self._refresh_maps()
 
@@ -175,6 +180,12 @@ class KnowledgeBaseService:
                 return {"message": "系统默认知识库不可删除"}, 400
             if self.knowledge_base:
                 soft_delete_kb_chunks(session, self.knowledge_base, row.kb_id)
+            if self.config.enable_knowledge_graph and self.graph_store:
+                try:
+                    graph_deleted = self.graph_store.delete_kb_graph(row.kb_id)
+                    logger.info("Neo4j kb cleanup kb=%s %s", row.kb_id, graph_deleted)
+                except Exception as exc:
+                    logger.warning("Neo4j kb cleanup failed kb=%s: %s", row.kb_id, exc)
             session.query(KnowledgeBaseFile).filter(KnowledgeBaseFile.kb_id == row.kb_id).delete()
             session.delete(row)
             session.commit()

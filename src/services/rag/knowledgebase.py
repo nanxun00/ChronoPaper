@@ -98,6 +98,47 @@ class KnowledgeBase:
             )
         self.client.upsert(collection_name=self.COLLECTION, data=payload)
 
+    def patch_task_domain(self, rows: list[dict[str, Any]]) -> None:
+        """仅更新 Milvus 标量 task_domain（Graph 任务回写）。"""
+        if not rows or not self.client:
+            return
+        chunk_ids = [r["chunk_id"] for r in rows if r.get("chunk_id")]
+        if not chunk_ids:
+            return
+        quoted = ", ".join(f'"{cid}"' for cid in chunk_ids)
+        res = self.client.query(
+            collection_name=self.COLLECTION,
+            filter=f"chunk_id in [{quoted}]",
+            output_fields=[
+                "chunk_id",
+                "vec",
+                "paper_id",
+                "doc_id",
+                "kb_id",
+                "resource_type",
+                "owner_user_id",
+                "year",
+                "ccf_rank",
+                "section_type",
+                "block_type",
+                "task_domain",
+                "keywords",
+                "text_hash",
+            ],
+        )
+        if not res:
+            return
+        domain_map = {r["chunk_id"]: r.get("task_domain") or "" for r in rows}
+        payload = []
+        for item in res:
+            cid = item["chunk_id"]
+            new_domain = domain_map.get(cid)
+            if new_domain is None:
+                continue
+            payload.append({**item, "task_domain": new_domain})
+        if payload:
+            self.client.upsert(collection_name=self.COLLECTION, data=payload)
+
     def delete_by_chunk_ids(self, chunk_ids: list[str]) -> None:
         if not chunk_ids:
             return

@@ -55,3 +55,36 @@ keywords_prompt_template = """
 不要改变关键词的语言
 <文本>{text}</文本>
 """
+
+graph_extraction_prompt_template = """
+你是学术论文知识图谱抽取助手。请从给定论文片段中抽取实体与关系，仅输出合法 JSON，不要输出任何解释文字。
+
+论文 ID：{paper_id}
+章节类型：{section_type}
+论文标题：{title}
+论文摘要（参考）：{abstract}
+
+<片段列表>
+{chunks}
+</片段列表>
+
+抽取规则：
+1. 识别 Model、Dataset、Metric 实体；raw_name 为原文名称，std_name 为清洗后名称（去空格横杠小数点、英文小写）。
+2. 关系类型仅限：PROPOSE、IMPROVE_FROM、DIFFERENT_WITH、USE_DATASET、EVALUATE_BY、EXTEND_FROM。
+3. PROPOSE/USE_DATASET/EVALUATE_BY/EXTEND_FROM 的 source 为当前论文（paper_id）；IMPROVE_FROM/DIFFERENT_WITH 在 Model 之间。
+4. 每条实体/关系必须标注 chunk_id（来自片段列表）。
+5. task_domain 为论文细分领域（如图像分割、目标检测），无法判断则 null。
+6. innovation_summary 为本片段创新点摘要，无则空字符串。
+
+输出 JSON 格式：
+{{
+  "task_domain": null,
+  "innovation_summary": "",
+  "raw_entities": [
+    {{"raw_name": "U-Net", "std_name": "unet", "entity_type": "Model", "chunk_id": "..."}}
+  ],
+  "relations_raw": [
+    {{"source_raw": "{paper_id}", "target_raw": "U-Net", "rel_type": "PROPOSE", "chunk_id": "...", "source_type": "Paper", "target_type": "Model"}}
+  ]
+}}
+"""

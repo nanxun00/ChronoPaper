@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     kb_database_json: str = ""
     enable_knowledge_base: bool | None = None
     enable_knowledge_graph: bool | None = None
+    enable_semantic_scholar_cite: bool = True
     enable_reranker: bool | None = None
     enable_search_engine: bool | None = None
     embed_model: str | None = None

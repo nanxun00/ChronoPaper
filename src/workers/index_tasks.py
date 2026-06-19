@@ -62,6 +62,10 @@ def index_paper_chunks_task(self, paper_id: str, kb_id: str | None = None, owner
         session.add(paper)
         session.commit()
         logger.info("indexed paper %s chunks=%s kb=%s", paper_id, count, kb_id)
+        if startup.config.enable_knowledge_graph:
+            from src.workers.graph_tasks import graph_index_paper_task
+
+            graph_index_paper_task.delay(paper_id, kb_id, owner_user_id)
         return {"status": "ok", "chunks": count}
     except Exception as exc:
         logger.exception("index_paper_chunks failed paper=%s: %s", paper_id, exc)

@@ -334,30 +334,11 @@ async def get_graph_nodes(kgdb_name: str, num: int
     return {"result": startup.retriever.format_general_results(result), "message": "success"}
 
 @data.post("/graph/add")
-async def add_graph_entity(file_path: str = Body(...), kgdb_name: Optional[str] = Body(None)
-                           ):
-    '''
-        异步处理添加图实体的请求
-        该函数通过接受一个json lines格式的文件路径和一个可选的知识图谱数据库的名称
-        来添加图实体到指定的数据库中，如果知识图谱功能未启用或文件路径格式不正确
-        将抛出异常
-
-        参数：
-        - file_path：str - JSON Lines文件的路径，用于添加图实体
-        - kgdb_name：Optional[str] - 可选参数，指定的知识图谱数据库的名称
-        返回：
-        - 成功添加实体后，返回一个包含成功消息的字典
-    '''
-    # 检查是否启用了知识图谱的功能，如果没有启用，抛出异常
-    if not startup.config.enable_knowledge_graph:
-        raise HTTPException(status_code=400, detail="Knowledge graph is not enabled")
-
-    # 检查文件路径是否以.jsonl结尾，如果不是，抛出异常
-    if not file_path.endswith('.jsonl'):
-        raise HTTPException(status_code=400, detail="file_path must be a jsonl file")
-    # 调用函数添加图时提到指定的数据库中
-    startup.dbm.graph_base.jsonl_file_add_entity(file_path, "neo4j")
-    return {"message": "Entity successfully added"}
+async def add_graph_entity(file_path: str = Body(...), kgdb_name: Optional[str] = Body(None)):
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy graph upload removed. Graph is built automatically after paper indexing.",
+    )
 
 
 
@@ -577,11 +558,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # 上传文件并处理
 @data.post("/graph/upload")
 async def upload_file(file: UploadFile = File(...)):
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    process_jsonl_file(file_path, neo4j_service, milvus_service)
-    return JSONResponse(content={"filename": file.filename, "status": "uploaded"})
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy graph upload removed. Graph is built automatically after paper indexing.",
+    )
 
 
 # 获取图数据
@@ -759,42 +739,10 @@ def read_word(file):
 
 
 @data.post("/graph/multi/upload/")
-async def multi_upload_file(file: UploadFile = File(...),
-                            ):
-    file_front=file.filename.split(".")[0]
-    file_type = file.filename.split(".")[-1].lower()
-    file_name = f"{file_front}.jsonl"
-    file_path_1 = os.path.join(UPLOAD_DIR, file.filename)
-    file_path_2 = os.path.join(UPLOAD_DIR, file_name)
-    try:
-        if file_type == "txt":
-            content = read_txt(file.file)
-        elif file_type == "csv":
-            content = read_csv(file.file)
-        elif file_type == "jsonl":
-            content ="file is jsonl"
-        elif file_type in ["xls", "xlsx"]:
-            content = read_excel(file.file)
-        elif file_type == "pdf":
-            content = read_pdf(file.file)
-        elif file_type == "docx":
-            content = read_word(file.file)
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported file type")
-        if content == "file is jsonl":
-            with open(file_path_2, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            startup.dbm.graph_base.jsonl_file_add_entity(file_path_2, "neo4j")
-        else:
-            text=extract_entities_and_relations(content)
-            with open(file_path_1, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            with open(file_path_2,'w',encoding='utf-8') as f:
-                for i in text:
-                    f.write(json.dumps(i, ensure_ascii=False) + "\n")
-            startup.dbm.graph_base.jsonl_file_add_entity(file_path_2, "neo4j")
-            return {"filename": file.filename, "content": content, "text": text,"message": "Entity successfully added"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def multi_upload_file(file: UploadFile = File(...)):
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy OneKE graph upload removed. Graph is built automatically after paper indexing.",
+    )
 
 
