@@ -65,9 +65,14 @@ def _meta_for_persist(meta: dict) -> dict:
 
 
 def _ensure_retrieval_db(meta: dict) -> dict:
-    """启用检索但未指定知识库时，默认使用系统公共文献库。"""
+    """启用检索但未指定知识库时，默认使用系统公共文献库（尊重用户「不使用」）。"""
     meta = dict(meta or {})
-    if meta.get("enable_retrieval") and not meta.get("db_name") and startup.config.enable_knowledge_base:
+    if not meta.get("enable_retrieval"):
+        return meta
+    if meta.get("kbOptOut"):
+        meta["db_name"] = None
+        return meta
+    if not meta.get("db_name") and startup.config.enable_knowledge_base:
         try:
             meta["db_name"] = startup.dbm.ensure_default_knowledge_base().metaname
         except Exception as exc:

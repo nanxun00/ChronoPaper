@@ -15,11 +15,10 @@
         <div class="nav-btn text metas" v-if="meta.use_graph && meta.enable_retrieval">
           <GoldOutlined /> 图数据库
         </div>
-        <a-dropdown v-if="meta.selectedKB !== null && meta.enable_retrieval">
+        <a-dropdown v-if="meta.enable_retrieval">
           <a class="ant-dropdown-link nav-btn" @click.prevent>
-            <!-- <component :is="meta.selectedKB === null ? BookOutlined : BookFilled" /> -->
             <BookOutlined />
-            <span class="text">{{ meta.selectedKB === null ? '不使用' : opts.databases[meta.selectedKB]?.name }}</span>
+            <span class="text">{{ kbDisplayName }}</span>
           </a>
           <template #overlay>
             <a-menu>
@@ -54,10 +53,8 @@
             <div @click.stop>
               <a-dropdown>
                 <a class="ant-dropdown-link " @click.prevent>
-                  <!-- <component :is="meta.selectedKB === null ? BookOutlined : BookFilled" />&nbsp; -->
                   <BookOutlined />&nbsp;
-                  <span class="text">{{ meta.selectedKB === null ? '不使用' : opts.databases[meta.selectedKB]?.name
-                    }}</span>
+                  <span class="text">{{ kbDisplayName }}</span>
                 </a>
                 <template #overlay>
                   <a-menu>
@@ -283,6 +280,7 @@ const DEFAULT_CHAT_META = {
   graph_name: 'neo4j',
   rewriteQuery: 'off',
   selectedKB: null,
+  kbOptOut: false,
   stream: true,
   summary_title: true,
   history_round: 10,
@@ -291,6 +289,18 @@ const DEFAULT_CHAT_META = {
 const meta = reactive({
   ...DEFAULT_CHAT_META,
   ...JSON.parse(localStorage.getItem(metaStorageKey.value) || '{}'),
+})
+
+const _storedMeta = JSON.parse(localStorage.getItem(metaStorageKey.value) || '{}')
+if (_storedMeta.kbOptOut === undefined && Object.prototype.hasOwnProperty.call(_storedMeta, 'selectedKB') && _storedMeta.selectedKB === null) {
+  meta.kbOptOut = true
+}
+
+const kbDisplayName = computed(() => {
+  if (meta.kbOptOut || meta.selectedKB === null || meta.selectedKB < 0) {
+    return '不使用'
+  }
+  return opts.databases[meta.selectedKB]?.name || '不使用'
 })
 
 const marked = new Marked(
@@ -327,14 +337,20 @@ const ponderrenderMarkdown = (message) => {
 }
 
 const useDatabase = (index) => {
-  const selected = opts.databases[index]
-  console.log(selected)
-  if (index != null && configStore.config.embed_model != selected.embed_model) {
-    console.log(selected.embed_model, configStore.config.embed_model)
-    message.error(`所选知识库的向量模型（${selected.embed_model}）与当前向量模型（${configStore.config.embed_model}) 不匹配，请重新选择`)
-  } else {
-    meta.selectedKB = index
+  if (index == null) {
+    meta.selectedKB = null
+    meta.kbOptOut = true
+    meta.db_name = null
+    return
   }
+  const selected = opts.databases[index]
+  if (configStore.config.embed_model != selected.embed_model) {
+    message.error(`所选知识库的向量模型（${selected.embed_model}）与当前向量模型（${configStore.config.embed_model}) 不匹配，请重新选择`)
+    return
+  }
+  meta.selectedKB = index
+  meta.kbOptOut = false
+  meta.db_name = selected?.metaname || null
 }
 
 const handleKeyDown = (e) => {
@@ -460,8 +476,15 @@ const updateMessage = (info) => {
 
 const resolveDbName = () => {
   if (!meta.enable_retrieval || !opts.databases?.length) return null
+  if (meta.kbOptOut) return null
+
   let index = meta.selectedKB
-  if (index == null || index < 0 || !opts.databases[index]) {
+  if (index == null) {
+    index = opts.databases.findIndex((d) => d.is_system)
+    if (index < 0) index = 0
+    meta.selectedKB = index
+    meta.kbOptOut = false
+  } else if (index < 0 || !opts.databases[index]) {
     index = opts.databases.findIndex((d) => d.is_system)
     if (index < 0) index = 0
     meta.selectedKB = index
@@ -525,7 +548,7 @@ const loadDatabases = () => {
     .then(response => response.json())
     .then(data => {
       opts.databases = data.databases || []
-      if (meta.enable_retrieval && (meta.selectedKB == null || meta.selectedKB < 0)) {
+      if (meta.enable_retrieval && !meta.kbOptOut && meta.selectedKB == null) {
         const systemIdx = opts.databases.findIndex((d) => d.is_system)
         if (systemIdx >= 0) meta.selectedKB = systemIdx
       }
