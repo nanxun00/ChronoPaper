@@ -25,7 +25,7 @@ def get_session():
 def implemented_orm_models():
     """已实现业务使用的 ORM（不含 Idea / LaTeX / favorite 等待实现模块）。"""
     from src.models.auth import UserModel
-    from src.models.literature import LiteratureEntry, Paper
+    from src.models.literature import LiteratureEntry, LiteratureLibrary, Paper
     from src.models.crawl import CrawlTask, CrawlTaskRun
     from src.models.chat import ChatConversation, ChatMessage
     from src.models.rag import EntityAlias, KnowledgeBaseFile, KnowledgeBaseRecord, TextChunk
@@ -33,6 +33,7 @@ def implemented_orm_models():
     return [
         UserModel,
         Paper,
+        LiteratureLibrary,
         CrawlTask,
         CrawlTaskRun,
         LiteratureEntry,
@@ -106,6 +107,7 @@ def repair_unicode_collation(engine, log) -> None:
         "entity_alias",
         "papers",
         "literature_entries",
+        "literature_libraries",
     ):
         if table not in inspector.get_table_names():
             continue
@@ -212,6 +214,8 @@ def migrate_schema(engine, log) -> None:
             alters.append("ALTER TABLE crawl_tasks ADD COLUMN crawl_mode VARCHAR(16) NOT NULL DEFAULT 'latest'")
         if "auto_run_on_ready" not in task_cols:
             alters.append("ALTER TABLE crawl_tasks ADD COLUMN auto_run_on_ready TINYINT(1) NOT NULL DEFAULT 0")
+        if "library_id" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN library_id VARCHAR(64) NULL")
 
     if "literature_entries" in inspector.get_table_names():
         entry_cols = {c["name"] for c in inspector.get_columns("literature_entries")}
@@ -225,6 +229,8 @@ def migrate_schema(engine, log) -> None:
             alters.append(
                 "ALTER TABLE literature_entries ADD COLUMN review_status VARCHAR(16) NOT NULL DEFAULT 'approved'"
             )
+        if "library_id" not in entry_cols:
+            alters.append("ALTER TABLE literature_entries ADD COLUMN library_id VARCHAR(64) NULL")
 
     table_names = set(inspector.get_table_names())
     if "chat_message" in table_names:

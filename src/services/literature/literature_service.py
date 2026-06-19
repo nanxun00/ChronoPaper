@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import LiteratureEntry, Paper
+from src.services.literature.library_service import resolve_private_library_id
 from src.services.literature.paper_parse_service import (
     is_paper_parse_running,
     read_paper_full_text,
@@ -111,12 +112,19 @@ def upload_paper_pdf(
     filename: str,
     content: bytes,
     title: str | None = None,
+    library_id: str | None = None,
 ) -> dict:
     """保存用户上传的 PDF，写入论文与文献条目并触发 MinerU 解析。"""
     if visibility not in ("public", "private"):
         raise ValueError("visibility 须为 public 或 private")
     if visibility == "private" and not user_id:
         raise ValueError("私有文献须登录用户上传")
+
+    resolved_library_id = None
+    if visibility == "private":
+        resolved_library_id = resolve_private_library_id(
+            db, user_id, library_id, required=True
+        )
 
     if not content:
         raise ValueError("文件为空")
@@ -152,6 +160,7 @@ def upload_paper_pdf(
         visibility=visibility,
         pool_type="upload",
         review_status="approved",
+        library_id=resolved_library_id,
     )
     try:
         db.add(paper)
@@ -228,6 +237,7 @@ def entry_to_dict(entry: LiteratureEntry, paper: Paper) -> dict:
     data["review_status"] = entry.review_status or "approved"
     data["pipeline_status"] = resolve_pipeline_status(paper, entry)
     data["listed_at"] = entry.created_at.strftime("%Y-%m-%d") if entry.created_at else ""
+    data["library_id"] = entry.library_id
     data["source"] = paper.source or "arxiv"
     _overlay_mineru_metadata(paper, data)
     data["has_pdf"] = resolve_paper_pdf_path(paper) is not None
@@ -591,6 +601,7 @@ def list_private_papers(
     min_semantic: float | None = None,
     min_quality: float | None = None,
     review_status: str | None = None,
+    library_id: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> dict:
@@ -600,6 +611,8 @@ def list_private_papers(
         .filter(LiteratureEntry.visibility == "private", LiteratureEntry.user_id == user_id)
         .order_by(LiteratureEntry.created_at.desc(), Paper.published_at.desc())
     )
+    if library_id:
+        query = query.filter(LiteratureEntry.library_id == library_id)
     if q:
         like = f"%{q}%"
         query = query.filter(

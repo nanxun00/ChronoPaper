@@ -39,6 +39,7 @@ class CrawlTaskCreate(BaseModel):
     openalex_venue_names: str = Field(default="")
     keywords: str = Field(default="")
     visibility: Literal["public", "private"] = Field(default="public")
+    library_id: str | None = Field(default=None, description="私有文献库 ID，visibility=private 时必填")
     schedule_time: str | None = None
     auto_run: bool = Field(default=False, description="创建后立即执行；智能规划任务则在规划完成后执行")
     min_match_score: float = Field(default=50.0, ge=0, le=100, description="兼容旧字段，等同 min_semantic_score")

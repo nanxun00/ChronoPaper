@@ -162,6 +162,16 @@ def create_crawl_task(
         _validate_crawl_sources(body)
 
     semantic_threshold = body.min_semantic_score if body.min_semantic_score is not None else body.min_match_score
+    library_id = None
+    if body.visibility == "private":
+        from src.services.literature.library_service import resolve_private_library_id
+
+        try:
+            library_id = resolve_private_library_id(
+                db, current_user.userid, body.library_id, required=True
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = CrawlTask(
         user_id=current_user.userid,
         name=(body.name or "").strip(),
@@ -176,6 +186,7 @@ def create_crawl_task(
         openalex_venue_names="" if async_smart_plan else body.openalex_venue_names,
         keywords="" if async_smart_plan else body.keywords,
         visibility=body.visibility,
+        library_id=library_id,
         schedule_time=body.schedule_time if not body.auto_run else None,
         auto_run_on_ready=bool(body.auto_run and async_smart_plan),
         min_match_score=semantic_threshold,

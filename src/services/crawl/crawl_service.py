@@ -799,6 +799,12 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
         _upsert_paper(session, meta, run, stats)
         new_paper_ids.append(paper_id)
 
+        lib_id = task.library_id if task.visibility == "private" else None
+        if task.visibility == "private" and not lib_id:
+            from src.services.literature.library_service import ensure_default_library
+
+            lib_id = ensure_default_library(session, owner_id).library_id
+
         entry = LiteratureEntry(
             arxiv_id=paper_id,
             user_id=owner_id,
@@ -810,6 +816,7 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
             review_status="pending",
             task_id=task.id,
             run_id=run.id,
+            library_id=lib_id,
         )
         session.add(entry)
         session.commit()

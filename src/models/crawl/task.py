@@ -23,6 +23,7 @@ class CrawlTask(Base):
     openalex_venue_names = Column(String(1024), nullable=False, default="")
     keywords = Column(String(512), nullable=False, default="")
     visibility = Column(String(16), nullable=False, default="public")
+    library_id = Column(String(64), ForeignKey("literature_libraries.library_id"), nullable=True, index=True)
     schedule_time = Column(String(8), nullable=True)
     auto_run_on_ready = Column(Boolean, nullable=False, default=False)
     min_match_score = Column(Float, nullable=False, default=40.0)

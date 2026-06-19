@@ -18,6 +18,7 @@ export function listPrivatePapers(params = {}) {
   const qs = new URLSearchParams()
   if (params.q) qs.set('q', params.q)
   if (params.source) qs.set('source', params.source)
+  if (params.library_id) qs.set('library_id', params.library_id)
   if (params.min_semantic != null && params.min_semantic !== '') qs.set('min_semantic', String(params.min_semantic))
   if (params.min_quality != null && params.min_quality !== '') qs.set('min_quality', String(params.min_quality))
   if (params.review_status) qs.set('review_status', params.review_status)
@@ -66,11 +67,12 @@ export function fetchLiteraturePdf({ arxiv_ids, visibility }) {
   })
 }
 
-export async function uploadLiteraturePdf(file, visibility, title) {
+export async function uploadLiteraturePdf(file, visibility, title, libraryId) {
   const form = new FormData()
   form.append('file', file)
   form.append('visibility', visibility)
   if (title) form.append('title', title)
+  if (libraryId) form.append('library_id', libraryId)
   const response = await authFetch('/api/literature/upload', {
     method: 'POST',
     body: form,
@@ -86,4 +88,21 @@ export async function uploadLiteraturePdf(file, visibility, title) {
     throw new Error(errMsg)
   }
   return data
+}
+
+export function listLiteratureLibraries() {
+  return apiJson('/api/literature/libraries')
+}
+
+export function createLiteratureLibrary(body) {
+  return apiJson('/api/literature/libraries', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function deleteLiteratureLibrary(libraryId) {
+  return apiJson(`/api/literature/libraries/${encodeURIComponent(libraryId)}`, {
+    method: 'DELETE',
+  })
 }

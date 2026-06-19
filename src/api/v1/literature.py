@@ -6,8 +6,13 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from src.api.deps import UserInDB, get_current_active_user, get_db
-from src.schemas.literature import LiteratureDeleteRequest, LiteratureReviewRequest
+from src.schemas.literature import (
+    LiteratureDeleteRequest,
+    LiteratureLibraryCreateRequest,
+    LiteratureReviewRequest,
+)
 from src.services import literature_service
+from src.services.literature import library_service
 
 router = APIRouter(prefix="/literature", tags=["literature"])
 
@@ -46,6 +51,7 @@ def list_private_papers(
     min_semantic: float | None = Query(default=None, ge=0, le=100),
     min_quality: float | None = Query(default=None, ge=0, le=100),
     review_status: str | None = Query(default=None, description="pending | approved | rejected"),
+    library_id: str | None = Query(default=None, description="按私有文献库筛选"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     current_user: UserInDB = Depends(get_current_active_user),
@@ -59,6 +65,7 @@ def list_private_papers(
         min_semantic=min_semantic,
         min_quality=min_quality,
         review_status=review_status,
+        library_id=library_id,
         page=page,
         page_size=page_size,
     )
@@ -108,6 +115,7 @@ async def upload_literature_pdf(
     file: UploadFile = File(...),
     visibility: str = Form(...),
     title: str | None = Form(default=None),
+    library_id: str | None = Form(default=None),
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -122,6 +130,7 @@ async def upload_literature_pdf(
             filename=file.filename or "upload.pdf",
             content=content,
             title=title,
+            library_id=library_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -220,3 +229,42 @@ def delete_literature_entries(
     if result["deleted"] == 0 and result["not_found"]:
         raise HTTPException(status_code=404, detail="未找到可删除的文献")
     return result
+
+
+@router.get("/libraries")
+def list_literature_libraries(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    return {"libraries": library_service.list_libraries(db, current_user.userid)}
+
+
+@router.post("/libraries")
+def create_literature_library(
+    body: LiteratureLibraryCreateRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        return library_service.create_library(
+            db,
+            current_user.userid,
+            name=body.name,
+            description=body.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/libraries/{library_id}")
+def delete_literature_library(
+    library_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        if not library_service.delete_library(db, current_user.userid, library_id):
+            raise HTTPException(status_code=404, detail="文献库不存在")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}

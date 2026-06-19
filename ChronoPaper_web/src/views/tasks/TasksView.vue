@@ -126,10 +126,26 @@
           />
         </a-form-item>
         <a-form-item label="入库位置" required>
-          <a-radio-group v-model:value="createForm.visibility">
+          <a-radio-group v-model:value="createForm.visibility" @change="onVisibilityChange">
             <a-radio value="public">公开文献列表（全员可见）</a-radio>
             <a-radio value="private">私有文献列表（仅自己可见）</a-radio>
           </a-radio-group>
+        </a-form-item>
+        <a-form-item v-if="createForm.visibility === 'private'" label="目标文献库" required>
+          <a-select
+            v-model:value="createForm.library_id"
+            placeholder="选择私有文献库"
+            :loading="privateLibrariesLoading"
+            style="width: 100%"
+          >
+            <a-select-option
+              v-for="lib in privateLibraries"
+              :key="lib.library_id"
+              :value="lib.library_id"
+            >
+              {{ lib.name }}（{{ lib.paper_count }} 篇）
+            </a-select-option>
+          </a-select>
         </a-form-item>
         <a-form-item label="执行方式" required>
           <a-radio-group v-model:value="createForm.execution_mode" class="execution-mode-group">
@@ -402,6 +418,7 @@ import {
   CRAWL_MODE_OPTIONS,
 } from '@/constants/crawlModes'
 import { previewCrawlQueryTranslation } from '@/api/translate'
+import { listLiteratureLibraries } from '@/api/literature'
 
 const CJK_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/
 
@@ -412,6 +429,8 @@ const createOpen = ref(false)
 const detailOpen = ref(false)
 const detailItem = ref(null)
 const advancedOpenKeys = ref([])
+const privateLibraries = ref([])
+const privateLibrariesLoading = ref(false)
 
 const latestRunStats = computed(() => detailItem.value?.runs?.[0]?.stats || null)
 let pollTimer = null
@@ -430,6 +449,7 @@ const defaultCreateForm = () => ({
   openalex_venue_names: '',
   keywords: '',
   visibility: 'public',
+  library_id: null,
   min_semantic_score: 55,
   min_quality_score: 70,
   enable_quality_filter: false,
@@ -450,6 +470,29 @@ const hasChinese = (text) => CJK_RE.test(text || '')
 
 const resetCrawlTranslatePreview = () => {
   crawlTranslatePreview.value = { translated: false, intent_text: '', keywords: '' }
+}
+
+const loadPrivateLibrariesForTask = async () => {
+  privateLibrariesLoading.value = true
+  try {
+    const data = await listLiteratureLibraries()
+    privateLibraries.value = data.libraries || []
+    if (!createForm.value.library_id && privateLibraries.value.length) {
+      createForm.value.library_id = privateLibraries.value[0].library_id
+    }
+  } catch {
+    privateLibraries.value = []
+  } finally {
+    privateLibrariesLoading.value = false
+  }
+}
+
+const onVisibilityChange = () => {
+  if (createForm.value.visibility === 'private') {
+    loadPrivateLibrariesForTask()
+  } else {
+    createForm.value.library_id = null
+  }
 }
 
 const refreshCrawlTranslationPreview = async () => {
@@ -570,6 +613,9 @@ const openCreateModal = () => {
   advancedOpenKeys.value = []
   resetCrawlTranslatePreview()
   createOpen.value = true
+  if (createForm.value.visibility === 'private') {
+    loadPrivateLibrariesForTask()
+  }
 }
 
 const onCrawlModeChange = () => {
@@ -631,6 +677,10 @@ const handleCreate = async () => {
     message.warning('请选择每日执行时间')
     return Promise.reject()
   }
+  if (createForm.value.visibility === 'private' && !createForm.value.library_id) {
+    message.warning('请选择目标文献库')
+    return Promise.reject()
+  }
 
   creating.value = true
   const auto_run = createForm.value.execution_mode === 'once'
@@ -644,6 +694,7 @@ const handleCreate = async () => {
       name: createForm.value.name?.trim() || '',
       intent_text: createForm.value.intent_text.trim(),
       visibility: createForm.value.visibility,
+      library_id: createForm.value.visibility === 'private' ? createForm.value.library_id : null,
       min_semantic_score: createForm.value.min_semantic_score,
       min_quality_score: createForm.value.min_quality_score,
       enable_quality_filter: createForm.value.enable_quality_filter,

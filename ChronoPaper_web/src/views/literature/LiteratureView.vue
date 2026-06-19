@@ -151,6 +151,20 @@
 
         <a-tab-pane key="private" tab="私有文献">
           <div class="tab-toolbar">
+            <a-radio-group
+              v-model:value="privateViewMode"
+              button-style="solid"
+              size="small"
+              class="view-mode-toggle"
+              @change="onPrivateViewModeChange"
+            >
+              <a-radio-button value="list">
+                <UnorderedListOutlined /> 列表
+              </a-radio-button>
+              <a-radio-button value="block">
+                <AppstoreOutlined /> 文献库
+              </a-radio-button>
+            </a-radio-group>
             <a-input-search
               v-model:value="privateQuery"
               placeholder="搜索私有文献"
@@ -158,13 +172,9 @@
               allow-clear
               @search="searchPrivatePapers"
             />
-            <a-upload
-              :show-upload-list="false"
-              accept=".pdf,application/pdf"
-              :before-upload="beforePrivateUpload"
-            >
-              <a-button type="primary" :loading="uploading">上传 PDF</a-button>
-            </a-upload>
+            <a-button type="primary" :loading="uploading" @click="openPrivateUploadModal">
+              上传 PDF
+            </a-button>
             <a-select
               v-model:value="privateSource"
               style="width: 140px"
@@ -200,7 +210,49 @@
               批量删除 ({{ privateSelectedKeys.length }})
             </a-button>
           </div>
+
+          <div
+            v-if="privateViewMode === 'block' && !selectedPrivateLibrary"
+            class="private-libraries"
+          >
+            <div class="lib-card lib-card--new" @click="openCreateLibraryModal">
+              <div class="lib-card__top">
+                <div class="lib-card__icon"><PlusOutlined /></div>
+                <div class="lib-card__info">
+                  <h3>新建文献库</h3>
+                </div>
+              </div>
+              <p class="lib-card__desc">按研究领域创建私有文献库，入库时选择归属库。</p>
+            </div>
+            <div
+              v-for="lib in privateLibraries"
+              :key="lib.library_id"
+              class="lib-card"
+              @click="enterPrivateLibrary(lib)"
+            >
+              <div class="lib-card__top">
+                <div class="lib-card__icon"><ReadFilled /></div>
+                <div class="lib-card__info">
+                  <h3>{{ lib.name }}</h3>
+                  <p><span>{{ lib.library_id }}</span> · <span>{{ lib.paper_count }} 篇</span></p>
+                </div>
+              </div>
+              <p class="lib-card__desc">{{ lib.description || '暂无描述' }}</p>
+              <div class="lib-card__tags">
+                <a-tag color="blue">私有文献库</a-tag>
+                <a-tag color="green">{{ lib.paper_count }} 篇</a-tag>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="privateViewMode === 'block' && selectedPrivateLibrary" class="library-breadcrumb">
+            <a-button type="link" size="small" @click="exitPrivateLibrary">← 全部文献库</a-button>
+            <span class="library-breadcrumb__name">{{ selectedPrivateLibrary.name }}</span>
+            <span class="library-breadcrumb__meta">{{ selectedPrivateLibrary.paper_count }} 篇文献</span>
+          </div>
+
           <a-table
+            v-show="privateViewMode === 'list' || selectedPrivateLibrary"
             :columns="literatureColumns"
             :data-source="privateDocs"
             :loading="loading"
@@ -406,16 +458,77 @@
         />
       </template>
     </a-drawer>
+
+    <a-modal
+      v-model:open="createLibraryOpen"
+      title="新建文献库"
+      :confirm-loading="createLibraryLoading"
+      @ok="submitCreateLibrary"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="文献库名称" required>
+          <a-input v-model:value="newLibraryForm.name" placeholder="例如：多智能体系统" />
+        </a-form-item>
+        <a-form-item label="描述">
+          <a-textarea
+            v-model:value="newLibraryForm.description"
+            placeholder="可选，说明该库的研究领域"
+            :auto-size="{ minRows: 2, maxRows: 4 }"
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:open="privateUploadOpen"
+      title="上传到私有文献"
+      :confirm-loading="uploading"
+      ok-text="开始上传"
+      @ok="submitPrivateUpload"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="目标文献库" required>
+          <a-select
+            v-model:value="uploadLibraryId"
+            placeholder="选择文献库"
+            :loading="librariesLoading"
+            style="width: 100%"
+          >
+            <a-select-option
+              v-for="lib in privateLibraries"
+              :key="lib.library_id"
+              :value="lib.library_id"
+            >
+              {{ lib.name }}（{{ lib.paper_count }} 篇）
+            </a-select-option>
+          </a-select>
+          <a-button type="link" size="small" style="padding-left: 0" @click="openCreateLibraryModal">
+            没有合适的库？新建文献库
+          </a-button>
+        </a-form-item>
+        <a-form-item label="PDF 文件" required>
+          <a-upload
+            :show-upload-list="true"
+            accept=".pdf,application/pdf"
+            :max-count="1"
+            :before-upload="onPrivateUploadFilePick"
+            @remove="pendingPrivateFile = null"
+          >
+            <a-button>选择 PDF</a-button>
+          </a-upload>
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Modal, message } from 'ant-design-vue'
-import { DeleteOutlined, PictureOutlined, StarFilled, StarOutlined } from '@ant-design/icons-vue'
+import { DeleteOutlined, PictureOutlined, StarFilled, StarOutlined, UnorderedListOutlined, AppstoreOutlined, ReadFilled, PlusOutlined } from '@ant-design/icons-vue'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import PdfPreview from '@/components/literature/PdfPreview.vue'
-import { approveLiteratureEntries, deleteLiteratureEntries, fetchLiteraturePdf, getPaperDetail, listPublicPapers, listPrivatePapers, parseLiteratureEntries, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
+import { approveLiteratureEntries, createLiteratureLibrary, deleteLiteratureEntries, fetchLiteraturePdf, getPaperDetail, listLiteratureLibraries, listPublicPapers, listPrivatePapers, parseLiteratureEntries, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
 import { streamTranslate } from '@/api/translate'
 import { SOURCE_LABELS } from '@/constants/openreviewVenues'
 import { useSelectionTranslate } from '@/composables/useSelectionTranslate'
@@ -455,6 +568,16 @@ const privateMinSemantic = ref(null)
 const privateMinQuality = ref(null)
 const publicSelectedKeys = ref([])
 const privateSelectedKeys = ref([])
+const privateViewMode = ref(localStorage.getItem('literature-private-view') || 'list')
+const privateLibraries = ref([])
+const selectedPrivateLibrary = ref(null)
+const librariesLoading = ref(false)
+const createLibraryOpen = ref(false)
+const createLibraryLoading = ref(false)
+const newLibraryForm = ref({ name: '', description: '' })
+const privateUploadOpen = ref(false)
+const uploadLibraryId = ref(null)
+const pendingPrivateFile = ref(null)
 const searchMode = ref('text')
 const imageTextQuery = ref('')
 const searchResults = ref([])
@@ -775,6 +898,133 @@ const loadPublicPapers = async (
   }
 }
 
+const loadPrivateLibraries = async () => {
+  librariesLoading.value = true
+  try {
+    const data = await listLiteratureLibraries()
+    privateLibraries.value = data.libraries || []
+    if (selectedPrivateLibrary.value) {
+      const hit = privateLibraries.value.find(
+        (lib) => lib.library_id === selectedPrivateLibrary.value.library_id,
+      )
+      if (hit) selectedPrivateLibrary.value = hit
+    }
+  } catch (err) {
+    message.error(err.message || '加载文献库失败')
+  } finally {
+    librariesLoading.value = false
+  }
+}
+
+const onPrivateViewModeChange = () => {
+  localStorage.setItem('literature-private-view', privateViewMode.value)
+  if (privateViewMode.value === 'list') {
+    selectedPrivateLibrary.value = null
+    loadPrivatePapers(1)
+  } else {
+    loadPrivateLibraries()
+  }
+}
+
+const enterPrivateLibrary = (lib) => {
+  selectedPrivateLibrary.value = lib
+  privatePagination.value.current = 1
+  loadPrivatePapers(1)
+}
+
+const exitPrivateLibrary = () => {
+  selectedPrivateLibrary.value = null
+  privateDocs.value = []
+}
+
+const openCreateLibraryModal = () => {
+  newLibraryForm.value = { name: '', description: '' }
+  createLibraryOpen.value = true
+}
+
+const submitCreateLibrary = async () => {
+  const name = newLibraryForm.value.name?.trim()
+  if (!name) {
+    message.warning('请输入文献库名称')
+    return Promise.reject()
+  }
+  createLibraryLoading.value = true
+  try {
+    const lib = await createLiteratureLibrary({
+      name,
+      description: newLibraryForm.value.description?.trim() || '',
+    })
+    message.success('文献库已创建')
+    createLibraryOpen.value = false
+    await loadPrivateLibraries()
+    uploadLibraryId.value = lib.library_id
+  } catch (err) {
+    message.error(err.message || '创建失败')
+  } finally {
+    createLibraryLoading.value = false
+  }
+}
+
+const openPrivateUploadModal = async () => {
+  await loadPrivateLibraries()
+  if (!privateLibraries.value.length) {
+    message.warning('请先创建文献库')
+    openCreateLibraryModal()
+    return
+  }
+  uploadLibraryId.value = uploadLibraryId.value || privateLibraries.value[0]?.library_id || null
+  pendingPrivateFile.value = null
+  privateUploadOpen.value = true
+}
+
+const onPrivateUploadFilePick = (file) => {
+  const name = file.name?.toLowerCase() || ''
+  const isPdf = file.type === 'application/pdf' || name.endsWith('.pdf')
+  if (!isPdf) {
+    message.error('仅支持 PDF 文件')
+    return false
+  }
+  if (file.size > 50 * 1024 * 1024) {
+    message.error('PDF 不能超过 50MB')
+    return false
+  }
+  pendingPrivateFile.value = file
+  return false
+}
+
+const submitPrivateUpload = () => {
+  if (!uploadLibraryId.value) {
+    message.warning('请选择文献库')
+    return Promise.reject()
+  }
+  if (!pendingPrivateFile.value) {
+    message.warning('请选择 PDF 文件')
+    return Promise.reject()
+  }
+  uploading.value = true
+  return uploadLiteraturePdf(pendingPrivateFile.value, 'private', null, uploadLibraryId.value)
+    .then(async () => {
+      message.success('上传成功，正在后台解析 PDF')
+      privateUploadOpen.value = false
+      pendingPrivateFile.value = null
+      await loadPrivateLibraries()
+      if (privateViewMode.value === 'block' && !selectedPrivateLibrary.value) {
+        const lib = privateLibraries.value.find((item) => item.library_id === uploadLibraryId.value)
+        if (lib) enterPrivateLibrary(lib)
+      } else {
+        privatePagination.value.current = 1
+        await loadPrivatePapers(1)
+      }
+    })
+    .catch((err) => {
+      message.error(err.message || '上传失败')
+      return Promise.reject()
+    })
+    .finally(() => {
+      uploading.value = false
+    })
+}
+
 const loadPrivatePapers = async (
   page = privatePagination.value.current,
   pageSize = privatePagination.value.pageSize,
@@ -787,6 +1037,7 @@ const loadPrivatePapers = async (
       source: privateSource.value || undefined,
       min_semantic: privateMinSemantic.value ?? undefined,
       min_quality: privateMinQuality.value ?? undefined,
+      library_id: selectedPrivateLibrary.value?.library_id || undefined,
       page,
       page_size: pageSize,
     })
@@ -828,7 +1079,10 @@ const searchPrivatePapers = () => {
 
 onMounted(() => {
   loadPublicPapers()
-  loadPrivatePapers()
+  loadPrivateLibraries()
+  if (privateViewMode.value === 'list') {
+    loadPrivatePapers()
+  }
 })
 
 const hasActivePipeline = computed(() => {
@@ -873,7 +1127,10 @@ watch(activeTab, (tab) => {
   }
   if (tab === 'private') {
     privatePagination.value.current = 1
-    loadPrivatePapers(1)
+    loadPrivateLibraries()
+    if (privateViewMode.value === 'list' || selectedPrivateLibrary.value) {
+      loadPrivatePapers(1)
+    }
   }
 })
 
@@ -955,6 +1212,7 @@ const runDelete = async (arxivIds, visibility) => {
       await loadPublicPapers()
     } else {
       privateSelectedKeys.value = privateSelectedKeys.value.filter((k) => !arxivIds.includes(k))
+      await loadPrivateLibraries()
       await loadPrivatePapers()
     }
     if (previewItem.value && arxivIds.includes(previewItem.value.arxiv_id)) {
@@ -1006,6 +1264,7 @@ const runApprove = async (arxivIds, visibility) => {
       await loadPublicPapers()
     } else {
       privateSelectedKeys.value = privateSelectedKeys.value.filter((k) => !arxivIds.includes(k))
+      await loadPrivateLibraries()
       await loadPrivatePapers()
     }
   } catch (err) {
@@ -1062,6 +1321,7 @@ const runReject = async (arxivIds, visibility) => {
       await loadPublicPapers()
     } else {
       privateSelectedKeys.value = privateSelectedKeys.value.filter((k) => !arxivIds.includes(k))
+      await loadPrivateLibraries()
       await loadPrivatePapers()
     }
   } catch (err) {
@@ -1114,8 +1374,6 @@ const beforePdfUpload = (file, visibility) => {
 }
 
 const beforePublicUpload = (file) => beforePdfUpload(file, 'public')
-
-const beforePrivateUpload = (file) => beforePdfUpload(file, 'private')
 
 const beforeImageSearchUpload = () => {
   message.info('以图搜图接口开发中')
@@ -1269,6 +1527,116 @@ const runImageSearch = () => {
   font-size: 12px;
   line-height: 1;
   user-select: none;
+}
+
+.view-mode-toggle {
+  flex-shrink: 0;
+}
+
+.private-libraries {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.lib-card {
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid #e8ecf0;
+  background: #fff;
+  cursor: pointer;
+  min-height: 160px;
+  transition: box-shadow 0.2s ease;
+
+  &:hover {
+    box-shadow: 0 4px 6px -2px rgba(16, 24, 40, 0.03), 0 12px 16px -4px rgba(16, 24, 40, 0.08);
+  }
+
+  &__top {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  &__icon {
+    width: 50px;
+    height: 50px;
+    font-size: 28px;
+    margin-right: 10px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #f5f8ff;
+    border-radius: 8px;
+    border: 1px solid #e0eaff;
+    color: var(--main-color);
+    flex-shrink: 0;
+  }
+
+  &__info {
+    min-width: 0;
+
+    h3, p {
+      margin: 0;
+    }
+
+    h3 {
+      font-size: 16px;
+      font-weight: bold;
+      color: #111;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    p {
+      color: var(--gray-700);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  &__desc {
+    color: var(--gray-800);
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 10px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  &__tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  &--new {
+    border-style: dashed;
+    background: #fafbfc;
+  }
+}
+
+.library-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+
+  &__name {
+    font-weight: 600;
+    color: var(--gray-900);
+  }
+
+  &__meta {
+    color: var(--gray-600);
+    font-size: 13px;
+  }
 }
 
 .star-filled {

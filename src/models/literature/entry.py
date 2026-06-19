@@ -24,4 +24,5 @@ class LiteratureEntry(Base):
     review_status = Column(String(16), nullable=False, default="approved")
     task_id = Column(Integer, ForeignKey("crawl_tasks.id"), nullable=True)
     run_id = Column(Integer, ForeignKey("crawl_task_runs.id"), nullable=True)
+    library_id = Column(String(64), ForeignKey("literature_libraries.library_id"), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
