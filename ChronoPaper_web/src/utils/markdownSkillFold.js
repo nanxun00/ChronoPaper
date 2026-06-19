@@ -1,0 +1,87 @@
+/** 技能对话 Markdown：将中间 Python 脚本折叠为 details */
+import { Marked } from 'marked'
+import { markedHighlight } from 'marked-highlight'
+import hljs from 'highlight.js'
+
+const FOLD_MIN_LINES = 3
+
+export function shouldCollapseSkillCode(message) {
+  if (!message || message.role !== 'received') return false
+  if (message.skill_active) return true
+  const skill = message.refs?.skill
+  if (skill?.skill_id) return true
+  if (Array.isArray(skill?.skill_scripts) && skill.skill_scripts.length > 0) return true
+  if (message.meta?.skill_id) return true
+  return false
+}
+
+function highlightCode(text, lang) {
+  if (lang) {
+    try {
+      return hljs.highlight(text, { language: lang }).value
+    } catch {
+      /* fallback */
+    }
+  }
+  return hljs.highlightAuto(text).value
+}
+
+function foldPythonCodeBlock(text, lang, forceSkillFold = false) {
+  const language = (lang || '').toLowerCase()
+  const lineCount = text.split('\n').length
+  const looksLikePython =
+    language === 'python' ||
+    (forceSkillFold &&
+      !language &&
+      lineCount >= FOLD_MIN_LINES &&
+      /^\s*(import |from .+ import )/m.test(text))
+
+  if (looksLikePython && lineCount >= FOLD_MIN_LINES) {
+    const highlighted = highlightCode(text, 'python')
+    return `<details class="skill-code-fold">
+<summary class="skill-code-fold__summary">技能中间代码 (Python · ${lineCount} 行)</summary>
+<div class="skill-code-fold__body"><pre><code class="hljs language-python">${highlighted}</code></pre></div>
+</details>`
+  }
+  const hl = highlightCode(text, language || undefined)
+  const cls = language ? `hljs language-${language}` : 'hljs'
+  return `<pre><code class="${cls}">${hl}</code></pre>`
+}
+
+let _defaultMarked
+let _foldMarked
+
+function getDefaultMarked() {
+  if (!_defaultMarked) {
+    _defaultMarked = new Marked(
+      { gfm: true, breaks: true, tables: true },
+      markedHighlight({
+        langPrefix: 'hljs language-',
+        highlight(code) {
+          return hljs.highlightAuto(code).value
+        },
+      }),
+    )
+  }
+  return _defaultMarked
+}
+
+function getFoldMarked() {
+  if (!_foldMarked) {
+    _foldMarked = new Marked({ gfm: true, breaks: true, tables: true })
+    _foldMarked.use({
+      renderer: {
+        code({ text, lang }) {
+          return foldPythonCodeBlock(text, lang, true)
+        },
+      },
+    })
+  }
+  return _foldMarked
+}
+
+export function parseChatMarkdown(text, message) {
+  const raw = String(text ?? '')
+  const md = shouldCollapseSkillCode(message) ? getFoldMarked() : getDefaultMarked()
+  return md.parse(raw)
+}

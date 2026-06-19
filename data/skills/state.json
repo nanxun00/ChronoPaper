@@ -1,0 +1,29 @@
+{
+  "disabled": [],
+  "descriptions_zh": {
+    "nature-academic-search": "通过 PubMed、CrossRef 等 MCP 工具进行多源文献检索、引文核对、MeSH 检索策略、引用文件转换 (.nbib/.ris/.bib) 及参考文献管理，适用于需要协调多步文献检索流程的场景，也覆盖文献检索、查文献、文献综述等需求。",
+    "nature-citation": "将长段落拆分为可引用片段，仅检索 Nature 系列、AAAS Science 系列和 Cell Press 的旗舰和子刊，按时间范围筛选并默认导出一种参考文献格式，适用于输入文本后自动获取引用、分段引用、Nature 系列引用等需求，也覆盖学术写作中加引用、找文献等场景。",
+    "nature-data": "准备、审核或修改论文的数据可用性声明、数据存储库计划、数据集引用和 FAIR 元数据检查表，适用于询问 Nature 数据可用性、研究数据共享、仓库选择等需求，也覆盖学术写作中写数据可用性声明、数据共享等场景。",
+    "nature-figure": "针对 Python 或 R 创建投稿级别的论文图表，支持多面板科学图、期刊就绪的 SVG/PDF/TIFF 输出，包含定义结论、逻辑和导出需求，适用于制作、修改或审核学术论文图，也覆盖论文配图、科研绘图等需求。",
+    "nature-paper-to-patent": "将科学论文、报告等转换为基于证据的中国发明专利申请草稿，提取可专利技术贡献、映射特征到证据、保留公式、生成流程图和图表，并输出独立的权利要求书、说明书等 DOCX 文件。",
+    "nature-paper2ppt": "从科学论文或摘要构建 Nature 风格的中文 PPTX，识别论文类型和论点，选择关键图片，撰写幻灯片内容和讲稿，并进行自我审查和修正，适用于论文汇报、组会 PPT、文献汇报等场景。",
+    "nature-polishing": "使用 Nature 写作策略、句型模式和学术短语库润色、重构或翻译学术文稿为高水准英文，也处理 LaTeX 排版问题，覆盖学术写作、论文润色、SCI 写作等需求。",
+    "nature-reader": "构建全文中英对照、包含图表和精确源锚点的 Markdown 阅读器，适用于翻译或阅读论文、中英文对照、文献翻译等需求，非用户明确要求摘要时不输出摘要。",
+    "nature-response": "起草、审计或修改针对 Nature 系列论文审稿人的逐点回复信，适用于回答审稿意见、大修小修回复、返回修改回复等场景，也覆盖一般期刊的审稿回复。",
+    "nature-reviewer": "从审稿人视角模拟 Nature 风格的审稿评估，返回三份审稿报告及交叉总结，适用于投稿前评审、预审稿、模拟审稿等需求。",
+    "nature-writing": "根据作者提供的论点、结果、图表或草稿起草、重构或规划 Nature 风格的论文章节，适用于从头写论文、起草手稿、构建论文结构等学术写作需求。"
+  },
+  "description_source_hash": {
+    "nature-academic-search": "44a14d56d8e5a6cbbdc365667f6fe44c",
+    "nature-citation": "7bc3b3027c54217ab17ac8b52c5471e9",
+    "nature-data": "f42202e5420c4f87fceb364fc3807d19",
+    "nature-figure": "fd889b7a62c19ae78b6ef412827dabd6",
+    "nature-paper-to-patent": "2ead9d6a66f0c85469e7cf44aaeb326d",
+    "nature-paper2ppt": "1e2ad7aa9c21913a086bbbfcfe00eff2",
+    "nature-polishing": "1215a07c1cdb117b11bab6457d81352b",
+    "nature-reader": "05c6761433ccf256f6178b9986c9457b",
+    "nature-response": "43944e221eb329fb637eda355e3c54ee",
+    "nature-reviewer": "0e55ee17c74daeefb9ca967160be8223",
+    "nature-writing": "cad01b4e22286fc5ade4b15e3c3ac5de"
+  }
+}

@@ -15,6 +15,16 @@
       >
         <GlobalOutlined /> 关系图
       </span>
+      <span
+        class="item btn skill-artifact-tag"
+        v-for="artifact in skillArtifacts"
+        :key="artifact.url"
+        @click="openArtifact(artifact)"
+      >
+        <FileTextOutlined v-if="artifact.kind !== 'image'" />
+        <PictureOutlined v-else />
+        {{ artifact.name }}
+      </span>
       <span class="filetag item btn"
         v-for="(results, filename) in groupedResults"
         :key="filename"
@@ -59,6 +69,26 @@
       </span>
     </div>
     <a-modal
+      v-model:open="artifactPreviewOpen"
+      :title="artifactPreview?.name || '技能产物'"
+      :width="900"
+      :footer="null"
+    >
+      <div v-if="artifactPreview?.kind === 'image'" class="artifact-preview">
+        <img :src="artifactPreview.url" :alt="artifactPreview.name" />
+      </div>
+      <div v-else-if="artifactPreview?.kind === 'file' && isMarkdown(artifactPreview)" class="artifact-md">
+        <a-spin :spinning="artifactLoading" />
+        <pre v-if="artifactText">{{ artifactText }}</pre>
+      </div>
+      <div v-else class="artifact-download">
+        <p>文件已生成，点击下载：</p>
+        <a :href="artifactPreview?.url" :download="artifactPreview?.name" target="_blank" rel="noopener">
+          {{ artifactPreview?.name }}
+        </a>
+      </div>
+    </a-modal>
+    <a-modal
       v-model:open="subGraphVisible"
       title="相关实体与关系"
       :width="800"
@@ -86,7 +116,8 @@ import {
   DislikeOutlined,
   DeleteOutlined,
   FileOutlined,
-  ClockCircleOutlined
+  ClockCircleOutlined,
+  PictureOutlined,
 } from '@ant-design/icons-vue'
 import GraphContainer from '@/components/graph/GraphContainer.vue'
 import GraphNodeDrawer from '@/components/graph/GraphNodeDrawer.vue'
@@ -104,6 +135,43 @@ const emit = defineEmits(['delete-turn'])
 const msg = computed(() => props.message || {})
 
 const groupedResults = computed(() => msg.value.groupedResults || {})
+
+const skillArtifacts = computed(() => {
+  const list = msg.value?.refs?.skill?.artifacts
+  return Array.isArray(list) ? list : []
+})
+
+const artifactPreviewOpen = ref(false)
+const artifactPreview = ref(null)
+const artifactText = ref('')
+const artifactLoading = ref(false)
+
+const isMarkdown = (artifact) => {
+  const name = (artifact?.name || '').toLowerCase()
+  return name.endsWith('.md') || name.endsWith('.txt')
+}
+
+const openArtifact = async (artifact) => {
+  if (!artifact) return
+  if (artifact.kind === 'file' && !isMarkdown(artifact)) {
+    window.open(artifact.url, '_blank', 'noopener')
+    return
+  }
+  artifactPreview.value = artifact
+  artifactPreviewOpen.value = true
+  artifactText.value = ''
+  if (artifact.kind === 'file' && isMarkdown(artifact)) {
+    artifactLoading.value = true
+    try {
+      const res = await fetch(artifact.url)
+      artifactText.value = await res.text()
+    } catch (e) {
+      artifactText.value = '预览失败，请尝试下载文件。'
+    } finally {
+      artifactLoading.value = false
+    }
+  }
+}
 
 // 使用 reactive 创建一个响应式对象来存储每个文件的抽屉状态
 const openDetail = reactive({})
@@ -245,7 +313,39 @@ const getPercent = (value) => {
       align-items: center;
       gap: 5px;
     }
+
+    .skill-artifact-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #eef8f4;
+      color: #0d7a5f;
+    }
   }
+}
+
+.artifact-preview {
+  text-align: center;
+
+  img {
+    max-width: 100%;
+    max-height: 70vh;
+    object-fit: contain;
+  }
+}
+
+.artifact-md pre {
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f9f9f9;
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.artifact-download a {
+  color: var(--main-600, #1677ff);
 }
 
 .retrieval-detail {

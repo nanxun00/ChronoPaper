@@ -9,6 +9,7 @@ from src.api.v1 import (
     latex,
     literature,
     search,
+    skills,
     smartbi,
     system,
     tasks,
@@ -24,6 +25,7 @@ v1_router.include_router(tasks.router)
 v1_router.include_router(literature.router)
 v1_router.include_router(translate.router)
 v1_router.include_router(chat.router)
+v1_router.include_router(skills.router)
 v1_router.include_router(knowledge_base.router)
 v1_router.include_router(smartbi.router)
 v1_router.include_router(search.router)

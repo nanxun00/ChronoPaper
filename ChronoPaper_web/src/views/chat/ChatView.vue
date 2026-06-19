@@ -20,6 +20,7 @@
     </div>
     <ChatComponent
       v-if="activeConv"
+      :key="curConvId"
       :conv="activeConv"
       :state="state"
       @rename-title="renameTitle"
@@ -30,7 +31,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted, onActivated } from 'vue'
 import { MenuOutlined, DeleteOutlined, CommentOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import ChatComponent from '@/components/chat/ChatComponent.vue'
@@ -65,15 +66,48 @@ const mapConvSummary = (row) => ({
   history: [],
   messages: [],
   inputText: '',
+  detailLoaded: false,
 })
 
-const loadConversationDetail = async (convId) => {
-  const detail = await getConversation(convId)
+const normalizeMessages = (rows) => {
+  if (!Array.isArray(rows)) return []
+  return rows.map((item) => ({
+    id: item.id || item.msg_id || `msg-${Math.random().toString(36).slice(2)}`,
+    role: item.role === 'user' ? 'sent' : item.role === 'assistant' ? 'received' : (item.role || 'received'),
+    text: item.text ?? item.content ?? '',
+    images: item.images || [],
+    citations: item.citations || [],
+    ponder: item.ponder || item.reasoning_content || '',
+    refs: item.refs ?? null,
+    model_name: item.model_name,
+    status: item.status || 'finished',
+    meta: item.meta || {},
+    skill_active: Boolean(item.skill_active || item.meta?.skill_id || item.refs?.skill?.skill_id),
+  }))
+}
+
+const loadConversationDetail = async (convId, { force = false } = {}) => {
   const target = convs.find((c) => c.conv_id === convId)
   if (!target) return
-  target.title = detail.title || target.title
-  target.history = detail.history || []
-  target.messages = detail.messages || []
+  if (target.detailLoaded && !force) return
+
+  const detail = await getConversation(convId)
+  const refreshed = convs.find((c) => c.conv_id === convId)
+  if (!refreshed) return
+
+  refreshed.title = detail.title || refreshed.title
+  refreshed.history = Array.isArray(detail.history) ? detail.history : []
+  refreshed.messages = normalizeMessages(detail.messages)
+  refreshed.detailLoaded = true
+}
+
+const ensureActiveConversationLoaded = async ({ force = false } = {}) => {
+  if (!curConvId.value) return
+  try {
+    await loadConversationDetail(curConvId.value, { force })
+  } catch (err) {
+    message.error(err.message || '加载对话详情失败')
+  }
 }
 
 const loadConversations = async () => {
@@ -86,7 +120,11 @@ const loadConversations = async () => {
       await addNewConv()
     } else {
       curConvId.value = convs[0].conv_id
-      await loadConversationDetail(curConvId.value)
+      try {
+        await loadConversationDetail(curConvId.value)
+      } catch (err) {
+        message.error(err.message || '加载对话详情失败')
+      }
     }
   } catch (err) {
     message.error(err.message || '加载对话失败')
@@ -109,16 +147,10 @@ const renameTitle = async (newTitle) => {
 }
 
 const goToConversation = async (convId) => {
-  if (curConvId.value === convId) return
   curConvId.value = convId
   const conv = convs.find((c) => c.conv_id === convId)
-  if (conv && conv.messages.length === 0) {
-    try {
-      await loadConversationDetail(convId)
-    } catch (err) {
-      message.error(err.message || '加载对话详情失败')
-    }
-  }
+  if (!conv || conv.detailLoaded) return
+  await ensureActiveConversationLoaded()
 }
 
 const addNewConv = async () => {
@@ -172,6 +204,17 @@ const delConv = async (convId) => {
 
 onMounted(() => {
   loadConversations()
+})
+
+onActivated(() => {
+  if (convs.length === 0) {
+    loadConversations()
+    return
+  }
+  const conv = activeConv.value
+  if (conv && !conv.detailLoaded) {
+    ensureActiveConversationLoaded()
+  }
 })
 </script>
 

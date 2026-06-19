@@ -85,6 +85,108 @@ General_Summary — 原理、动机、创新点、整体架构流程（非上述
 <问题>{text}</问题>
 """
 
+skill_route_prompt_template = """
+从下列已启用技能中选择最匹配用户问题的一项。只返回技能 id（纯文本，如 nature-reader）。
+若无任何技能匹配，只返回 none。不要解释。
+
+<已启用技能>
+{skill_list}
+</已启用技能>
+
+<用户问题>{query}</用户问题>
+"""
+
+skill_script_plan_prompt_template = """
+当前激活技能：{skill_id}
+用户问题：{query}
+
+可用脚本（仅能从下列路径选择，使用 python 执行）：
+{script_list}
+
+请判断是否需要运行脚本获取外部数据或文件，再回答用户。
+
+只返回 JSON，不要 markdown：
+{{"run": false}}
+或
+{{"run": true, "script": "scripts/academic_search.py", "args": ["检索关键词", "--limit", "10"]}}
+
+规则：
+- 纯润色、写作、审稿、总结类任务 → run:false
+- 需要查文献、验证引用、转换引用格式、跑检索 API → 选对应脚本
+- script 必须来自上方列表；args 为 CLI 参数列表，不要 shell 元字符
+- academic_search 检索时 args 第一项为查询词，可加 --limit 10
+"""
+
+skill_codegen_write_prompt_template = """
+当前激活技能：{skill_id}
+用户问题：{query}
+本次运行 ID：{run_id}
+
+<已同步文献资源>
+{input_context}
+</已同步文献资源>
+
+请编写一个完整、可独立运行的 Python 3 脚本，在技能工作目录下生成所需文件。
+
+输出要求：
+- **只输出一个** ```python 代码块，不要 JSON，不要步骤说明
+- 工作目录为技能根目录；用 pathlib.Path
+- 主交付文件写入 output/runs/{run_id}/ 或 references/runs/{run_id}/，避免覆盖历史轮次产物
+- 可用 Python 包：
+{allowed_packages}
+- 禁止：subprocess、os.system、eval、exec、网络请求、访问技能目录外路径
+- nature-paper2ppt 默认输出：output/runs/{run_id}/final_presentation_cn.pptx
+- 若有「页面/配图 PNG」列表，只使用列表中的确切路径插入幻灯片（slide.shapes.add_picture），勿 glob 扫描 figures 目录
+- 脚本直接运行即可，不要依赖命令行参数
+- 创建输出目录；执行结束前应保存主交付文件
+"""
+
+skill_codegen_revise_prompt_template = """
+当前激活技能：{skill_id}
+用户问题：{query}
+本次运行 ID：{run_id}
+
+<已同步文献资源>
+{input_context}
+</已同步文献资源>
+
+你上一轮生成的脚本执行失败（第 {round_num} 轮修订）。请输出**修正后的完整脚本**。
+
+上一轮代码：
+```python
+{previous_code}
+```
+
+错误信息：
+{error_context}
+
+只输出一个修正后的 ```python 代码块，不要解释。
+主交付文件仍写入 output/runs/{run_id}/；若有配图 PNG 路径，只使用列表中的确切路径插入幻灯片。
+"""
+
+# 保留旧模板供兼容（单轮 JSON 方式，已弃用）
+skill_codegen_plan_prompt_template = """
+当前激活技能：{skill_id}
+用户问题：{query}
+
+该技能可能需要将结果写入技能目录下的 output/ 或 references/（如 .pptx、.docx、.md、.png、.bib 等）。
+若需要运行 Python 生成这些文件，请输出完整可执行脚本。
+
+只返回 JSON，不要 markdown 代码块包裹整个 JSON：
+{{"run": false}}
+或
+{{"run": true, "purpose": "一句话说明", "code": "完整 Python 3 脚本字符串"}}
+
+规则：
+- 纯润色、审稿、问答、无需落盘文件 → run:false
+- 需要生成 PPT/图表/专利文档/阅读稿等文件 → run:true
+- code 必须是完整脚本；工作目录为技能根目录，用 pathlib.Path，输出写到 output/ 或 references/
+- 可用包：pathlib、json、re、pptx、PIL/Pillow、fitz(PyMuPDF) 等常见科研包
+- 禁止：subprocess、os.system、eval、exec、网络请求、访问技能目录外的绝对路径
+- paper2ppt 默认输出：output/final_presentation_cn.pptx
+- 脚本应直接运行（无需命令行参数），执行完即退出
+"""
+
 graph_extraction_prompt_template = """
 你是学术论文知识图谱抽取助手。请从给定论文片段中抽取实体与关系，仅输出合法 JSON，不要输出任何解释文字。
 

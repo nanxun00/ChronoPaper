@@ -87,17 +87,45 @@ def _prepare_chat_query(
     literature_context: str,
     user_id: str,
     cur_res_id: str,
-) -> str:
+) -> tuple[str, dict | None, str | None]:
+    from src.services.skills import prepare_skill_turn
+
+    skill_system, skill_info = prepare_skill_turn(
+        query,
+        meta,
+        model=startup.model,
+        user_id=user_id,
+        run_id=cur_res_id,
+    )
+    if skill_info.get("skill_id"):
+        meta.update({k: v for k, v in skill_info.items() if v is not None})
+
+    refs: dict | None = None
     if meta.get("enable_retrieval"):
         meta = _ensure_retrieval_db(meta)
         meta = {**meta, "user_id": user_id}
         new_query, refs = startup.retriever(query, history_manager.messages, meta)
-        _refs_set(user_id, cur_res_id, refs)
     else:
         new_query = query
+
     if literature_context:
         new_query = f"{literature_context}\n\n用户问题：{new_query}"
-    return new_query
+
+    if skill_info.get("skill_id"):
+        if refs is None:
+            refs = {}
+        refs["skill"] = skill_info
+        _refs_set(user_id, cur_res_id, refs)
+    elif refs is not None:
+        _refs_set(user_id, cur_res_id, refs)
+
+    return new_query, refs, skill_system
+
+
+def _inject_skill_system(messages: list, skill_system: str | None) -> list:
+    if not skill_system:
+        return messages
+    return [{"role": "system", "content": skill_system}, *messages]
 
 
 def _message_to_response_content(message) -> tuple[dict, str]:
@@ -294,10 +322,11 @@ def chat_post(
     use_stream = _is_stream_enabled(meta)
 
     if not use_stream:
-        new_query = _prepare_chat_query(
+        new_query, refs, skill_system = _prepare_chat_query(
             query, history_manager, meta, literature_context, user_id, cur_res_id
         )
         messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get("history_round"))
+        messages = _inject_skill_system(messages, skill_system)
         history_manager.add_user(query)
         message = startup.model.predict(messages, stream=False)
         response_content, content = _message_to_response_content(message)
@@ -325,10 +354,11 @@ def chat_post(
         if meta.get("enable_retrieval"):
             yield make_chunk("", "searching", history=None)
 
-        new_query = _prepare_chat_query(
+        new_query, refs, skill_system = _prepare_chat_query(
             query, history_manager, meta, literature_context, user_id, cur_res_id
         )
         messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get("history_round"))
+        messages = _inject_skill_system(messages, skill_system)
         history_manager.add_user(query)
         logger.debug(f"Web history: {history_manager.messages}")
 

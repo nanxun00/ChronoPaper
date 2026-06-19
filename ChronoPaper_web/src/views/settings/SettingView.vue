@@ -18,6 +18,7 @@
         <a-button type="text" :class="{ activesec: state.section === 'base'}" @click="state.section='base'" :icon="h(SettingOutlined)"> 基本设置 </a-button>
         <a-button type="text" :class="{ activesec: state.section === 'model'}" @click="state.section='model'" :icon="h(CodeOutlined)"> 模型配置 </a-button>
         <a-button type="text" :class="{ activesec: state.section === 'path'}" @click="state.section='path'" :icon="h(FolderOutlined)"> 路径配置 </a-button>
+        <a-button type="text" :class="{ activesec: state.section === 'skills'}" @click="state.section='skills'" :icon="h(ThunderboltOutlined)"> 技能管理 </a-button>
       </div>
       <div class="setting" v-if="state.section === 'base'">
         <h3>基础模型配置</h3>
@@ -172,6 +173,10 @@
       <div class="setting" v-if="state.section ==='path'">
         <h3>暂无配置</h3>
       </div>
+      <div class="setting" v-if="state.section === 'skills'">
+        <h3>技能管理</h3>
+        <SkillManagementPanel ref="skillPanelRef" />
+      </div>
     </div>
   </div>
 </template>
@@ -189,8 +194,10 @@ import {
   DeleteOutlined,
   EditOutlined,
   InfoCircleOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons-vue';
 import HeaderComponent from '@/components/common/HeaderComponent.vue';
+import SkillManagementPanel from '@/components/settings/SkillManagementPanel.vue';
 import { notification, Button } from 'ant-design-vue';
 
 const configStore = useConfigStore()
@@ -212,6 +219,16 @@ const state = reactive({
   loading: false,
   section: 'base'
 })
+const skillPanelRef = ref(null)
+
+watch(
+  () => state.section,
+  (sec) => {
+    if (sec === 'skills') {
+      skillPanelRef.value?.loadSkills?.()
+    }
+  },
+)
 
 // 筛选 modelStatus 中为真的key
 const modelKeys = computed(() => {

@@ -354,6 +354,17 @@
     >
       <template v-if="previewItem">
         <h3>{{ previewItem.title }}</h3>
+        <div v-if="previewTitle" class="preview-zh-block preview-zh-block--title">
+          <div class="preview-zh-block__label">中文标题</div>
+          <p v-if="titleZhLoading" class="preview-zh-block__body preview-zh-block__loading">
+            <a-spin size="small" /> 正在翻译…
+          </p>
+          <p v-else-if="titleZhError" class="preview-zh-block__body preview-zh-block__error">
+            {{ titleZhError }}
+            <a-button type="link" size="small" @click="loadTitleZh">重试</a-button>
+          </p>
+          <p v-else class="preview-zh-block__body">{{ titleZh || '—' }}</p>
+        </div>
         <p class="preview-meta">
           <a-tag v-if="previewItem.source" :color="sourceColor(previewItem.source)">
             {{ sourceLabel(previewItem.source) }}
@@ -377,6 +388,17 @@
           </template>
           <template v-else>暂无摘要</template>
         </p>
+        <div v-if="previewAbstract" class="preview-zh-block">
+          <div class="preview-zh-block__label">中文摘要</div>
+          <p v-if="abstractZhLoading" class="preview-zh-block__body preview-zh-block__loading">
+            <a-spin size="small" /> 正在翻译…
+          </p>
+          <p v-else-if="abstractZhError" class="preview-zh-block__body preview-zh-block__error">
+            {{ abstractZhError }}
+            <a-button type="link" size="small" @click="loadAbstractZh">重试</a-button>
+          </p>
+          <p v-else class="preview-zh-block__body selectable-text">{{ abstractZh || '—' }}</p>
+        </div>
         <a-divider orientation="left">PDF 预览</a-divider>
         <PdfPreview
           :arxiv-id="previewItem.arxiv_id"
@@ -394,6 +416,7 @@ import { DeleteOutlined, PictureOutlined, StarFilled, StarOutlined } from '@ant-
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import PdfPreview from '@/components/literature/PdfPreview.vue'
 import { approveLiteratureEntries, deleteLiteratureEntries, fetchLiteraturePdf, getPaperDetail, listPublicPapers, listPrivatePapers, parseLiteratureEntries, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
+import { streamTranslate } from '@/api/translate'
 import { SOURCE_LABELS } from '@/constants/openreviewVenues'
 import { useSelectionTranslate } from '@/composables/useSelectionTranslate'
 
@@ -409,6 +432,17 @@ const fetchRetryingId = ref('')
 const searchLoading = ref(false)
 const previewOpen = ref(false)
 const previewItem = ref(null)
+const titleZh = ref('')
+const titleZhLoading = ref(false)
+const titleZhError = ref('')
+const abstractZh = ref('')
+const abstractZhLoading = ref(false)
+const abstractZhError = ref('')
+let titleTranslateAbort = null
+let abstractTranslateAbort = null
+
+/** 会话内翻译缓存 */
+const zhTranslateCache = new Map()
 
 const publicQuery = ref('')
 const publicCategory = ref('')
@@ -557,11 +591,151 @@ const previewExternalUrl = computed(() => {
   return url
 })
 
+const previewTitle = computed(() => {
+  const item = previewItem.value
+  if (!item) return ''
+  return (item.title || '').trim()
+})
+
 const previewAbstract = computed(() => {
   const item = previewItem.value
   if (!item) return ''
   return (item.abstract || item.summary || '').trim()
 })
+
+const isMostlyChinese = (text) => {
+  const trimmed = (text || '').trim()
+  if (!trimmed) return false
+  const cjkCount = (trimmed.match(/[\u4e00-\u9fff]/g) || []).length
+  return cjkCount / trimmed.length >= 0.25
+}
+
+const resetPreviewTranslations = () => {
+  if (titleTranslateAbort) {
+    titleTranslateAbort.abort()
+    titleTranslateAbort = null
+  }
+  if (abstractTranslateAbort) {
+    abstractTranslateAbort.abort()
+    abstractTranslateAbort = null
+  }
+  titleZh.value = ''
+  titleZhLoading.value = false
+  titleZhError.value = ''
+  abstractZh.value = ''
+  abstractZhLoading.value = false
+  abstractZhError.value = ''
+}
+
+const runZhTranslation = async ({
+  text,
+  cacheKey,
+  getAbort,
+  setAbort,
+  setValue,
+  setLoading,
+  setError,
+  failLabel,
+}) => {
+  const cached = zhTranslateCache.get(cacheKey)
+  if (cached) {
+    setValue(cached)
+    setLoading(false)
+    setError('')
+    return
+  }
+
+  if (isMostlyChinese(text)) {
+    zhTranslateCache.set(cacheKey, text)
+    setValue(text)
+    setLoading(false)
+    setError('')
+    return
+  }
+
+  const prev = getAbort()
+  if (prev) {
+    prev.abort()
+  }
+  const controller = new AbortController()
+  setAbort(controller)
+  const { signal } = controller
+
+  setValue('')
+  setLoading(true)
+  setError('')
+
+  let translated = ''
+  try {
+    await streamTranslate({
+      text,
+      targetLang: 'zh',
+      signal,
+      onChunk: ({ content, done }) => {
+        if (content) {
+          translated += content
+          setValue(translated)
+        }
+        if (done && translated) {
+          zhTranslateCache.set(cacheKey, translated)
+        }
+      },
+    })
+    if (!translated.trim()) {
+      setError('翻译结果为空')
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError') return
+    setError(err?.message || failLabel)
+  } finally {
+    if (!signal.aborted) {
+      setLoading(false)
+      setAbort(null)
+    }
+  }
+}
+
+const loadTitleZh = async () => {
+  const item = previewItem.value
+  const text = previewTitle.value
+  if (!item?.arxiv_id || !text) {
+    titleZh.value = ''
+    titleZhLoading.value = false
+    titleZhError.value = ''
+    return
+  }
+  await runZhTranslation({
+    text,
+    cacheKey: `title::${item.arxiv_id}::${text}`,
+    getAbort: () => titleTranslateAbort,
+    setAbort: (v) => { titleTranslateAbort = v },
+    setValue: (v) => { titleZh.value = v },
+    setLoading: (v) => { titleZhLoading.value = v },
+    setError: (v) => { titleZhError.value = v },
+    failLabel: '标题翻译失败',
+  })
+}
+
+const loadAbstractZh = async () => {
+  const item = previewItem.value
+  const text = previewAbstract.value
+  if (!item?.arxiv_id || !text) {
+    abstractZh.value = ''
+    abstractZhLoading.value = false
+    abstractZhError.value = ''
+    return
+  }
+  await runZhTranslation({
+    text,
+    cacheKey: `abstract::${item.arxiv_id}::${text.slice(0, 120)}`,
+    getAbort: () => abstractTranslateAbort,
+    setAbort: (v) => { abstractTranslateAbort = v },
+    setValue: (v) => { abstractZh.value = v },
+    setLoading: (v) => { abstractZhLoading.value = v },
+    setError: (v) => { abstractZhError.value = v },
+    failLabel: '摘要翻译失败',
+  })
+}
 
 const favoriteIdSet = computed(() => new Set(favoritePapers.value.map((p) => p.arxiv_id)))
 
@@ -689,6 +863,7 @@ onUnmounted(() => {
     clearInterval(pipelinePollTimer)
     pipelinePollTimer = null
   }
+  resetPreviewTranslations()
 })
 
 watch(activeTab, (tab) => {
@@ -703,6 +878,7 @@ watch(activeTab, (tab) => {
 })
 
 const openPreview = async (record) => {
+  resetPreviewTranslations()
   previewItem.value = { ...record }
   previewOpen.value = true
   try {
@@ -712,6 +888,30 @@ const openPreview = async (record) => {
     // 列表数据已足够展示，详情失败时保留基础信息
   }
 }
+
+watch(previewOpen, (open) => {
+  if (!open) {
+    resetPreviewTranslations()
+  }
+})
+
+watch(
+  () => [previewOpen.value, previewItem.value?.arxiv_id, previewTitle.value],
+  ([open, arxivId, title]) => {
+    if (open && arxivId && title) {
+      loadTitleZh()
+    }
+  },
+)
+
+watch(
+  () => [previewOpen.value, previewItem.value?.arxiv_id, previewAbstract.value],
+  ([open, arxivId, abstract]) => {
+    if (open && arxivId && abstract) {
+      loadAbstractZh()
+    }
+  },
+)
 
 const toggleFavorite = (record) => {
   record.favorited = !record.favorited
@@ -995,7 +1195,50 @@ const runImageSearch = () => {
 .preview-abstract {
   line-height: 1.7;
   color: var(--gray-900);
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.preview-zh-block {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f6f8fa;
+  border: 1px solid #e8ecf0;
+}
+
+.preview-zh-block--title {
+  margin-top: 8px;
+}
+
+.preview-zh-block__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-800);
+  margin-bottom: 8px;
+}
+
+.preview-zh-block__body {
+  line-height: 1.7;
+  color: var(--gray-900);
+  margin: 0;
+}
+
+.preview-zh-block--title .preview-zh-block__body {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.preview-zh-block__loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--gray-600);
+  font-size: 13px;
+}
+
+.preview-zh-block__error {
+  color: #cf1322;
+  font-size: 13px;
 }
 
 .selectable-text {

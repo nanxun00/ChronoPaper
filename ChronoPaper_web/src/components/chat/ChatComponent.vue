@@ -195,6 +195,12 @@
               <span v-if="citedLiterature.length" class="tool-chip__count">{{ citedLiterature.length }}</span>
             </button>
           </LiteratureCitePicker>
+          <SkillPicker
+            :skill-mode="meta.skill_mode"
+            :skill-id="meta.skill_id"
+            @update:skill-mode="(v) => (meta.skill_mode = v)"
+            @update:skill-id="(v) => (meta.skill_id = v)"
+          />
         </div>
 
       </div>
@@ -229,15 +235,17 @@ import {
   DownOutlined,
 } from '@ant-design/icons-vue'
 import { onClickOutside } from '@vueuse/core'
-import { Marked } from 'marked';
-import { markedHighlight } from 'marked-highlight';
+import { parseChatMarkdown } from '@/utils/markdownSkillFold'
 import { useConfigStore, useUserStore } from '@/stores'
 import { message } from 'ant-design-vue'
 import RefsComponent from '@/components/chat/RefsComponent.vue'
 import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
+import SkillPicker from '@/components/chat/SkillPicker.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
 import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
 import hljs from 'highlight.js';
+import { Marked } from 'marked';
+import { markedHighlight } from 'marked-highlight';
 import 'highlight.js/styles/github.css';
 // import login from '@/components/login.vue'
 
@@ -337,6 +345,8 @@ const DEFAULT_CHAT_META = {
   stream: true,
   summary_title: true,
   history_round: 10,
+  skill_mode: 'auto',
+  skill_id: null,
 }
 
 const meta = reactive({
@@ -375,11 +385,8 @@ onClickOutside(panel, () => setTimeout(() => opts.showPanel = false, 30))
 onClickOutside(modelCard, () => setTimeout(() => opts.showModelCard = false, 30))
 
 const renderMarkdown = (message) => {
-  if (message.status === 'loading') {
-    return marked.parse(message.text + '🟢')
-  } else {
-    return marked.parse(message.text)
-  }
+  const text = message.status === 'loading' ? message.text + '🟢' : message.text
+  return parseChatMarkdown(text, message)
 }
 const ponderrenderMarkdown = (message) => {
   if (message.status === 'loading') {
@@ -469,6 +476,7 @@ const appendAiMessage = (message, refs = null) => {
     refs,
     status: "init",
     meta: {},
+    skill_active: meta.skill_mode !== 'off',
   })
   scrollToBottom()
 }
@@ -1051,6 +1059,9 @@ onMounted(() => {
   loadDatabases()
   if (meta.stream === undefined || meta.stream === null) {
     meta.stream = true
+  }
+  if (!meta.skill_mode) {
+    meta.skill_mode = 'auto'
   }
 })
 
@@ -1808,6 +1819,51 @@ watch(
   h5,
   h6 {
     font-size: 1rem;
+  }
+
+  .skill-code-fold {
+    margin: 10px 0;
+    border: 1px solid #e8e8e8;
+    border-radius: 8px;
+    background: #f9fafb;
+    overflow: hidden;
+  }
+
+  .skill-code-fold__summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 13px;
+    color: #666;
+    list-style: none;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    &::before {
+      content: '▶';
+      font-size: 10px;
+      color: #999;
+      transition: transform 0.15s ease;
+      flex-shrink: 0;
+    }
+  }
+
+  .skill-code-fold[open] > .skill-code-fold__summary::before {
+    transform: rotate(90deg);
+  }
+
+  .skill-code-fold__body pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    border-top: 1px solid #e8e8e8;
+    max-height: 480px;
+    overflow: auto;
   }
 
   li,

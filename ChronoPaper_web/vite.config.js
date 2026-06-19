@@ -17,7 +17,11 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_API_URL || 'http://localhost:8081',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, '')
-        }
+        },
+        '^/uploads': {
+          target: env.VITE_API_URL || 'http://localhost:8081',
+          changeOrigin: true,
+        },
       },
       watch: {
         usePolling: true,

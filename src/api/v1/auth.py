@@ -161,36 +161,48 @@ services = config["services"]
 
 '''
 services的key是服务名称，客户端在请求时传入服务名称，本网关再根据服务名称找到对应的服务地址
+仅注册配置中的外部服务，避免 `/{service}/{path}` 抢占本地路由（如 /skills/）。
 '''
 
 
-# 接收客户端请求并转发到后端服务
-@login.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def gateway(service: str, path: str, request: Request,
-                  current_user: Annotated[UserSchema, Depends(get_current_active_user)]):
+async def _proxy_to_service(
+    service: str,
+    path: str,
+    request: Request,
+    current_user: UserSchema,
+):
     '''
     !注意：网关并未将header转发给后端服务，这样比较简单。
     '''
-
-    if service not in services:
-        raise HTTPException(status_code=404, detail="未找到该服务")
-
     headers = {"userid": current_user.userid}
-
-    # 从客户端请求中获取数据
     client_request_data = await request.json()
-
     service_url = services[service]
     url = f"{service_url}/{path}"
-
-    # 使用 httpx 将请求转发到后端服务，非阻塞，不过在我的配置一般的开发机上没有发现和阻塞式调用在性能上有多少区别。
     async with httpx.AsyncClient() as client:
         '''
         !注意：httpx.AsyncClient默认的timeout为5秒，在调用基于大模型的后端服务时经常超时，所以这里设置超时时间为30秒
         '''
         response = await client.post(url=url, json=client_request_data, headers=headers, timeout=time_out)
-        # print(response)
         return response.json()
+
+
+def _register_service_gateway(service_name: str) -> None:
+    async def gateway(
+        path: str,
+        request: Request,
+        current_user: Annotated[UserSchema, Depends(get_current_active_user)],
+    ):
+        return await _proxy_to_service(service_name, path, request, current_user)
+
+    login.add_api_route(
+        f"/{service_name}/{{path:path}}",
+        gateway,
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    )
+
+
+for _service_name in services:
+    _register_service_gateway(_service_name)
 
 class register(BaseModel):
     username: str
