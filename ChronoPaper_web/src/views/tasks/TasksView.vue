@@ -2,7 +2,7 @@
   <div class="tasks-container layout-container">
     <HeaderComponent
       title="任务中心"
-      description="统一管理所有后台异步任务：论文抓取、推送、LaTeX 编译、TimeRAG 时序分析等。"
+      description="统一管理后台异步任务：论文抓取、推送等。"
     >
       <template #actions>
         <a-button type="primary" @click="openCreateModal">新建任务</a-button>
@@ -21,8 +21,6 @@
         <a-tab-pane key="all" tab="全部任务" />
         <a-tab-pane key="crawl" tab="抓取任务" />
         <a-tab-pane key="push" tab="推送任务" />
-        <a-tab-pane key="compile" tab="编译任务" />
-        <a-tab-pane key="timerag" tab="时序分析" />
       </a-tabs>
 
       <div v-if="selectedRowKeys.length" class="batch-toolbar">
@@ -567,12 +565,12 @@ const columns = [
 ]
 
 const typeLabel = (type) => {
-  const map = { crawl: '抓取', push: '推送', compile: '编译', timerag: '时序分析' }
+  const map = { crawl: '抓取', push: '推送' }
   return map[type] || type
 }
 
 const typeColor = (type) => {
-  const map = { crawl: 'blue', push: 'green', compile: 'purple', timerag: 'orange' }
+  const map = { crawl: 'blue', push: 'green' }
   return map[type] || 'default'
 }
 
