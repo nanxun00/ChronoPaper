@@ -15,6 +15,12 @@ from src.utils.snowflake import next_snowflake_id
 
 DEFAULT_CHUNK_SIZE = 500
 DEFAULT_CHUNK_OVERLAP = 20
+LONG_SPLIT_THRESHOLD = 500
+MIN_STANDALONE_LEN = 50
+MIN_NON_CORE_LEN = 80
+
+HIGH_VALUE_SECTIONS = frozenset({"abstract", "intro", "method", "experiment", "conclusion"})
+HIGH_VALUE_BLOCK_TYPES = frozenset({"table", "equation"})
 
 _SECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
     "abstract": ("abstract", "summary", "摘要"),
@@ -24,6 +30,62 @@ _SECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
     "conclusion": ("conclusion", "discussion", "结论", "讨论"),
     "reference": ("reference", "bibliography", "参考文献"),
 }
+
+_PURE_DIGIT_RE = re.compile(r"^\d{1,4}$")
+_SEPARATOR_RE = re.compile(r"^[-_=·•\s]{2,}$")
+_SUPERSCRIPT_ONLY_RE = re.compile(r"^[\d*,\s†‡§¹²³⁴⁵⁶⁷⁸⁹⁰]+$")
+_COPYRIGHT_RE = re.compile(
+    r"(©|copyright|all rights reserved|creativecommons|open access|under a\s+cc\s)",
+    re.I,
+)
+_DOI_LINE_RE = re.compile(r"^(https?://)?(dx\.)?doi\.org/[\w./-]+", re.I)
+_DATE_LINE_RE = re.compile(
+    r"^(received|revised|accepted|available online|article history).{0,40}\d{4}",
+    re.I,
+)
+_BOILERPLATE_RE = re.compile(
+    r"(CRediT\s+authorship|author contributions|funding|grant\s+no|"
+    r"conflict of interest|declarations of competing|acknowledgements?|"
+    r"data availability|ethics approval|informed consent)",
+    re.I,
+)
+_AUTHOR_BIO_RE = re.compile(
+    r"(biograph(y|ical)?|received (his|her) (b\.?s\.?|m\.?s\.?|ph\.?d\.?)|"
+    r"is (currently )?(a|an) (professor|researcher|lecturer) (at|with))",
+    re.I,
+)
+_JOURNAL_HEADER_RE = re.compile(
+    r"^(neurocomputing|elsevier|springer|ieee|acm|nature)\b.*(\(\d{4}\)|vol\.|volume)",
+    re.I,
+)
+_AFFILIATION_RE = re.compile(
+    r"(university|school of|department|institute|laboratory|college|hospital|"
+    r"center for|academy|ueestc|uestc)",
+    re.I,
+)
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_CORRESPONDING_RE = re.compile(r"corresponding author", re.I)
+
+
+class _PreparedBlock:
+    __slots__ = ("text", "block_type", "section_type", "page_num", "bbox", "drop")
+
+    def __init__(
+        self,
+        text: str,
+        *,
+        block_type: str,
+        section_type: str,
+        page_num: int | None,
+        bbox: str | None,
+        drop: bool = False,
+    ) -> None:
+        self.text = text
+        self.block_type = block_type
+        self.section_type = section_type
+        self.page_num = page_num
+        self.bbox = bbox
+        self.drop = drop
 
 
 def _infer_section_from_title(title: str) -> str | None:
@@ -73,7 +135,256 @@ def _bbox_to_str(block: dict[str, Any]) -> str | None:
     return str(bbox)
 
 
-def _split_long_text(text: str, base_meta: dict[str, Any], *, chunk_size: int, chunk_overlap: int) -> list[dict[str, Any]]:
+def _effective_len(text: str) -> int:
+    return len(re.sub(r"\s+", "", text or ""))
+
+
+def _is_author_line(text: str) -> bool:
+    t = text.strip()
+    if not t or len(t) > 280:
+        return False
+    if _EMAIL_RE.search(t) or _CORRESPONDING_RE.search(t):
+        return True
+    normalized = re.sub(r"[¹²³⁴⁵⁶⁷⁸⁹⁰†‡§*]+", "", t)
+    if re.search(
+        r"^[A-Z][\w\-'.]+(?:\s+[A-Z][\w\-'.]+){0,4}(?:\s*[,，]\s*[A-Z][\w\-'.]+(?:\s+[A-Z][\w\-'.]+){0,3})+",
+        normalized,
+    ):
+        return True
+    if "," in t and len(t) < 200 and re.search(r"[A-Z][a-z]+\s+[A-Z]", normalized):
+        return True
+    return False
+
+
+def _is_affiliation_line(text: str) -> bool:
+    t = text.strip()
+    if not t or len(t) > 320:
+        return False
+    return bool(_AFFILIATION_RE.search(t))
+
+
+def _is_front_matter_line(text: str, block_type: str) -> bool:
+    if block_type == "title":
+        return True
+    t = text.strip()
+    if not t:
+        return False
+    if _is_author_line(t) or _is_affiliation_line(t):
+        return True
+    if len(t) <= 180 and (t.count(",") >= 2 or re.search(r"\d{1,2}[,\s]", t[:12])):
+        return _is_author_line(t) or _is_affiliation_line(t)
+    return False
+
+
+def _should_drop_block(text: str, block_type: str, section_type: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+    compact = _effective_len(t)
+
+    if _PURE_DIGIT_RE.match(t):
+        return True
+    if _SEPARATOR_RE.match(t):
+        return True
+    if _SUPERSCRIPT_ONLY_RE.match(t):
+        return True
+    if _COPYRIGHT_RE.search(t) and compact < 220:
+        return True
+    if _DOI_LINE_RE.match(t) and compact < 120:
+        return True
+    if _DATE_LINE_RE.match(t):
+        return True
+    if _BOILERPLATE_RE.search(t) and section_type != "method":
+        return True
+    if _AUTHOR_BIO_RE.search(t) and compact < 420:
+        return True
+    if compact < MIN_STANDALONE_LEN and _JOURNAL_HEADER_RE.match(t):
+        return True
+    if compact < MIN_STANDALONE_LEN and re.match(r"^https?://", t, re.I):
+        return True
+    if block_type == "text" and compact < MIN_STANDALONE_LEN:
+        if not _is_author_line(t) and not _is_affiliation_line(t):
+            if section_type not in HIGH_VALUE_SECTIONS:
+                return True
+    return False
+
+
+def _prepare_blocks(content_list: list[dict[str, Any]]) -> list[_PreparedBlock]:
+    prepared: list[_PreparedBlock] = []
+    current_section = "text"
+
+    for block in content_list:
+        if not isinstance(block, dict):
+            continue
+        text = _block_text(block)
+        if not text:
+            continue
+
+        block_type = _map_block_type(block)
+        if block_type == "title":
+            inferred = _infer_section_from_title(text)
+            if inferred:
+                current_section = inferred
+
+        if _should_drop_block(text, block_type, current_section):
+            continue
+
+        prepared.append(
+            _PreparedBlock(
+                text,
+                block_type=block_type,
+                section_type=current_section,
+                page_num=int(block.get("page_idx", 0)) + 1 if block.get("page_idx") is not None else None,
+                bbox=_bbox_to_str(block),
+            )
+        )
+    return prepared
+
+
+def _merge_front_matter(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    if not blocks:
+        return blocks
+
+    out: list[_PreparedBlock] = []
+    i = 0
+    while i < len(blocks):
+        blk = blocks[i]
+        if blk.section_type in HIGH_VALUE_SECTIONS or blk.section_type == "reference":
+            out.append(blk)
+            i += 1
+            continue
+
+        if blk.block_type in HIGH_VALUE_BLOCK_TYPES:
+            out.append(blk)
+            i += 1
+            continue
+
+        if blk.block_type == "title" or (i == 0 and _is_front_matter_line(blk.text, blk.block_type)):
+            parts = [blk.text]
+            page_num = blk.page_num
+            bbox = blk.bbox
+            j = i + 1
+            while j < len(blocks):
+                nxt = blocks[j]
+                if nxt.section_type in HIGH_VALUE_SECTIONS or nxt.section_type == "reference":
+                    break
+                if nxt.block_type in HIGH_VALUE_BLOCK_TYPES:
+                    break
+                if nxt.block_type == "title" and _infer_section_from_title(nxt.text):
+                    break
+                if not _is_front_matter_line(nxt.text, nxt.block_type):
+                    if _effective_len(nxt.text) > 220:
+                        break
+                    if not (_is_author_line(nxt.text) or _is_affiliation_line(nxt.text)):
+                        break
+                parts.append(nxt.text)
+                j += 1
+
+            merged_text = "\n".join(p for p in parts if p.strip())
+            if _effective_len(merged_text) >= MIN_STANDALONE_LEN:
+                out.append(
+                    _PreparedBlock(
+                        merged_text,
+                        block_type="title",
+                        section_type="title",
+                        page_num=page_num,
+                        bbox=bbox,
+                    )
+                )
+            i = j
+            continue
+
+        out.append(blk)
+        i += 1
+    return out
+
+
+def _merge_section_headers(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    """将 Abstract/Introduction 等短标题与紧随其后的正文合并。"""
+    if not blocks:
+        return blocks
+
+    out: list[_PreparedBlock] = []
+    i = 0
+    while i < len(blocks):
+        blk = blocks[i]
+        if (
+            blk.block_type == "title"
+            and blk.section_type in HIGH_VALUE_SECTIONS
+            and len(blk.text.strip()) < 48
+            and i + 1 < len(blocks)
+            and blocks[i + 1].section_type == blk.section_type
+        ):
+            nxt = blocks[i + 1]
+            out.append(
+                _PreparedBlock(
+                    f"{blk.text.strip()}\n{nxt.text.strip()}".strip(),
+                    block_type=nxt.block_type,
+                    section_type=blk.section_type,
+                    page_num=blk.page_num,
+                    bbox=blk.bbox,
+                )
+            )
+            i += 2
+            continue
+        out.append(blk)
+        i += 1
+    return out
+
+
+def _is_core_block(blk: _PreparedBlock) -> bool:
+    if blk.section_type in HIGH_VALUE_SECTIONS or blk.section_type == "title":
+        return True
+    if blk.block_type in HIGH_VALUE_BLOCK_TYPES:
+        return True
+    return False
+
+
+def _merge_short_non_core(blocks: list[_PreparedBlock]) -> list[_PreparedBlock]:
+    if not blocks:
+        return blocks
+
+    merged: list[_PreparedBlock] = []
+    for blk in blocks:
+        if _is_core_block(blk) or _effective_len(blk.text) >= MIN_NON_CORE_LEN:
+            merged.append(blk)
+            continue
+        if merged and not _is_core_block(merged[-1]):
+            prev = merged[-1]
+            prev.text = f"{prev.text}\n{blk.text}".strip()
+            continue
+        if merged:
+            prev = merged[-1]
+            prev.text = f"{prev.text}\n{blk.text}".strip()
+            continue
+        merged.append(blk)
+
+    out: list[_PreparedBlock] = []
+    i = 0
+    while i < len(merged):
+        blk = merged[i]
+        if not _is_core_block(blk) and _effective_len(blk.text) < MIN_NON_CORE_LEN:
+            if i + 1 < len(merged):
+                nxt = merged[i + 1]
+                nxt.text = f"{blk.text}\n{nxt.text}".strip()
+                i += 1
+                continue
+            if out:
+                out[-1].text = f"{out[-1].text}\n{blk.text}".strip()
+                i += 1
+                continue
+        out.append(blk)
+        i += 1
+    return out
+
+
+def _split_long_text(
+    text: str,
+    base_meta: dict[str, Any],
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[dict[str, Any]]:
     if len(text) <= chunk_size:
         item = dict(base_meta)
         item["chunk_text"] = text
@@ -95,6 +406,52 @@ def _split_long_text(text: str, base_meta: dict[str, Any], *, chunk_size: int, c
     return out
 
 
+def _emit_chunks(
+    blocks: list[_PreparedBlock],
+    *,
+    kb_id: str,
+    paper_id: str | None,
+    doc_id: str | None,
+    resource_type: str,
+    owner_user_id: str,
+    year: int | None,
+    ccf_rank: str | None,
+    task_domain: str | None,
+    keywords: str,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[dict[str, Any]]:
+    chunks: list[dict[str, Any]] = []
+    for blk in blocks:
+        if blk.drop or not blk.text.strip():
+            continue
+        base = {
+            "kb_id": kb_id,
+            "paper_id": paper_id,
+            "doc_id": doc_id,
+            "resource_type": resource_type,
+            "owner_user_id": owner_user_id,
+            "year": year,
+            "ccf_rank": ccf_rank,
+            "task_domain": task_domain,
+            "keywords": keywords,
+            "page_num": blk.page_num,
+            "bbox": blk.bbox,
+            "section_type": blk.section_type,
+            "block_type": blk.block_type,
+        }
+        split_threshold = LONG_SPLIT_THRESHOLD if _is_core_block(blk) else chunk_size
+        chunks.extend(
+            _split_long_text(
+                blk.text,
+                base,
+                chunk_size=split_threshold,
+                chunk_overlap=chunk_overlap,
+            )
+        )
+    return chunks
+
+
 def chunk_paper_content_list(
     content_list: list[dict[str, Any]],
     *,
@@ -111,42 +468,25 @@ def chunk_paper_content_list(
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[dict[str, Any]]:
     """MinerU content_list → 带完整元数据的分块列表（不含向量）。"""
-    chunks: list[dict[str, Any]] = []
-    current_section = "text"
     kw_json = json.dumps(keywords or [], ensure_ascii=False)
-
-    for block in content_list:
-        if not isinstance(block, dict):
-            continue
-        text = _block_text(block)
-        if not text:
-            continue
-
-        block_type = _map_block_type(block)
-        if block_type == "title":
-            inferred = _infer_section_from_title(text)
-            if inferred:
-                current_section = inferred
-
-        base = {
-            "kb_id": kb_id,
-            "paper_id": paper_id,
-            "doc_id": doc_id,
-            "resource_type": resource_type,
-            "owner_user_id": owner_user_id,
-            "year": year,
-            "ccf_rank": ccf_rank,
-            "task_domain": task_domain,
-            "keywords": kw_json,
-            "page_num": int(block.get("page_idx", 0)) + 1 if block.get("page_idx") is not None else None,
-            "bbox": _bbox_to_str(block),
-            "section_type": current_section,
-            "block_type": block_type,
-        }
-        chunks.extend(
-            _split_long_text(text, base, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        )
-    return chunks
+    prepared = _prepare_blocks(content_list)
+    prepared = _merge_front_matter(prepared)
+    prepared = _merge_section_headers(prepared)
+    prepared = _merge_short_non_core(prepared)
+    return _emit_chunks(
+        prepared,
+        kb_id=kb_id,
+        paper_id=paper_id,
+        doc_id=doc_id,
+        resource_type=resource_type,
+        owner_user_id=owner_user_id,
+        year=year,
+        ccf_rank=ccf_rank,
+        task_domain=task_domain,
+        keywords=kw_json,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
 
 
 def load_content_list(path: str | Path) -> list[dict[str, Any]]:
