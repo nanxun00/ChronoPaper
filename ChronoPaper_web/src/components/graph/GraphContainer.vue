@@ -5,12 +5,17 @@
 <script setup>
 import { Graph } from '@antv/g6'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { createGraphOptions, formatGraphPayload } from '@/utils/graphViz'
 
 const props = defineProps({
   graphData: {
     type: Object,
     required: true,
     default: () => ({ nodes: [], edges: [] }),
+  },
+  showEdgeLabels: {
+    type: Boolean,
+    default: false,
   },
 })
 
@@ -24,47 +29,6 @@ const destroyGraph = () => {
   }
 }
 
-const initGraph = () => {
-  if (!container.value) return false
-
-  graphInstance = new Graph({
-    container: container.value,
-    width: container.value.offsetWidth || container.value.clientWidth,
-    height: container.value.offsetHeight || container.value.clientHeight,
-    autoFit: true,
-    autoResize: true,
-    layout: {
-      type: 'd3-force',
-      preventOverlap: true,
-      kr: 20,
-      collide: {
-        strength: 1.0,
-      },
-    },
-    node: {
-      type: 'circle',
-      style: {
-        labelText: (d) => d.data.label,
-        size: 70,
-      },
-      palette: {
-        field: 'label',
-        color: 'tableau',
-      },
-    },
-    edge: {
-      type: 'line',
-      style: {
-        labelText: (d) => d.data.label,
-        labelBackground: '#fff',
-        endArrow: true,
-      },
-    },
-    behaviors: ['drag-element', 'zoom-canvas', 'drag-canvas'],
-  })
-  return true
-}
-
 const renderGraph = () => {
   if (!container.value) return
   if (!props.graphData?.nodes?.length) {
@@ -72,26 +36,26 @@ const renderGraph = () => {
     return
   }
 
-  if (!graphInstance && !initGraph()) return
-
-  const formattedData = {
-    nodes: props.graphData.nodes.map((node) => ({
-      id: node.id,
-      data: { label: node.name },
-    })),
-    edges: props.graphData.edges.map((edge) => ({
-      source: edge.source_id,
-      target: edge.target_id,
-      data: { label: edge.type },
-    })),
-  }
-
-  graphInstance.setData(formattedData)
+  destroyGraph()
+  graphInstance = new Graph(
+    createGraphOptions(container.value, {
+      showEdgeLabels: props.showEdgeLabels,
+      maxLabelLen: 16,
+    }),
+  )
+  graphInstance.setData(
+    formatGraphPayload(props.graphData, { showEdgeLabels: props.showEdgeLabels }),
+  )
   graphInstance.render()
 }
 
 const handleResize = () => {
-  renderGraph()
+  if (!graphInstance || !container.value) return
+  graphInstance.setSize(
+    container.value.offsetWidth || container.value.clientWidth,
+    container.value.offsetHeight || container.value.clientHeight,
+  )
+  graphInstance.fitView()
 }
 
 onMounted(() => {
@@ -104,7 +68,11 @@ onBeforeUnmount(() => {
   destroyGraph()
 })
 
-watch(() => props.graphData, () => nextTick(renderGraph), { deep: true })
+watch(
+  () => [props.graphData, props.showEdgeLabels],
+  () => nextTick(renderGraph),
+  { deep: true },
+)
 </script>
 
 <style scoped>

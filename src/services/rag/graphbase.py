@@ -55,15 +55,40 @@ class GraphDatabase:
         """关闭数据库连接"""
         self.driver.close()
 
-    def get_sample_nodes(self, kgdb_name='neo4j', num=50):
-        """获取指定数据库的 num 个节点信息"""
+    def get_sample_nodes(self, kgdb_name='neo4j', num=50, include_cite=True):
+        """采样图谱关系：核心语义边 + 可选引用边（供前端切换显示）。"""
         self.use_database(kgdb_name)
-        def query(tx, num):
-            result = tx.run("MATCH (n)-[r]->(m) RETURN n, r, m LIMIT $num", num=int(num))
+        num = max(1, int(num))
+
+        def query_core(tx, limit):
+            result = tx.run(
+                """
+                MATCH (n)-[r]->(m)
+                WHERE type(r) <> 'CITE'
+                RETURN n, r, m
+                LIMIT $limit
+                """,
+                limit=limit,
+            )
+            return result.values()
+
+        def query_cite(tx, limit):
+            result = tx.run(
+                """
+                MATCH (n)-[r:CITE]->(m)
+                RETURN n, r, m
+                LIMIT $limit
+                """,
+                limit=limit,
+            )
             return result.values()
 
         with self.driver.session() as session:
-            return session.execute_read(query, num)
+            core = session.execute_read(query_core, num)
+            if not include_cite:
+                return core
+            cite = session.execute_read(query_cite, num)
+            return core + cite
 
     def create_graph_database(self, kgdb_name):
         """创建新的数据库，如果已存在则返回已有数据库的名称"""

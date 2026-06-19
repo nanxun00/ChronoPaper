@@ -96,6 +96,11 @@ def _node_display_name(node) -> str:
     return "unknown"
 
 
+def _node_label_type(node) -> str:
+    labels = list(getattr(node, "labels", None) or [])
+    return labels[0] if labels else "Entity"
+
+
 class Retriever:
 
     def __init__(self, config, dbm, model):
@@ -477,11 +482,13 @@ class Retriever:
         relationship_type = relationship._properties.get("type", "unknown")
         if relationship_type == "unknown":
             relationship_type = relationship.type
+        rel_type_raw = str(relationship_type or "RELATION")
         relationship_type = rel_label_zh(relationship_type)
 
         edge_info = {
             "id": rel_id,
             "type": relationship_type,
+            "rel_type": rel_type_raw,
             "source_id": source_id,
             "target_id": target_id,
             "source_name": source_name,
@@ -489,8 +496,8 @@ class Retriever:
         }
 
         node_info = [
-            {"id": source_id, "name": source_name},
-            {"id": target_id, "name": target_name},
+            {"id": source_id, "name": source_name, "type": _node_label_type(source)},
+            {"id": target_id, "name": target_name, "type": _node_label_type(target)},
         ]
 
         return node_info, edge_info

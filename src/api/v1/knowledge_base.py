@@ -314,8 +314,7 @@ async def get_graph_node(entity_name: str|None=None):
         return {"result": startup.retriever.format_general_results(result), "message": "success"}
 
 @data.get("/graph/nodes")
-async def get_graph_nodes(kgdb_name: str, num: int
-                          ):
+async def get_graph_nodes(kgdb_name: str, num: int, include_cite: bool = True):
     '''
         获取知识图谱的节点信息
         主要用于展示或分析知识图谱的数据结构
@@ -329,8 +328,8 @@ async def get_graph_nodes(kgdb_name: str, num: int
     if not startup.config.enable_knowledge_graph:
         raise HTTPException(status_code=400, detail="Knowledge graph is not enabled")
 
-    logger.debug(f"Get graph nodes in {kgdb_name} with {num} nodes")
-    result = startup.dbm.graph_base.get_sample_nodes(kgdb_name, num)
+    logger.debug(f"Get graph nodes in {kgdb_name} with {num} nodes include_cite={include_cite}")
+    result = startup.dbm.graph_base.get_sample_nodes(kgdb_name, num, include_cite=include_cite)
     return {"result": startup.retriever.format_general_results(result), "message": "success"}
 
 @data.post("/graph/add")

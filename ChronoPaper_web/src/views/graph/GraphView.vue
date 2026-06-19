@@ -34,7 +34,9 @@
         <a-button type="primary" danger @click="deleteofFile">删除实体</a-button>
       </div>
       <div class="actions-right">
-        <input v-model="sampleNodeCount">
+        <a-checkbox v-model:checked="state.includeCite">显示引用边</a-checkbox>
+        <a-checkbox v-model:checked="state.showEdgeLabels">关系标签</a-checkbox>
+        <input v-model.number="sampleNodeCount" type="number" min="10" max="200" step="10">
         <a-button @click="loadSampleNodes" :loading="state.fetching">获取节点</a-button>
       </div>
     </div>
@@ -64,6 +66,12 @@ import { message, Modal, Button as AButton } from 'ant-design-vue';
 import { useConfigStore } from '@/stores'
 import { UploadOutlined } from '@ant-design/icons-vue';
 import HeaderComponent from '@/components/common/HeaderComponent.vue';
+import {
+  createGraphOptions,
+  DEFAULT_SAMPLE_COUNT,
+  filterGraphData,
+  formatGraphPayload,
+} from '@/utils/graphViz';
 
 const configStore = useConfigStore()
 
@@ -76,7 +84,11 @@ let resizeListenerAdded = false
 const graphInfo = ref(null)
 const container = ref(null);
 const fileList = ref([]);
-const sampleNodeCount = ref(100);
+const sampleNodeCount = ref(DEFAULT_SAMPLE_COUNT);
+const rawGraphData = reactive({
+  nodes: [],
+  edges: [],
+});
 const graphData = reactive({
   nodes: [],
   edges: [],
@@ -90,7 +102,21 @@ const state = reactive({
   showModal: false,
   precessing: false,
   fileNameInput: '',
+  includeCite: false,
+  showEdgeLabels: false,
 })
+
+const applyGraphFilters = () => {
+  const filtered = filterGraphData(rawGraphData, { includeCite: state.includeCite })
+  graphData.nodes = filtered.nodes
+  graphData.edges = filtered.edges
+}
+
+const setGraphResult = (result) => {
+  rawGraphData.nodes = result?.nodes || []
+  rawGraphData.edges = result?.edges || []
+  applyGraphFilters()
+}
 
 
 const loadGraphInfo = () => {
@@ -112,25 +138,10 @@ const loadGraphInfo = () => {
 }
 
 const getGraphData = () => {
-  return {
-    nodes: graphData.nodes.map(node => {
-      return {
-        id: node.id,
-        data: {
-          label: node.name
-        },
-      }
-    }),
-    edges: graphData.edges.map(edge => {
-      return {
-        source: edge.source_id,
-        target: edge.target_id,
-        data: {
-          label: edge.type
-        }
-      }
-    }),
-  }
+  return formatGraphPayload(graphData, {
+    showEdgeLabels: state.showEdgeLabels,
+    maxLabelLen: 14,
+  })
 }
 
 
@@ -147,7 +158,9 @@ const addDocumentByFile = () => {
 };
 const loadSampleNodes = () => {
   state.fetching = true
-  fetch(`/api/data/graph/nodes?kgdb_name=neo4j&num=${sampleNodeCount.value}`)
+  const num = Math.max(10, Math.min(200, Number(sampleNodeCount.value) || DEFAULT_SAMPLE_COUNT))
+  // 始终拉取核心边 + 引用边，由前端 includeCite 开关控制展示
+  fetch(`/api/data/graph/nodes?kgdb_name=neo4j&num=${num}&include_cite=true`)
     .then((res) => {
       console.log(res)
       if (res.ok) {
@@ -158,8 +171,7 @@ const loadSampleNodes = () => {
     })
     .then(async (data) => {
       console.log(data)
-      graphData.nodes = data.result.nodes
-      graphData.edges = data.result.edges
+      setGraphResult(data.result)
       console.log(graphData)
       await nextTick()
       randerGraph()
@@ -200,8 +212,7 @@ const onSearch = () => {
       if (!data.result || !data.result.nodes || !data.result.edges) {
         throw new Error('返回数据格式不正确');
       }
-      graphData.nodes = data.result.nodes;
-      graphData.edges = data.result.edges;
+      setGraphResult(data.result);
       if (graphData.nodes.length === 0) {
         message.info('未找到相关实体');
       }
@@ -225,7 +236,12 @@ const destroyGraph = () => {
 }
 
 const handleResize = () => {
-  randerGraph()
+  if (!graphInstance || !container.value) return
+  graphInstance.setSize(
+    container.value.offsetWidth || container.value.clientWidth,
+    container.value.offsetHeight || container.value.clientHeight,
+  )
+  graphInstance.fitView()
 }
 
 const ensureResizeListener = () => {
@@ -251,45 +267,33 @@ const randerGraph = () => {
   }
 
   destroyGraph()
-  graphInstance = new Graph({
-    container: container.value,
-    width: container.value.offsetWidth || container.value.clientWidth,
-    height: container.value.offsetHeight || container.value.clientHeight,
-    autoFit: true,
-    autoResize: true,
-    layout: {
-      type: 'd3-force',
-      preventOverlap: true,
-      kr: 20,
-      collide: {
-        strength: 1.0,
-      },
-    },
-    node: {
-      type: 'circle',
-      style: {
-        labelText: (d) => d.data.label,
-        size: 70,
-      },
-      palette: {
-        field: 'label',
-        color: 'tableau',
-      },
-    },
-    edge: {
-      type: 'line',
-      style: {
-        labelText: (d) => d.data.label,
-        labelBackground: '#fff',
-        endArrow: true,
-      },
-    },
-    behaviors: ['drag-element', 'zoom-canvas', 'drag-canvas'],
-  })
+  graphInstance = new Graph(
+    createGraphOptions(container.value, {
+      showEdgeLabels: state.showEdgeLabels,
+      maxLabelLen: 14,
+    }),
+  )
   ensureResizeListener()
   graphInstance.setData(getGraphData())
   graphInstance.render()
 }
+
+watch(
+  () => state.includeCite,
+  async () => {
+    applyGraphFilters()
+    await nextTick()
+    randerGraph()
+  },
+)
+
+watch(
+  () => state.showEdgeLabels,
+  async () => {
+    await nextTick()
+    randerGraph()
+  },
+)
 
 const bootstrapGraphPage = () => {
   if (!showPage.value) return
@@ -456,6 +460,7 @@ const deleteofFile = () => {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
   }
 
   input {
