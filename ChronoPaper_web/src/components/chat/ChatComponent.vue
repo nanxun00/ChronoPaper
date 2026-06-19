@@ -1,5 +1,5 @@
 <template>
-  <div class="chat" ref="chatContainer">
+  <div class="chat" ref="chatRoot">
     <div class="header">
       <div class="header__left">
         <div v-if="!state.isSidebarOpen" class="close nav-btn" @click="state.isSidebarOpen = true">
@@ -83,6 +83,7 @@
         </div>
       </div>
     </div>
+    <div class="chat-scroll" ref="chatContainer" @scroll="handleChatScroll">
     <div v-if="conv.messages.length == 0" class="chat-examples">
       <h1>你好，我是 ChronoPaper，你的论文智能助手</h1>
       <div class="opts">
@@ -125,6 +126,18 @@
         />
       </div>
     </div>
+    </div>
+    <Transition name="scroll-btn-fade">
+      <button
+        v-if="showScrollToBottom"
+        type="button"
+        class="scroll-to-bottom-btn"
+        aria-label="回到底部"
+        @click="scrollToBottom()"
+      >
+        <DownOutlined />
+      </button>
+    </Transition>
     <div class="bottom">
       <div class="input-box">
         <!-- 上传的图片显示位置 -->
@@ -213,6 +226,7 @@ import {
   GlobalOutlined,
   FileTextOutlined,
   RobotOutlined,
+  DownOutlined,
 } from '@ant-design/icons-vue'
 import { onClickOutside } from '@vueuse/core'
 import { Marked } from 'marked';
@@ -239,8 +253,46 @@ const emit = defineEmits(['rename-title', 'newconv', 'conv-created']);
 const configStore = useConfigStore()
 
 const { conv, state } = toRefs(props)
+const chatRoot = ref(null)
 const chatContainer = ref(null)
 const isStreaming = ref(false)
+const showScrollToBottom = ref(false)
+const autoScrollEnabled = ref(true)
+const SCROLL_BOTTOM_THRESHOLD = 80
+
+const isNearBottom = () => {
+  const el = chatContainer.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_BOTTOM_THRESHOLD
+}
+
+const handleChatScroll = () => {
+  const near = isNearBottom()
+  autoScrollEnabled.value = near
+  showScrollToBottom.value = !near && conv.value.messages.length > 0
+}
+
+const scrollToBottom = (force = true) => {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const el = chatContainer.value
+      if (!el) return
+      el.scrollTop = el.scrollHeight - el.clientHeight
+      if (force) {
+        autoScrollEnabled.value = true
+        showScrollToBottom.value = false
+      }
+    })
+  })
+}
+
+const scrollToBottomIfNeeded = () => {
+  if (autoScrollEnabled.value) {
+    scrollToBottom(false)
+  } else {
+    showScrollToBottom.value = true
+  }
+}
 const citedLiterature = ref([])
 const canSend = computed(() => {
   return Boolean(conv.value.inputText?.trim()) || citedLiterature.value.length > 0
@@ -387,12 +439,6 @@ const renameTitle = () => {
   }
 }
 
-const scrollToBottom = () => {
-  setTimeout(() => {
-    chatContainer.value.scrollTop = chatContainer.value.scrollHeight - chatContainer.value.clientHeight
-  }, 10)
-}
-
 const generateRandomHash = (length) => {
   let chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let hash = '';
@@ -470,7 +516,7 @@ const updateMessage = (info) => {
     console.error('Message not found');
   }
 
-  scrollToBottom();
+  scrollToBottomIfNeeded();
 };
 
 
@@ -963,9 +1009,29 @@ async function processRecording() {
     audioChunks.value = []; // 重置音频数据
   }
 }
+watch(
+  () => conv.value?.conv_id,
+  () => {
+    autoScrollEnabled.value = true
+    showScrollToBottom.value = false
+    scrollToBottom()
+  },
+)
+
+watch(
+  () => conv.value?.messages?.length,
+  (newLen, oldLen) => {
+    if (newLen > 0 && (oldLen === 0 || oldLen === undefined)) {
+      autoScrollEnabled.value = true
+      scrollToBottom()
+    }
+  },
+)
+
 // 从本地存储加载数据
 onMounted(() => {
   scrollToBottom()
+  nextTick(() => handleChatScroll())
   loadDatabases()
   if (meta.stream === undefined || meta.stream === null) {
     meta.stream = true
@@ -987,20 +1053,18 @@ watch(
 .chat {
   position: relative;
   width: 100%;
+  height: 100%;
   max-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
+  overflow: hidden;
   background: white;
-  position: relative;
   box-sizing: border-box;
   flex: 5 5 200px;
-  overflow-y: scroll;
 
   .header {
     user-select: none;
-    position: sticky;
-    top: 0;
+    flex-shrink: 0;
     z-index: 10;
     background-color: white;
     height: var(--header-height);
@@ -1037,6 +1101,14 @@ watch(
     }
   }
 
+}
+
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
 }
 
 .metas {
@@ -1200,9 +1272,47 @@ watch(
   }
 }
 
+.scroll-to-bottom-btn {
+  position: absolute;
+  bottom: 168px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--gray-300, #e5e5e5);
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gray-800, #333);
+  font-size: 14px;
+  transition: background 0.2s, box-shadow 0.2s;
+
+  &:hover {
+    background: var(--gray-100, #f5f5f5);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  }
+}
+
+.scroll-btn-fade-enter-active,
+.scroll-btn-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.scroll-btn-fade-enter-from,
+.scroll-btn-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+
 .bottom {
-  position: sticky;
-  bottom: 0;
+  position: relative;
+  flex-shrink: 0;
+  bottom: auto;
   width: 100%;
   margin: 0 auto;
   padding: 4px 2rem 0 2rem;
@@ -1355,27 +1465,27 @@ watch(
 
 
 
-.chat::-webkit-scrollbar {
+.chat-scroll::-webkit-scrollbar {
   position: absolute;
   width: 4px;
 }
 
-.chat::-webkit-scrollbar-track {
+.chat-scroll::-webkit-scrollbar-track {
   background: transparent;
   border-radius: 4px;
 }
 
-.chat::-webkit-scrollbar-thumb {
+.chat-scroll::-webkit-scrollbar-thumb {
   background: var(--gray-400);
   border-radius: 4px;
 }
 
-.chat::-webkit-scrollbar-thumb:hover {
+.chat-scroll::-webkit-scrollbar-thumb:hover {
   background: rgb(100, 100, 100);
   border-radius: 4px;
 }
 
-.chat::-webkit-scrollbar-thumb:active {
+.chat-scroll::-webkit-scrollbar-thumb:active {
   background: rgb(68, 68, 68);
   border-radius: 4px;
 }
