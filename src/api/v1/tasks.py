@@ -9,11 +9,12 @@ from sqlalchemy.orm import Session
 
 from src.api.deps import UserInDB, get_current_active_user, get_db
 from src.models.crawl import CrawlTask, CrawlTaskRun
-from src.schemas.task import CrawlPlanRequest, CrawlTaskCreate, CrawlTaskUpdate
+from src.schemas.task import CrawlPlanRequest, CrawlTaskCreate, CrawlTaskDeleteRequest, CrawlTaskUpdate
 from src.services.crawl.crawl_planner import generate_crawl_plan
 from src.services.crawl.crawl_mode_presets import CRAWL_MODE_LABELS
 from src.services.crawl.crawl_planning_job import cancel_smart_planning, is_smart_planning, schedule_smart_planning
 from src.services.crawl.crawl_service import is_task_running, request_cancel_task, run_task_async
+from src.services.crawl.task_delete import active_task_query, get_active_task, soft_delete_tasks
 from src.services.scheduler import refresh_scheduler
 from src.utils.datetime_fmt import format_display_datetime
 
@@ -106,8 +107,7 @@ def list_tasks(
     db: Session = Depends(get_db),
 ):
     rows = (
-        db.query(CrawlTask)
-        .filter(CrawlTask.user_id == current_user.userid)
+        active_task_query(db, current_user.userid)
         .order_by(CrawlTask.id.desc())
         .all()
     )
@@ -230,7 +230,7 @@ def get_task(
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    row = db.query(CrawlTask).filter(CrawlTask.id == task_id, CrawlTask.user_id == current_user.userid).first()
+    row = get_active_task(db, current_user.userid, task_id)
     if not row:
         raise HTTPException(status_code=404, detail="任务不存在")
     latest_runs = (
@@ -264,7 +264,7 @@ def update_task(
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    row = db.query(CrawlTask).filter(CrawlTask.id == task_id, CrawlTask.user_id == current_user.userid).first()
+    row = get_active_task(db, current_user.userid, task_id)
     if not row:
         raise HTTPException(status_code=404, detail="任务不存在")
     for field, value in body.model_dump(exclude_unset=True).items():
@@ -276,21 +276,33 @@ def update_task(
     return {"message": "更新成功", "task": _task_to_dict(row, db)}
 
 
+@router.post("/delete")
+def delete_tasks(
+    body: CrawlTaskDeleteRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = soft_delete_tasks(db, current_user.userid, body.task_ids)
+    if result["deleted"] == 0:
+        raise HTTPException(status_code=404, detail="未找到可删除的任务")
+    refresh_scheduler()
+    return {
+        "message": f"已删除 {result['deleted']} 个任务",
+        **result,
+    }
+
+
 @router.delete("/{task_id}")
 def delete_task(
     task_id: int,
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    row = db.query(CrawlTask).filter(CrawlTask.id == task_id, CrawlTask.user_id == current_user.userid).first()
-    if not row:
+    result = soft_delete_tasks(db, current_user.userid, [task_id])
+    if result["deleted"] == 0:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if is_task_running(task_id):
-        raise HTTPException(status_code=400, detail="任务运行中，无法删除")
-    db.delete(row)
-    db.commit()
     refresh_scheduler()
-    return {"message": "已删除"}
+    return {"message": "已删除", **result}
 
 
 @router.post("/{task_id}/run")
@@ -299,7 +311,7 @@ def run_task_now(
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    row = db.query(CrawlTask).filter(CrawlTask.id == task_id, CrawlTask.user_id == current_user.userid).first()
+    row = get_active_task(db, current_user.userid, task_id)
     if not row:
         raise HTTPException(status_code=404, detail="任务不存在")
     planning_status = getattr(row, "planning_status", None) or "none"
@@ -322,7 +334,7 @@ def cancel_task(
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    row = db.query(CrawlTask).filter(CrawlTask.id == task_id, CrawlTask.user_id == current_user.userid).first()
+    row = get_active_task(db, current_user.userid, task_id)
     if not row:
         raise HTTPException(status_code=404, detail="任务不存在")
 

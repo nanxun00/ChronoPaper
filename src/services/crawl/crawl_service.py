@@ -599,6 +599,13 @@ def _upsert_paper(session: Session, meta: dict, run: CrawlTaskRun, stats: dict) 
 
 
 def execute_crawl_run(task_id: int, trigger_type: str = "manual") -> int:
+    session = SessionLocal()
+    task = session.query(CrawlTask).filter(CrawlTask.id == task_id).first()
+    if not task or getattr(task, "is_deleted", False):
+        session.close()
+        raise ValueError("任务已删除")
+    session.close()
+
     with _lock:
         if task_id in _running_tasks:
             raise RuntimeError("任务正在执行中")
@@ -657,6 +664,8 @@ def _run_crawl(session: Session, task_id: int, run: CrawlTaskRun) -> None:
     task = session.query(CrawlTask).filter(CrawlTask.id == task_id).first()
     if not task:
         raise ValueError("任务不存在")
+    if getattr(task, "is_deleted", False):
+        raise ValueError("任务已删除")
 
     planning_status = getattr(task, "planning_status", None) or "none"
     if task.enable_smart_planning and planning_status == "planning":

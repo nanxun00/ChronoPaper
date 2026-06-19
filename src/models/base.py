@@ -216,6 +216,10 @@ def migrate_schema(engine, log) -> None:
             alters.append("ALTER TABLE crawl_tasks ADD COLUMN auto_run_on_ready TINYINT(1) NOT NULL DEFAULT 0")
         if "library_id" not in task_cols:
             alters.append("ALTER TABLE crawl_tasks ADD COLUMN library_id VARCHAR(64) NULL")
+        if "is_deleted" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN is_deleted TINYINT(1) NOT NULL DEFAULT 0")
+        if "deleted_at" not in task_cols:
+            alters.append("ALTER TABLE crawl_tasks ADD COLUMN deleted_at DATETIME NULL")
 
     if "literature_entries" in inspector.get_table_names():
         entry_cols = {c["name"] for c in inspector.get_columns("literature_entries")}

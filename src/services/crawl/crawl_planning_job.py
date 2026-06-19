@@ -26,7 +26,7 @@ def run_smart_plan_for_task(task_id: int) -> None:
     session = SessionLocal()
     try:
         task = session.query(CrawlTask).filter(CrawlTask.id == task_id).first()
-        if not task or not task.enable_smart_planning:
+        if not task or not task.enable_smart_planning or getattr(task, "is_deleted", False):
             return
         status = getattr(task, "planning_status", None) or "none"
         if status != "planning":
@@ -37,6 +37,9 @@ def run_smart_plan_for_task(task_id: int) -> None:
         session.refresh(task)
         if (getattr(task, "planning_status", None) or "none") != "planning":
             logger.info("Smart planning aborted for task %s (cancelled)", task_id)
+            return
+        if getattr(task, "is_deleted", False):
+            logger.info("Smart planning aborted for task %s (deleted)", task_id)
             return
 
         suggested_name = fields.pop("suggested_name", "")
@@ -52,7 +55,7 @@ def run_smart_plan_for_task(task_id: int) -> None:
             task.auto_run_on_ready = False
             session.add(task)
             session.commit()
-            if not is_task_running(task_id):
+            if not getattr(task, "is_deleted", False) and not is_task_running(task_id):
                 run_task_async(task_id, trigger_type="manual")
                 logger.info("Auto-run triggered after smart planning for task %s", task_id)
     except Exception as exc:

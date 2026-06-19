@@ -25,11 +25,17 @@
         <a-tab-pane key="timerag" tab="时序分析" />
       </a-tabs>
 
+      <div v-if="selectedRowKeys.length" class="batch-toolbar">
+        <span>已选 {{ selectedRowKeys.length }} 项</span>
+        <a-button danger :loading="deleting" @click="confirmBatchDelete">批量删除</a-button>
+      </div>
+
       <a-table
         :columns="columns"
         :data-source="filteredTasks"
         :loading="loading"
         row-key="id"
+        :row-selection="rowSelection"
         :pagination="{ pageSize: 10 }"
       >
         <template #bodyCell="{ column, record }">
@@ -70,6 +76,15 @@
                 @click="runNow(record)"
               >
                 立即执行
+              </a-button>
+              <a-button
+                v-if="record.type === 'crawl'"
+                type="link"
+                size="small"
+                danger
+                @click="confirmDeleteOne(record)"
+              >
+                删除
               </a-button>
             </a-space>
           </template>
@@ -402,10 +417,11 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { message } from 'ant-design-vue'
+import { Modal, message } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import { apiJson } from '@/api'
+import { deleteTasks } from '@/api/tasks'
 import { ARXIV_CATEGORY_GROUPS, ARXIV_CATEGORY_OPTIONS } from '@/constants/arxivCategories'
 import { CRAWL_SOURCE_OPTIONS } from '@/constants/crawlSources'
 import {
@@ -424,10 +440,12 @@ const CJK_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/
 
 const activeTab = ref('all')
 const loading = ref(false)
+const deleting = ref(false)
 const creating = ref(false)
 const createOpen = ref(false)
 const detailOpen = ref(false)
 const detailItem = ref(null)
+const selectedRowKeys = ref([])
 const advancedOpenKeys = ref([])
 const privateLibraries = ref([])
 const privateLibrariesLoading = ref(false)
@@ -528,6 +546,16 @@ const filteredTasks = computed(() => {
   return tasks.value.filter((t) => t.type === activeTab.value)
 })
 
+const rowSelection = computed(() => ({
+  selectedRowKeys: selectedRowKeys.value,
+  onChange: (keys) => {
+    selectedRowKeys.value = keys
+  },
+  getCheckboxProps: (record) => ({
+    disabled: record.type !== 'crawl',
+  }),
+}))
+
 const columns = [
   { title: '任务名称', dataIndex: 'name', ellipsis: true },
   { title: '类型', key: 'type', width: 90 },
@@ -535,7 +563,7 @@ const columns = [
   { title: '状态', key: 'status', width: 100 },
   { title: '进度', key: 'progress', width: 140 },
   { title: '创建时间', dataIndex: 'created_at', width: 170 },
-  { title: '操作', key: 'action', width: 200 },
+  { title: '操作', key: 'action', width: 240 },
 ]
 
 const typeLabel = (type) => {
@@ -775,6 +803,54 @@ const runNow = async (record) => {
   }
 }
 
+const runDelete = async (taskIds) => {
+  if (!taskIds.length) return
+  deleting.value = true
+  try {
+    const result = await deleteTasks(taskIds)
+    const parts = [result.message || `已删除 ${result.deleted} 个任务`]
+    if (result.cancelled?.length) {
+      parts.push(`已取消运行中任务 ${result.cancelled.length} 个`)
+    }
+    message.success(parts.join('，'))
+    const idSet = new Set(taskIds)
+    selectedRowKeys.value = selectedRowKeys.value.filter((k) => !idSet.has(k))
+    if (detailItem.value && idSet.has(detailItem.value.id)) {
+      detailOpen.value = false
+      detailItem.value = null
+    }
+    await fetchTasks()
+  } catch (err) {
+    message.error(err.message || '删除失败')
+  } finally {
+    deleting.value = false
+  }
+}
+
+const confirmDeleteOne = (record) => {
+  Modal.confirm({
+    title: '确认删除任务？',
+    content: `将删除「${record.name}」。运行中的任务会先取消，定时任务将不再自动执行。`,
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: () => runDelete([record.id]),
+  })
+}
+
+const confirmBatchDelete = () => {
+  const keys = selectedRowKeys.value
+  if (!keys.length) return
+  Modal.confirm({
+    title: `确认批量删除 ${keys.length} 个任务？`,
+    content: '删除后将从列表移除；定时任务将不再自动执行，运行中的任务会先取消。',
+    okText: '批量删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: () => runDelete(keys),
+  })
+}
+
 const startPolling = () => {
   if (pollTimer) return
   pollTimer = setInterval(async () => {
@@ -838,6 +914,18 @@ onUnmounted(() => {
 
 .tasks-tabs {
   margin-bottom: 16px;
+}
+
+.batch-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  border-radius: 6px;
+  font-size: 13px;
 }
 
 .source-hint {

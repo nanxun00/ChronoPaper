@@ -54,6 +54,10 @@ class CrawlTaskCreate(BaseModel):
     enabled: bool = True
 
 
+class CrawlTaskDeleteRequest(BaseModel):
+    task_ids: list[int] = Field(..., min_length=1, max_length=200)
+
+
 class CrawlTaskUpdate(BaseModel):
     name: str | None = None
     intent_text: str | None = None

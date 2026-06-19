@@ -57,7 +57,11 @@ def refresh_scheduler() -> None:
 
     session = SessionLocal()
     try:
-        tasks = session.query(CrawlTask).filter(CrawlTask.enabled.is_(True)).all()
+        tasks = (
+            session.query(CrawlTask)
+            .filter(CrawlTask.enabled.is_(True), CrawlTask.is_deleted.is_(False))
+            .all()
+        )
         for task in tasks:
             ps = getattr(task, "planning_status", None) or "none"
             if task.enable_smart_planning and ps not in ("none", "ready"):

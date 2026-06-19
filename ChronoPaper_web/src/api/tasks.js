@@ -22,3 +22,14 @@ export function runTask(taskId) {
 export function cancelTask(taskId) {
   return apiJson(`/api/tasks/${taskId}/cancel`, { method: 'POST' })
 }
+
+export function deleteTask(taskId) {
+  return apiJson(`/api/tasks/${taskId}`, { method: 'DELETE' })
+}
+
+export function deleteTasks(taskIds) {
+  return apiJson('/api/tasks/delete', {
+    method: 'POST',
+    body: JSON.stringify({ task_ids: taskIds }),
+  })
+}

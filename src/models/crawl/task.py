@@ -38,6 +38,8 @@ class CrawlTask(Base):
     planning_error = Column(String(512), nullable=False, default="")
     max_papers_per_run = Column(Integer, nullable=False, default=50)
     enabled = Column(Boolean, nullable=False, default=True)
+    is_deleted = Column(Boolean, nullable=False, default=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
     last_run_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
