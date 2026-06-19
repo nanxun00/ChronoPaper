@@ -429,6 +429,23 @@ class PaperGraphStore:
         logger.info("deleted kb graph kb=%s papers=%s rels=%s", kb_id, paper_deleted, rel_deleted)
         return {"papers": paper_deleted, "relationships": rel_deleted}
 
+    def delete_paper_graph(self, paper_id: str, kb_id: str) -> dict[str, int]:
+        """删除单篇论文在图谱中的 Paper 节点及其关联边。"""
+        with self._session() as session:
+            row = session.run(
+                """
+                MATCH (p:Paper {paper_id: $pid, kb_id: $kb})
+                WITH collect(p) AS nodes, size(collect(p)) AS c
+                FOREACH (n IN nodes | DETACH DELETE n)
+                RETURN c AS papers
+                """,
+                pid=paper_id,
+                kb=kb_id,
+            ).single()
+            papers = int(row["papers"]) if row else 0
+        logger.info("deleted paper graph paper=%s kb=%s papers=%s", paper_id, kb_id, papers)
+        return {"papers": papers}
+
     def query_sota_models(
         self,
         *,

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from src.integrations.openreview.fetcher import resolve_openreview_pdf_url
 from src.models.literature import LiteratureEntry, Paper
 from src.services.literature.library_service import resolve_private_library_id
+from src.services.literature.literature_cleanup import cascade_cleanup_paper_vectors_and_graph
 from src.services.literature.paper_parse_service import (
     is_paper_parse_running,
     read_paper_full_text,
@@ -507,6 +508,8 @@ def delete_literature_entries(
     deleted = 0
     files_removed = 0
     papers_removed = 0
+    chunks_removed = 0
+    graph_papers_removed = 0
     not_found: list[str] = []
 
     unique_ids = []
@@ -536,6 +539,10 @@ def delete_literature_entries(
         if not paper:
             continue
 
+        cleanup = cascade_cleanup_paper_vectors_and_graph(db, paper_id)
+        chunks_removed += cleanup.get("chunks_removed", 0)
+        graph_papers_removed += cleanup.get("graph_papers_removed", 0)
+
         files_removed += _remove_paper_files(paper)
         db.delete(paper)
         papers_removed += 1
@@ -545,6 +552,8 @@ def delete_literature_entries(
         "deleted": deleted,
         "files_removed": files_removed,
         "papers_removed": papers_removed,
+        "chunks_removed": chunks_removed,
+        "graph_papers_removed": graph_papers_removed,
         "not_found": not_found,
     }
 

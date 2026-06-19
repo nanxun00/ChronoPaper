@@ -1205,6 +1205,8 @@ const runDelete = async (arxivIds, visibility) => {
     const parts = [`已删除 ${result.deleted} 条文献`]
     if (result.files_removed) parts.push(`清理 PDF ${result.files_removed} 个`)
     if (result.papers_removed) parts.push(`移除论文记录 ${result.papers_removed} 条`)
+    if (result.chunks_removed) parts.push(`清理向量分块 ${result.chunks_removed} 条`)
+    if (result.graph_papers_removed) parts.push(`清理图谱节点 ${result.graph_papers_removed} 个`)
     message.success(parts.join('，'))
     removeFromFavorites(arxivIds)
     if (visibility === 'public') {
@@ -1229,8 +1231,8 @@ const runDelete = async (arxivIds, visibility) => {
 const confirmDeleteOne = (record, visibility) => {
   Modal.confirm({
     title: '确认删除文献？',
-    content: `将删除「${record.title}」及其关联 PDF 文件（若无其他列表引用）。`,
-    okText: '删除',
+    content: `将删除「${record.title}」。若该论文不再被任何列表引用，还将同步清理：PDF 与本地解析文件、向量检索库（Milvus）中的分块、知识图谱中的论文节点及关联关系。此操作不可恢复，请确认是否继续。`,
+    okText: '确认删除',
     okType: 'danger',
     cancelText: '取消',
     onOk: () => runDelete([record.arxiv_id], visibility),
@@ -1242,8 +1244,9 @@ const confirmBatchDelete = (visibility) => {
   if (!keys.length) return
   Modal.confirm({
     title: `确认批量删除 ${keys.length} 篇文献？`,
-    content: '删除后将从列表移除，并清理不再被引用的 PDF 文件与论文记录。',
-    okText: '批量删除',
+    content:
+      '删除后将从当前列表移除。对不再被任何列表引用的论文，将同步清理 PDF、向量分块（Milvus）与知识图谱节点。此操作不可恢复，请确认是否继续。',
+    okText: '确认批量删除',
     okType: 'danger',
     cancelText: '取消',
     onOk: () => runDelete([...keys], visibility),
