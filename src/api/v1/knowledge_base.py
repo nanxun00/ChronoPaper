@@ -332,6 +332,28 @@ async def get_graph_nodes(kgdb_name: str, num: int, include_cite: bool = True):
     result = startup.dbm.graph_base.get_sample_nodes(kgdb_name, num, include_cite=include_cite)
     return {"result": startup.retriever.format_general_results(result), "message": "success"}
 
+
+@data.get("/graph/task-domains")
+async def get_graph_task_domains(kgdb_name: str = "neo4j", limit: int = 50):
+    """返回知识库图谱中已索引论文的领域列表（供前端筛选）。"""
+    if not startup.config.enable_knowledge_graph:
+        raise HTTPException(status_code=400, detail="Knowledge graph is not enabled")
+
+    store = startup.dbm.graph_store
+    if not store:
+        return {"domains": [], "message": "graph store unavailable"}
+
+    kb_id = startup.dbm.get_default_public_kb_id()
+    if not kb_id:
+        return {"domains": [], "message": "no knowledge base"}
+
+    domains = store.list_task_domains(
+        kb_id=kb_id,
+        user_id=0,
+        limit=max(1, min(int(limit), 100)),
+    )
+    return {"domains": domains, "message": "success"}
+
 @data.post("/graph/add")
 async def add_graph_entity(file_path: str = Body(...), kgdb_name: Optional[str] = Body(None)):
     raise HTTPException(

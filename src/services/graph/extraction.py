@@ -78,7 +78,7 @@ def merge_extraction_batches(batches: list[dict[str, Any]]) -> dict[str, Any]:
         "relations_raw": [],
     }
     summaries: list[str] = []
-    seen_entities: set[tuple[str, str]] = set()
+    entity_map: dict[tuple[str, str], dict[str, Any]] = {}
     seen_rels: set[tuple[str, str, str, str]] = set()
 
     for batch in batches:
@@ -93,10 +93,17 @@ def merge_extraction_batches(batches: list[dict[str, Any]]) -> dict[str, Any]:
             raw = (ent.get("raw_name") or "").strip()
             et = ent.get("entity_type") or "Model"
             key = (raw.lower(), et)
-            if not raw or key in seen_entities:
+            if not raw:
                 continue
-            seen_entities.add(key)
-            merged["raw_entities"].append(ent)
+            desc = (ent.get("description") or "").strip()
+            if key not in entity_map:
+                entity_map[key] = dict(ent)
+                entity_map[key]["description"] = desc
+                continue
+            existing = entity_map[key]
+            old_desc = (existing.get("description") or "").strip()
+            if len(desc) > len(old_desc):
+                existing["description"] = desc
 
         for rel in batch.get("relations_raw") or []:
             rel_type = rel.get("rel_type") or ""
@@ -113,8 +120,71 @@ def merge_extraction_batches(batches: list[dict[str, Any]]) -> dict[str, Any]:
             seen_rels.add(key)
             merged["relations_raw"].append(rel)
 
+    merged["raw_entities"] = list(entity_map.values())
     merged["innovation_summary"] = "；".join(summaries[:3])
     return merged
+
+
+def fallback_entity_description(name: str, entity_type: str, task_domain: str | None) -> str:
+    """LLM 未返回描述时的简要中文兜底（保证 tooltip 不为空）。"""
+    label = (name or "该实体").strip()
+    td = (task_domain or "相关").strip()
+    if entity_type == "Metric":
+        return f"{label} 是用于{td}任务的评价指标。"
+    if entity_type == "Dataset":
+        return f"{label} 是用于{td}的数据集或成像模态。"
+    return f"{label} 是用于{td}的模型或方法。"
+
+
+def collect_entities_for_upsert(
+    paper_id: str,
+    merged: dict[str, Any],
+    relations_std: list[dict[str, Any]],
+    *,
+    extra_neighbors: list[dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    """收集需写入 Neo4j 的实体：含 raw_entities 与 relations 端点（避免只更新部分节点）。"""
+    from src.services.graph.entity_normalize import normalize_entity
+
+    desc_by_name: dict[str, str] = {}
+    type_by_name: dict[str, str] = {}
+
+    for ent in merged.get("raw_entities") or []:
+        et = ent.get("entity_type") or "Model"
+        if et not in {"Model", "Dataset", "Metric"}:
+            continue
+        std_name = normalize_entity(ent.get("std_name") or ent.get("raw_name") or "", et)
+        if not std_name:
+            continue
+        desc = (ent.get("description") or "").strip()
+        if desc:
+            desc_by_name[std_name] = desc
+        type_by_name[std_name] = et
+
+    for rel in relations_std:
+        for std_key, type_key in (("source_std", "source_type"), ("target_std", "target_type")):
+            std = rel.get(std_key) or ""
+            et = rel.get(type_key) or "Model"
+            if not std or std == paper_id or et not in {"Model", "Dataset", "Metric"}:
+                continue
+            type_by_name.setdefault(std, et)
+
+    for nb in extra_neighbors or []:
+        std = (nb.get("std_name") or nb.get("name") or "").strip()
+        et = nb.get("entity_type") or "Model"
+        if std and et in {"Model", "Dataset", "Metric"}:
+            type_by_name.setdefault(std, et)
+
+    result: list[dict[str, Any]] = []
+    for std_name, et in type_by_name.items():
+        result.append(
+            {
+                "std_name": std_name,
+                "entity_type": et,
+                "description": desc_by_name.get(std_name, ""),
+            }
+        )
+    return result
 
 
 def build_std_relations(

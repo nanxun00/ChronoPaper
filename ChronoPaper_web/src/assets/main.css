@@ -15,3 +15,60 @@
     margin: 20px 0 10px 0;
   }
 }
+
+/* G6 graph tooltip (A 方案) */
+.g6-tooltip-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #262626;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.g6-tooltip-inner {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #333;
+}
+
+.g6-tooltip-tag {
+  color: #1677ff;
+  margin-bottom: 4px;
+}
+
+.g6-tooltip-desc {
+  color: #595959;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.g6-tooltip-meta {
+  color: #8c8c8c;
+  margin-bottom: 4px;
+}
+
+.g6-tooltip-innov {
+  color: #333;
+  margin-top: 4px;
+}
+
+.g6-tooltip-hint {
+  color: #bfbfbf;
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+button.g6-tooltip-open-paper {
+  color: #1677ff;
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 11px;
+  text-align: left;
+}
+
+button.g6-tooltip-open-paper:hover {
+  color: #4096ff;
+  text-decoration: underline;
+}

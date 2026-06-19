@@ -64,8 +64,13 @@
       :width="800"
       :footer="null"
     >
-      <GraphContainer :graphData="subGraphData" />
+      <GraphContainer
+        :graphData="subGraphData"
+        :color-by-domain="true"
+        @paper-click="onPaperNodeClick"
+      />
     </a-modal>
+    <GraphNodeDrawer v-model:open="drawerOpen" :node="drawerNode" />
   </div>
 </template>
 
@@ -84,6 +89,7 @@ import {
   ClockCircleOutlined
 } from '@ant-design/icons-vue'
 import GraphContainer from '@/components/graph/GraphContainer.vue'
+import GraphNodeDrawer from '@/components/graph/GraphNodeDrawer.vue'
 
 const props = defineProps({
   message: Object,
@@ -153,6 +159,13 @@ const showRefs = computed(() => msg.value.role === 'received' && msg.value.statu
 
 const subGraphVisible = ref(false)
 const subGraphData = ref(null)
+const drawerOpen = ref(false)
+const drawerNode = ref(null)
+
+const onPaperNodeClick = (data) => {
+  drawerNode.value = data
+  drawerOpen.value = true
+}
 
 
 const openSubGraph = (msg) => {

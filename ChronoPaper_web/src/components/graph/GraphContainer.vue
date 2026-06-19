@@ -5,7 +5,11 @@
 <script setup>
 import { Graph } from '@antv/g6'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createGraphOptions, formatGraphPayload } from '@/utils/graphViz'
+import {
+  bindPaperNodeClick,
+  createGraphOptions,
+  formatGraphPayload,
+} from '@/utils/graphViz'
 
 const props = defineProps({
   graphData: {
@@ -17,12 +21,27 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  colorByDomain: {
+    type: Boolean,
+    default: false,
+  },
+  highlightQuery: {
+    type: String,
+    default: '',
+  },
 })
+
+const emit = defineEmits(['paper-click'])
 
 const container = ref(null)
 let graphInstance = null
+let unbindPaperClick = null
 
 const destroyGraph = () => {
+  if (unbindPaperClick) {
+    unbindPaperClick()
+    unbindPaperClick = null
+  }
   if (graphInstance) {
     graphInstance.destroy()
     graphInstance = null
@@ -41,12 +60,19 @@ const renderGraph = () => {
     createGraphOptions(container.value, {
       showEdgeLabels: props.showEdgeLabels,
       maxLabelLen: 16,
+      colorByDomain: props.colorByDomain,
     }),
   )
   graphInstance.setData(
-    formatGraphPayload(props.graphData, { showEdgeLabels: props.showEdgeLabels }),
+    formatGraphPayload(props.graphData, {
+      showEdgeLabels: props.showEdgeLabels,
+      maxLabelLen: 16,
+      colorByDomain: props.colorByDomain,
+      highlightQuery: props.highlightQuery,
+    }),
   )
   graphInstance.render()
+  unbindPaperClick = bindPaperNodeClick(graphInstance, (data) => emit('paper-click', data), container.value)
 }
 
 const handleResize = () => {
@@ -69,7 +95,7 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  () => [props.graphData, props.showEdgeLabels],
+  () => [props.graphData, props.showEdgeLabels, props.colorByDomain, props.highlightQuery],
   () => nextTick(renderGraph),
   { deep: true },
 )

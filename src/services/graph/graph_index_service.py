@@ -9,7 +9,9 @@ from src.models.rag import TextChunk
 from src.services.graph.extraction import (
     GRAPH_SECTION_TYPES,
     build_std_relations,
+    collect_entities_for_upsert,
     extract_section_batch,
+    fallback_entity_description,
     merge_extraction_batches,
 )
 from src.services.graph.neo4j_store import PaperGraphStore
@@ -148,25 +150,6 @@ def index_paper_graph(
             keywords=paper.categories_list() if hasattr(paper, "categories_list") else [],
         )
 
-        for ent in merged.get("raw_entities") or []:
-            et = ent.get("entity_type") or "Model"
-            if et not in {"Model", "Dataset", "Metric"}:
-                continue
-            std = ent.get("std_name") or ent.get("raw_name") or ""
-            from src.services.graph.entity_normalize import normalize_entity
-
-            std_name = normalize_entity(std, et)
-            ref_ids = entity_chunks.get(std_name, [])
-            extra: dict[str, Any] = {}
-            if et == "Model":
-                extra["task_domain"] = task_domain or ""
-                extra["birth_year"] = year
-            elif et == "Dataset":
-                extra["task"] = task_domain or ""
-            elif et == "Metric":
-                extra["applicable_task"] = task_domain or ""
-            store.upsert_named_entity(et, name=std_name, kb_id=kb_id, ref_chunk_ids=ref_ids, extra=extra)
-
         for rel in relations_std:
             sl = LABEL_FOR_TYPE.get(rel.get("source_type") or "Model", "Model")
             tl = LABEL_FOR_TYPE.get(rel.get("target_type") or "Model", "Model")
@@ -181,6 +164,29 @@ def index_paper_graph(
                 kb_id=kb_id,
                 chunk_id=rel.get("chunk_id"),
             )
+
+        neighbors = store.list_paper_neighbor_entities(paper_id, kb_id)
+        for item in collect_entities_for_upsert(
+            paper_id, merged, relations_std, extra_neighbors=neighbors
+        ):
+            et = item["entity_type"]
+            std_name = item["std_name"]
+            ref_ids = entity_chunks.get(std_name, [])
+            llm_desc = (item.get("description") or "").strip()
+            extra: dict[str, Any] = {}
+            if llm_desc:
+                extra["description"] = llm_desc
+            else:
+                extra["description"] = fallback_entity_description(std_name, et, task_domain)
+                extra["__fill_description_only"] = True
+            if et == "Model":
+                extra["task_domain"] = task_domain or ""
+                extra["birth_year"] = year
+            elif et == "Dataset":
+                extra["task"] = task_domain or ""
+            elif et == "Metric":
+                extra["applicable_task"] = task_domain or ""
+            store.upsert_named_entity(et, name=std_name, kb_id=kb_id, ref_chunk_ids=ref_ids, extra=extra)
 
         store.write_static_metadata_relations(
             paper_id=paper_id,

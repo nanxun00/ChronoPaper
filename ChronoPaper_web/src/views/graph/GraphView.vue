@@ -34,6 +34,20 @@
         <a-button type="primary" danger @click="deleteofFile">删除实体</a-button>
       </div>
       <div class="actions-right">
+        <a-select
+          v-model:value="state.selectedDomain"
+          allow-clear
+          placeholder="按领域筛选"
+          style="width: 160px"
+          :options="domainOptions"
+        />
+        <input
+          v-model="state.highlightQuery"
+          placeholder="关键词高亮"
+          style="width: 140px"
+          @keydown.enter="onHighlightChange"
+        />
+        <a-checkbox v-model:checked="state.colorByDomain">领域配色</a-checkbox>
         <a-checkbox v-model:checked="state.includeCite">显示引用边</a-checkbox>
         <a-checkbox v-model:checked="state.showEdgeLabels">关系标签</a-checkbox>
         <input v-model.number="sampleNodeCount" type="number" min="10" max="200" step="10">
@@ -42,6 +56,8 @@
     </div>
     <div class="main" id="container" ref="container" v-show="graphData.nodes.length > 0"></div>
     <a-empty v-show="graphData.nodes.length === 0" style="padding: 4rem 0;" />
+
+    <GraphNodeDrawer v-model:open="state.drawerOpen" :node="state.drawerNode" />
 
     <a-modal :open="state.showModal" title="上传文件" @ok="addDocumentByFile" @cancel="() => state.showModal = false"
       ok-text="确定" cancel-text="取消" :confirm-loading="state.precessing">
@@ -66,10 +82,12 @@ import { message, Modal, Button as AButton } from 'ant-design-vue';
 import { useConfigStore } from '@/stores'
 import { UploadOutlined } from '@ant-design/icons-vue';
 import HeaderComponent from '@/components/common/HeaderComponent.vue';
+import GraphNodeDrawer from '@/components/graph/GraphNodeDrawer.vue';
 import {
+  applyGraphViewFilters,
+  bindPaperNodeClick,
   createGraphOptions,
   DEFAULT_SAMPLE_COUNT,
-  filterGraphData,
   formatGraphPayload,
 } from '@/utils/graphViz';
 
@@ -80,7 +98,9 @@ const showPage = computed(
 )
 
 let graphInstance
+let unbindPaperClick = null
 let resizeListenerAdded = false
+const taskDomains = ref([])
 const graphInfo = ref(null)
 const container = ref(null);
 const fileList = ref([]);
@@ -104,10 +124,23 @@ const state = reactive({
   fileNameInput: '',
   includeCite: false,
   showEdgeLabels: false,
+  selectedDomain: undefined,
+  highlightQuery: '',
+  colorByDomain: false,
+  drawerOpen: false,
+  drawerNode: null,
 })
 
+const domainOptions = computed(() =>
+  taskDomains.value.map((d) => ({ label: d, value: d })),
+)
+
 const applyGraphFilters = () => {
-  const filtered = filterGraphData(rawGraphData, { includeCite: state.includeCite })
+  const filtered = applyGraphViewFilters(rawGraphData, {
+    includeCite: state.includeCite,
+    domain: state.selectedDomain || '',
+    highlightQuery: state.highlightQuery,
+  })
   graphData.nodes = filtered.nodes
   graphData.edges = filtered.edges
 }
@@ -141,7 +174,28 @@ const getGraphData = () => {
   return formatGraphPayload(graphData, {
     showEdgeLabels: state.showEdgeLabels,
     maxLabelLen: 14,
+    colorByDomain: state.colorByDomain,
+    highlightQuery: state.highlightQuery,
   })
+}
+
+const loadTaskDomains = () => {
+  fetch('/api/data/graph/task-domains?limit=50')
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error('加载领域失败'))))
+    .then((data) => {
+      taskDomains.value = data.domains || []
+    })
+    .catch((error) => console.warn('task domains:', error))
+}
+
+const onPaperNodeClick = (data) => {
+  state.drawerNode = data
+  state.drawerOpen = true
+}
+
+const onHighlightChange = () => {
+  applyGraphFilters()
+  nextTick(() => randerGraph())
 }
 
 
@@ -229,6 +283,10 @@ const onSearch = () => {
 };
 
 const destroyGraph = () => {
+  if (unbindPaperClick) {
+    unbindPaperClick()
+    unbindPaperClick = null
+  }
   if (graphInstance) {
     graphInstance.destroy()
     graphInstance = null
@@ -271,11 +329,13 @@ const randerGraph = () => {
     createGraphOptions(container.value, {
       showEdgeLabels: state.showEdgeLabels,
       maxLabelLen: 14,
+      colorByDomain: state.colorByDomain,
     }),
   )
   ensureResizeListener()
   graphInstance.setData(getGraphData())
   graphInstance.render()
+  unbindPaperClick = bindPaperNodeClick(graphInstance, onPaperNodeClick, container.value)
 }
 
 watch(
@@ -295,9 +355,36 @@ watch(
   },
 )
 
+watch(
+  () => state.selectedDomain,
+  async () => {
+    applyGraphFilters()
+    await nextTick()
+    randerGraph()
+  },
+)
+
+watch(
+  () => state.colorByDomain,
+  async () => {
+    await nextTick()
+    randerGraph()
+  },
+)
+
+watch(
+  () => state.highlightQuery,
+  async () => {
+    applyGraphFilters()
+    await nextTick()
+    randerGraph()
+  },
+)
+
 const bootstrapGraphPage = () => {
   if (!showPage.value) return
   loadGraphInfo()
+  loadTaskDomains()
   loadSampleNodes()
 }
 

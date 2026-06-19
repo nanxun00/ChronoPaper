@@ -2,6 +2,7 @@ from src.integrations.llm.embedding import Reranker
 from src.services.rag.llm_filter import llm_extract_filter_cond
 from src.services.graph.relation_labels import rel_label_zh
 from src.utils.logging_config import setup_logger
+from typing import Any
 
 logger = setup_logger("server-common")
 
@@ -99,6 +100,48 @@ def _node_display_name(node) -> str:
 def _node_label_type(node) -> str:
     labels = list(getattr(node, "labels", None) or [])
     return labels[0] if labels else "Entity"
+
+
+def _node_graph_props(node) -> dict[str, Any]:
+    """按节点类型统一领域字段，并提取图谱展示用元数据。"""
+    props = getattr(node, "_properties", None) or {}
+    label_type = _node_label_type(node)
+    domain = ""
+    if label_type in {"Paper", "Model"}:
+        domain = str(props.get("task_domain") or "").strip()
+    elif label_type == "Dataset":
+        domain = str(props.get("task") or "").strip()
+    elif label_type == "Metric":
+        domain = str(props.get("applicable_task") or "").strip()
+
+    year = props.get("year")
+    if year is not None and year != "":
+        try:
+            year = int(year)
+        except (TypeError, ValueError):
+            year = None
+    else:
+        year = None
+
+    return {
+        "task_domain": domain,
+        "description": str(props.get("description") or "").strip(),
+        "innovation_summary": str(props.get("innovation_summary") or "").strip(),
+        "year": year,
+        "venue": str(props.get("venue") or "").strip(),
+        "paper_id": str(props.get("paper_id") or "").strip(),
+        "ccf_rank": str(props.get("ccf_rank") or "").strip(),
+        "venue_type": str(props.get("type") or "").strip(),
+    }
+
+
+def _build_node_info(node, display_name: str) -> dict[str, Any]:
+    return {
+        "id": node.element_id,
+        "name": display_name,
+        "type": _node_label_type(node),
+        **_node_graph_props(node),
+    }
 
 
 class Retriever:
@@ -496,8 +539,8 @@ class Retriever:
         }
 
         node_info = [
-            {"id": source_id, "name": source_name, "type": _node_label_type(source)},
-            {"id": target_id, "name": target_name, "type": _node_label_type(target)},
+            _build_node_info(source, source_name),
+            _build_node_info(target, target_name),
         ]
 
         return node_info, edge_info

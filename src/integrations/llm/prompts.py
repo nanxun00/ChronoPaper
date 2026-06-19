@@ -73,15 +73,21 @@ graph_extraction_prompt_template = """
 2. 关系类型仅限：PROPOSE、IMPROVE_FROM、DIFFERENT_WITH、USE_DATASET、EVALUATE_BY、EXTEND_FROM。
 3. PROPOSE/USE_DATASET/EVALUATE_BY/EXTEND_FROM 的 source 为当前论文（paper_id）；IMPROVE_FROM/DIFFERENT_WITH 在 Model 之间。
 4. 每条实体/关系必须标注 chunk_id（来自片段列表）。
-5. task_domain 为论文细分领域（如图像分割、目标检测），无法判断则 null。
-6. innovation_summary 为本片段创新点摘要，无则空字符串。
+5. task_domain 为论文细分领域，必须使用简体中文（如「图像分割」「目标检测」「脑肿瘤分割」），即使论文原文为英文也须译为中文；无法判断则 null。
+6. innovation_summary 为本片段创新点摘要，使用简体中文，无则空字符串。
+7. 每个 raw_entities 条目必须包含 description：用 1～2 句简体中文说明该实体含义与用途，不得留空。
+   - Metric：说明衡量对象、含义，若有公式请写出（如 Dice：2|A∩B|/(|A|+|B|)）。
+   - Dataset：说明数据集内容与适用任务。
+   - Model：说明模型结构、特点或改进点。
+   信息不足时基于片段合理概括，勿编造文中未出现的具体数值。
 
 输出 JSON 格式：
 {{
   "task_domain": null,
   "innovation_summary": "",
   "raw_entities": [
-    {{"raw_name": "U-Net", "std_name": "unet", "entity_type": "Model", "chunk_id": "..."}}
+    {{"raw_name": "U-Net", "std_name": "unet", "entity_type": "Model", "chunk_id": "...", "description": "U-Net 是一种编码器-解码器结构的医学图像分割网络，通过跳跃连接融合多尺度特征。"}},
+    {{"raw_name": "Dice", "std_name": "dice", "entity_type": "Metric", "chunk_id": "...", "description": "Dice 系数是分割任务常用评价指标，衡量预测与真值区域重叠程度，公式为 2|A∩B|/(|A|+|B|)。"}}
   ],
   "relations_raw": [
     {{"source_raw": "{paper_id}", "target_raw": "U-Net", "rel_type": "PROPOSE", "chunk_id": "...", "source_type": "Paper", "target_type": "Model"}}

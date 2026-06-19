@@ -139,9 +139,20 @@ class PaperGraphStore:
             ).single()
             merged_ids = _merge_ids(row["ids"] if row else None, ref_chunk_ids)
             params = {"name": name, "kb_id": kb_id, "ref_chunk_ids": merged_ids, **extra}
+            fill_desc_only = bool(params.pop("__fill_description_only", False))
             set_parts = ["n.kb_id = $kb_id", "n.ref_chunk_ids = $ref_chunk_ids"]
             for key in extra:
-                set_parts.append(f"n.{key} = ${key}")
+                if key == "description":
+                    if fill_desc_only:
+                        set_parts.append(
+                            "n.description = coalesce(nullif(n.description, ''), nullif($description, ''), '')"
+                        )
+                    else:
+                        set_parts.append(
+                            "n.description = coalesce(nullif($description, ''), n.description, '')"
+                        )
+                else:
+                    set_parts.append(f"n.{key} = ${key}")
             tx.run(
                 f"MERGE (n:{label} {{name: $name}}) SET " + ", ".join(set_parts),
                 **params,
@@ -149,6 +160,22 @@ class PaperGraphStore:
 
         with self._session() as session:
             session.execute_write(_write)
+
+    def list_paper_neighbor_entities(self, paper_id: str, kb_id: str) -> list[dict[str, str]]:
+        """返回与论文有边相连的全部 Model/Dataset/Metric（含历史遗留边）。"""
+        cypher = """
+        MATCH (p:Paper {paper_id: $pid, kb_id: $kb})-[r]-(n)
+        WHERE n:Model OR n:Dataset OR n:Metric
+        RETURN DISTINCT n.name AS name, labels(n)[0] AS entity_type
+        ORDER BY name
+        """
+        with self._session() as session:
+            rows = session.run(cypher, pid=paper_id, kb=kb_id)
+            return [
+                {"std_name": r["name"], "entity_type": r["entity_type"]}
+                for r in rows
+                if r.get("name") and r.get("entity_type") in {"Model", "Dataset", "Metric"}
+            ]
 
     def merge_relationship(
         self,
