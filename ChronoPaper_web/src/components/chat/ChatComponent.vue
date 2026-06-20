@@ -84,7 +84,11 @@
       </div>
     </div>
     <div class="chat-scroll" ref="chatContainer" @scroll="handleChatScroll">
-    <div v-if="conv.messages.length == 0" class="chat-examples">
+    <div v-if="conv.detailLoading" class="chat-loading">
+      <LoadingOutlined spin />
+      <span>加载对话中…</span>
+    </div>
+    <div v-else-if="conv.messages.length == 0" class="chat-examples">
       <h1>你好，我是 ChronoPaper，你的论文智能助手</h1>
       <div class="opts">
         <div class="opt__button" v-for="(exp, key) in examples" :key="key" @click="conv.inputText = exp">
@@ -93,7 +97,12 @@
       </div>
     </div>
     <div class="chat-box">
-      <div v-for="message in conv.messages" :key="message.id" class="message-box" :class="message.role">
+      <div v-if="conv.loadingOlder" class="messages-loading-top">
+        <LoadingOutlined spin />
+        <span>加载更早的消息…</span>
+      </div>
+      <div v-else-if="conv.messagesHasMore" class="messages-load-hint">上滑加载更早消息</div>
+      <div v-for="(message, index) in conv.messages" :key="message.id" class="message-box" :class="message.role">
         <!-- 思考过程 -->
         <div v-if="message.role == 'received' && message.ponder" class="ponder" v-html="ponderrenderMarkdown(message)">
         </div>
@@ -117,7 +126,9 @@
           @click="retryMessage(message.id)">
           请求错误，请重试
         </div>
-        <div v-else v-html="renderMarkdown(message)" class="message-md" @click="consoleMsg(message)"></div>
+        <div v-else class="message-md-wrap" @click="consoleMsg(message)">
+          <MessageMarkdown :message="message" :priority="messageRenderPriority(index)" />
+        </div>
         <RefsComponent
           v-if="message.role == 'received' && message.status == 'finished'"
           :message="message"
@@ -235,10 +246,10 @@ import {
   DownOutlined,
 } from '@ant-design/icons-vue'
 import { onClickOutside } from '@vueuse/core'
-import { parseChatMarkdown } from '@/utils/markdownSkillFold'
 import { useConfigStore, useUserStore } from '@/stores'
 import { message } from 'ant-design-vue'
 import RefsComponent from '@/components/chat/RefsComponent.vue'
+import MessageMarkdown from '@/components/chat/MessageMarkdown.vue'
 import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import SkillPicker from '@/components/chat/SkillPicker.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
@@ -258,7 +269,7 @@ const props = defineProps({
   state: Object
 })
 
-const emit = defineEmits(['rename-title', 'newconv', 'conv-created']);
+const emit = defineEmits(['rename-title', 'newconv', 'conv-created', 'load-older']);
 const configStore = useConfigStore()
 
 const { conv, state } = toRefs(props)
@@ -267,7 +278,9 @@ const chatContainer = ref(null)
 const isStreaming = ref(false)
 const showScrollToBottom = ref(false)
 const autoScrollEnabled = ref(true)
+const loadingOlderRequested = ref(false)
 const SCROLL_BOTTOM_THRESHOLD = 80
+const LOAD_OLDER_THRESHOLD = 100
 
 const isNearBottom = () => {
   const el = chatContainer.value
@@ -279,6 +292,30 @@ const handleChatScroll = () => {
   const near = isNearBottom()
   autoScrollEnabled.value = near
   showScrollToBottom.value = !near && conv.value.messages.length > 0
+
+  const el = chatContainer.value
+  if (!el || conv.value.loadingOlder || loadingOlderRequested.value) return
+  if (!conv.value.messagesHasMore || conv.value.detailLoading) return
+  if (el.scrollTop > LOAD_OLDER_THRESHOLD) return
+
+  loadingOlderRequested.value = true
+  const prevHeight = el.scrollHeight
+  emit('load-older', {
+    onLoaded: () => {
+      nextTick(() => {
+        requestAnimationFrame(() => {
+          const container = chatContainer.value
+          if (container) {
+            container.scrollTop = container.scrollHeight - prevHeight
+          }
+          loadingOlderRequested.value = false
+        })
+      })
+    },
+    onError: () => {
+      loadingOlderRequested.value = false
+    },
+  })
 }
 
 const scrollToBottom = (force = true) => {
@@ -381,19 +418,16 @@ const marked = new Marked(
 );
 
 const consoleMsg = (message) => console.log(message)
+const messageRenderPriority = (index) => {
+  const total = conv.value?.messages?.length || 0
+  return Math.max(0, total - index)
+}
 onClickOutside(panel, () => setTimeout(() => opts.showPanel = false, 30))
 onClickOutside(modelCard, () => setTimeout(() => opts.showModelCard = false, 30))
 
-const renderMarkdown = (message) => {
-  const text = message.status === 'loading' ? message.text + '🟢' : message.text
-  return parseChatMarkdown(text, message)
-}
 const ponderrenderMarkdown = (message) => {
-  if (message.status === 'loading') {
-    return marked.parse(message.ponder)
-  } else {
-    return marked.parse(message.ponder)
-  }
+  if (!message?.ponder) return ''
+  return marked.parse(message.ponder)
 }
 
 const useDatabase = (index) => {
@@ -799,6 +833,9 @@ const deleteMessageTurn = async (assistantMsgId) => {
     const data = await deleteMessageTurnApi(conv.value.conv_id, assistantMsgId)
     conv.value.messages = data.messages || []
     conv.value.history = data.history || []
+    conv.value.messagesHasMore = Boolean(data.messages_has_more)
+    conv.value.oldestMsgId = data.oldest_msg_id || conv.value.messages[0]?.id || null
+    conv.value.messagesTotal = data.messages_total ?? conv.value.messages.length
     message.success('已删除该轮对话')
   } catch (err) {
     message.error(err.message || '删除失败')
@@ -1038,6 +1075,7 @@ watch(
   () => {
     autoScrollEnabled.value = true
     showScrollToBottom.value = false
+    loadingOlderRequested.value = false
     scrollToBottom()
   },
 )
@@ -1048,6 +1086,21 @@ watch(
     if (newLen > 0 && (oldLen === 0 || oldLen === undefined)) {
       autoScrollEnabled.value = true
       scrollToBottom()
+    }
+  },
+)
+
+watch(
+  () => conv.value?.detailLoading,
+  (loading, wasLoading) => {
+    if (wasLoading && !loading && conv.value?.messages?.length) {
+      autoScrollEnabled.value = true
+      scrollToBottom()
+      for (const m of conv.value.messages) {
+        if (m.role === 'received' && m.refs?.knowledge_base && !m.groupedResults) {
+          groupRefs(m.id)
+        }
+      }
     }
   },
 )
@@ -1136,6 +1189,24 @@ watch(
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
+}
+
+.chat-loading,
+.messages-loading-top {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  color: var(--gray-700);
+  font-size: 14px;
+}
+
+.messages-load-hint {
+  text-align: center;
+  padding: 8px 0 12px;
+  color: var(--gray-600);
+  font-size: 12px;
 }
 
 .metas {

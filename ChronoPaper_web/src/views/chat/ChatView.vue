@@ -26,6 +26,7 @@
       @rename-title="renameTitle"
       @newconv="addNewConv"
       @conv-created="onConvCreated"
+      @load-older="loadOlderMessages"
     />
   </div>
 </template>
@@ -49,6 +50,7 @@ const state = reactive({
   loading: false,
 })
 const curConvId = ref(null)
+const INITIAL_MESSAGE_LIMIT = 8
 
 const emptyConv = () => ({
   conv_id: null,
@@ -56,6 +58,12 @@ const emptyConv = () => ({
   history: [],
   messages: [],
   inputText: '',
+  detailLoaded: false,
+  detailLoading: false,
+  loadingOlder: false,
+  messagesHasMore: false,
+  oldestMsgId: null,
+  messagesTotal: 0,
 })
 
 const activeConv = computed(() => convs.find((c) => c.conv_id === curConvId.value) || null)
@@ -67,6 +75,11 @@ const mapConvSummary = (row) => ({
   messages: [],
   inputText: '',
   detailLoaded: false,
+  detailLoading: false,
+  loadingOlder: false,
+  messagesHasMore: false,
+  oldestMsgId: null,
+  messagesTotal: 0,
 })
 
 const normalizeMessages = (rows) => {
@@ -86,19 +99,65 @@ const normalizeMessages = (rows) => {
   }))
 }
 
-const loadConversationDetail = async (convId, { force = false } = {}) => {
+const applyConversationDetail = (target, detail, { prepend = false } = {}) => {
+  target.title = detail.title || target.title
+  target.history = Array.isArray(detail.history) ? detail.history : []
+  const normalized = normalizeMessages(detail.messages)
+  target.messages = prepend ? [...normalized, ...target.messages] : normalized
+  target.messagesHasMore = Boolean(detail.messages_has_more)
+  target.oldestMsgId = detail.oldest_msg_id || (target.messages[0]?.id ?? null)
+  target.messagesTotal = detail.messages_total ?? target.messages.length
+}
+
+const loadConversationDetail = async (convId, { force = false, beforeMsgId = null } = {}) => {
   const target = convs.find((c) => c.conv_id === convId)
   if (!target) return
-  if (target.detailLoaded && !force) return
+  if (!beforeMsgId && target.detailLoaded && !force) return
 
-  const detail = await getConversation(convId)
-  const refreshed = convs.find((c) => c.conv_id === convId)
-  if (!refreshed) return
+  if (beforeMsgId) {
+    if (target.loadingOlder || !target.messagesHasMore) return
+    target.loadingOlder = true
+  } else {
+    target.detailLoading = true
+  }
 
-  refreshed.title = detail.title || refreshed.title
-  refreshed.history = Array.isArray(detail.history) ? detail.history : []
-  refreshed.messages = normalizeMessages(detail.messages)
-  refreshed.detailLoaded = true
+  try {
+    const detail = await getConversation(convId, {
+      message_limit: INITIAL_MESSAGE_LIMIT,
+      before_msg_id: beforeMsgId || undefined,
+    })
+    const refreshed = convs.find((c) => c.conv_id === convId)
+    if (!refreshed) return
+
+    applyConversationDetail(refreshed, detail, { prepend: Boolean(beforeMsgId) })
+    if (!beforeMsgId) {
+      refreshed.detailLoaded = true
+    }
+  } catch (err) {
+    if (!beforeMsgId) {
+      message.error(err.message || '加载对话详情失败')
+    }
+    throw err
+  } finally {
+    const refreshed = convs.find((c) => c.conv_id === convId)
+    if (refreshed) {
+      refreshed.detailLoading = false
+      refreshed.loadingOlder = false
+    }
+  }
+}
+
+const loadOlderMessages = async ({ onLoaded, onError } = {}) => {
+  if (!curConvId.value) return
+  const conv = convs.find((c) => c.conv_id === curConvId.value)
+  if (!conv?.oldestMsgId || !conv.messagesHasMore || conv.loadingOlder) return
+  try {
+    await loadConversationDetail(curConvId.value, { beforeMsgId: conv.oldestMsgId })
+    onLoaded?.()
+  } catch (err) {
+    message.error(err.message || '加载更早消息失败')
+    onError?.()
+  }
 }
 
 const ensureActiveConversationLoaded = async ({ force = false } = {}) => {
@@ -149,7 +208,9 @@ const renameTitle = async (newTitle) => {
 const goToConversation = async (convId) => {
   curConvId.value = convId
   const conv = convs.find((c) => c.conv_id === convId)
-  if (!conv || conv.detailLoaded) return
+  if (!conv) return
+  if (conv.detailLoaded) return
+  conv.detailLoading = true
   await ensureActiveConversationLoaded()
 }
 

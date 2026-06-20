@@ -26,6 +26,13 @@ function highlightCode(text, lang) {
   return hljs.highlightAuto(text).value
 }
 
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 function foldPythonCodeBlock(text, lang, forceSkillFold = false) {
   const language = (lang || '').toLowerCase()
   const lineCount = text.split('\n').length
@@ -37,11 +44,17 @@ function foldPythonCodeBlock(text, lang, forceSkillFold = false) {
       /^\s*(import |from .+ import )/m.test(text))
 
   if (looksLikePython && lineCount >= FOLD_MIN_LINES) {
-    const highlighted = highlightCode(text, 'python')
+    const codeHtml =
+      text.length > 12000
+        ? escapeHtml(text)
+        : highlightCode(text, 'python')
     return `<details class="skill-code-fold">
 <summary class="skill-code-fold__summary">技能中间代码 (Python · ${lineCount} 行)</summary>
-<div class="skill-code-fold__body"><pre><code class="hljs language-python">${highlighted}</code></pre></div>
+<div class="skill-code-fold__body"><pre><code class="hljs language-python">${codeHtml}</code></pre></div>
 </details>`
+  }
+  if (text.length > 12000) {
+    return `<pre><code>${escapeHtml(text)}</code></pre>`
   }
   const hl = highlightCode(text, language || undefined)
   const cls = language ? `hljs language-${language}` : 'hljs'
@@ -50,6 +63,16 @@ function foldPythonCodeBlock(text, lang, forceSkillFold = false) {
 
 let _defaultMarked
 let _foldMarked
+let _liteMarked
+
+const LITE_PARSE_THRESHOLD = 25000
+
+function getLiteMarked() {
+  if (!_liteMarked) {
+    _liteMarked = new Marked({ gfm: true, breaks: true, tables: true })
+  }
+  return _liteMarked
+}
 
 function getDefaultMarked() {
   if (!_defaultMarked) {
@@ -82,6 +105,17 @@ function getFoldMarked() {
 
 export function parseChatMarkdown(text, message) {
   const raw = String(text ?? '')
+  if (raw.length >= LITE_PARSE_THRESHOLD) {
+    try {
+      return getLiteMarked().parse(raw)
+    } catch {
+      return escapeHtml(raw).replace(/\n/g, '<br>')
+    }
+  }
   const md = shouldCollapseSkillCode(message) ? getFoldMarked() : getDefaultMarked()
-  return md.parse(raw)
+  try {
+    return md.parse(raw)
+  } catch {
+    return getLiteMarked().parse(raw)
+  }
 }

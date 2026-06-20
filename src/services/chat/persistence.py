@@ -114,6 +114,82 @@ def list_messages(db: Session, conv_id: str) -> list[ChatMessage]:
     )
 
 
+def count_ui_messages(db: Session, conv_id: str) -> int:
+    return (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.conv_id == conv_id,
+            ChatMessage.role.in_(("user", "assistant")),
+        )
+        .count()
+    )
+
+
+def _resolve_message_anchor(db: Session, conv_id: str, msg_id: str) -> ChatMessage | None:
+    row = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.msg_id == msg_id, ChatMessage.conv_id == conv_id)
+        .first()
+    )
+    if row:
+        return row
+    rows = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.conv_id == conv_id,
+            ChatMessage.role.in_(("user", "assistant")),
+        )
+        .order_by(ChatMessage.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    for row in rows:
+        meta = row.metadata_json or {}
+        if meta.get("ui_msg_id") == msg_id:
+            return row
+    return None
+
+
+def list_messages_page(
+    db: Session,
+    conv_id: str,
+    *,
+    limit: int = 30,
+    before_msg_id: str | None = None,
+) -> list[ChatMessage]:
+    """按时间正序返回最近 limit 条 UI 消息；before_msg_id 用于向上翻页。"""
+    q = db.query(ChatMessage).filter(
+        ChatMessage.conv_id == conv_id,
+        ChatMessage.role.in_(("user", "assistant")),
+    )
+    if before_msg_id:
+        anchor = _resolve_message_anchor(db, conv_id, before_msg_id)
+        if anchor and anchor.created_at:
+            q = q.filter(ChatMessage.created_at < anchor.created_at)
+    rows = q.order_by(ChatMessage.created_at.desc()).limit(limit).all()
+    return list(reversed(rows))
+
+
+def _ui_msg_id(row: ChatMessage) -> str:
+    meta = row.metadata_json or {}
+    return meta.get("ui_msg_id") or row.msg_id
+
+
+def _messages_has_older(db: Session, conv_id: str, oldest_row: ChatMessage | None) -> bool:
+    if not oldest_row or not oldest_row.created_at:
+        return False
+    return (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.conv_id == conv_id,
+            ChatMessage.role.in_(("user", "assistant")),
+            ChatMessage.created_at < oldest_row.created_at,
+        )
+        .count()
+        > 0
+    )
+
+
 def build_llm_history(db: Session, conv_id: str) -> list[dict]:
     """构建发给大模型的 history（user/assistant 纯文本）。"""
     rows = list_messages(db, conv_id)
@@ -125,39 +201,106 @@ def build_llm_history(db: Session, conv_id: str) -> list[dict]:
     return history
 
 
-def _ui_message_from_row(row: ChatMessage) -> dict:
+def _slim_refs(refs) -> dict | None:
+    """列表加载时剥离检索正文等大字段，避免响应体过大。"""
+    if not refs or not isinstance(refs, dict):
+        return None
+    out: dict = {}
+    skill = refs.get("skill")
+    if isinstance(skill, dict):
+        out["skill"] = {
+            "skill_id": skill.get("skill_id"),
+            "skill_name": skill.get("skill_name"),
+            "artifacts": skill.get("artifacts") or [],
+        }
+    kb = refs.get("knowledge_base")
+    if isinstance(kb, dict) and isinstance(kb.get("results"), list):
+        slim_results = []
+        for item in kb["results"][:12]:
+            if not isinstance(item, dict):
+                continue
+            entity = item.get("entity") if isinstance(item.get("entity"), dict) else {}
+            slim_results.append(
+                {
+                    "id": item.get("id"),
+                    "distance": item.get("distance"),
+                    "rerank_score": item.get("rerank_score"),
+                    "file": item.get("file"),
+                    "entity": {
+                        "paper_id": entity.get("paper_id"),
+                        "page_num": entity.get("page_num"),
+                        "text": "",
+                    },
+                }
+            )
+        out["knowledge_base"] = {"results": slim_results}
+    for key in ("entities", "triples"):
+        if refs.get(key):
+            out[key] = refs[key]
+    return out or None
+
+
+def _ui_message_from_row(row: ChatMessage, *, slim: bool = False) -> dict:
     meta = row.metadata_json or {}
+    content = row.content or ""
     if row.role == "user":
         return {
             "id": meta.get("ui_msg_id") or row.msg_id,
             "role": "sent",
-            "text": row.content,
+            "text": content,
             "images": meta.get("images") or [],
             "citations": meta.get("citations") or [],
             "status": "finished",
         }
+    ponder = meta.get("reasoning_content") or ""
+    refs = meta.get("refs")
+    if slim:
+        ponder = ""
+        refs = _slim_refs(refs)
     return {
         "id": meta.get("ui_msg_id") or row.msg_id,
         "role": "received",
-        "text": row.content,
-        "ponder": meta.get("reasoning_content") or "",
-        "refs": meta.get("refs"),
+        "text": content,
+        "ponder": ponder,
+        "refs": refs,
         "model_name": meta.get("model_name"),
         "status": meta.get("status") or "finished",
         "meta": meta.get("chat_meta") or {},
     }
 
 
-def conversation_detail(db: Session, user_id: str, conv_id: str) -> dict | None:
+def conversation_detail(
+    db: Session,
+    user_id: str,
+    conv_id: str,
+    *,
+    message_limit: int | None = 8,
+    before_msg_id: str | None = None,
+) -> dict | None:
     conv = get_conversation(db, user_id, conv_id)
     if not conv:
         return None
-    rows = list_messages(db, conv_id)
-    messages = [_ui_message_from_row(row) for row in rows if row.role in ("user", "assistant")]
+
+    use_slim = message_limit is not None
+    total_messages = count_ui_messages(db, conv_id) if not before_msg_id else None
+    if message_limit is None:
+        rows = [row for row in list_messages(db, conv_id) if row.role in ("user", "assistant")]
+        messages_has_more = False
+    else:
+        limit = max(1, min(int(message_limit), 100))
+        rows = list_messages_page(db, conv_id, limit=limit, before_msg_id=before_msg_id)
+        messages_has_more = _messages_has_older(db, conv_id, rows[0] if rows else None)
+
+    messages = [_ui_message_from_row(row, slim=use_slim) for row in rows]
+    oldest_msg_id = _ui_msg_id(rows[0]) if rows else None
+
     return {
         **conv.to_dict(),
         "messages": messages,
-        "history": build_llm_history(db, conv_id),
+        "history": [],
+        "messages_total": total_messages,
+        "messages_has_more": messages_has_more,
+        "oldest_msg_id": oldest_msg_id,
     }
 
 
@@ -274,7 +417,7 @@ def delete_message_turn(
     _touch_conversation(conv)
     db.add(conv)
     db.commit()
-    return conversation_detail(db, user_id, conv_id)
+    return conversation_detail(db, user_id, conv_id, message_limit=8)
 
 
 def persist_chat_turn(

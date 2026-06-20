@@ -1,7 +1,7 @@
 import json
 import asyncio
 import uuid
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, Response
 from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy.orm import Session
@@ -183,10 +183,18 @@ def create_user_conversation(
 @chat.get("/conversations/{conv_id}")
 def get_user_conversation_detail(
     conv_id: str,
+    message_limit: int = Query(8, ge=1, le=100),
+    before_msg_id: str | None = Query(None),
     current_user: UserInDB = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    detail = conversation_detail(db, current_user.userid, conv_id)
+    detail = conversation_detail(
+        db,
+        current_user.userid,
+        conv_id,
+        message_limit=message_limit,
+        before_msg_id=before_msg_id,
+    )
     if not detail:
         raise HTTPException(status_code=404, detail="会话不存在或无权访问")
     return detail

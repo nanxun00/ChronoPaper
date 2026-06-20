@@ -11,8 +11,14 @@ export function createConversation(body = {}) {
   })
 }
 
-export function getConversation(convId) {
-  return apiJson(`/api/chat/conversations/${encodeURIComponent(convId)}`)
+export function getConversation(convId, { message_limit, before_msg_id } = {}) {
+  const params = new URLSearchParams()
+  if (message_limit != null) params.set('message_limit', String(message_limit))
+  if (before_msg_id) params.set('before_msg_id', before_msg_id)
+  const qs = params.toString()
+  return apiJson(
+    `/api/chat/conversations/${encodeURIComponent(convId)}${qs ? `?${qs}` : ''}`,
+  )
 }
 
 export function updateConversation(convId, body) {
