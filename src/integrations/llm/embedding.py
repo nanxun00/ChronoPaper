@@ -8,6 +8,10 @@ logger = setup_logger("EmbeddingModel")
 
 GLOBAL_EMBED_STATE = {}
 
+# 智谱 embedding-3：单条最多 3072 tokens；英文/表格接近 1 字符 ≈ 1 token
+ZHIPU_MAX_INPUT_CHARS = 4_500
+ZHIPU_BATCH_SIZE = 16
+
 
 def _load_flag_model():
     from FlagEmbedding import FlagModel
@@ -88,9 +92,74 @@ class ZhipuEmbedding:
         logger.info("Zhipu Embedding model loaded")
         self.query_instruction_for_retrieval = "为这个句子生成表示以用于检索相关文章："
 
+    def _sanitize_inputs(self, message: list) -> list[str]:
+        cleaned: list[str] = []
+        for item in message:
+            text = str(item if item is not None else "")
+            text = text.replace("\x00", " ")
+            text = "".join(ch if ch == "\n" or ch == "\t" or ord(ch) >= 32 else " " for ch in text)
+            text = text.strip()
+            if not text:
+                text = " "
+            if len(text) > ZHIPU_MAX_INPUT_CHARS:
+                text = text[: ZHIPU_MAX_INPUT_CHARS - 20] + "…（已截断）"
+            cleaned.append(text)
+        return cleaned
+
+    def _create_embeddings(self, inputs: list[str]):
+        if not inputs:
+            return None
+        model = self.model_info.get("default_path") or self.model_info.get("name") or "embedding-3"
+        kwargs: dict = {"model": model, "input": inputs}
+        dim = self.model_info.get("dimension")
+        if dim:
+            kwargs["dimensions"] = int(dim)
+        return self.client.embeddings.create(**kwargs)
+
+    def _embed_one(self, text: str) -> list[float]:
+        response = self._create_embeddings([text])
+        return list(response.data[0].embedding)
+
+    def _embed_batch_resilient(self, inputs: list[str], *, batch_offset: int = 0) -> list[list[float]]:
+        try:
+            response = self._create_embeddings(inputs)
+            return [list(a.embedding) for a in response.data]
+        except Exception as exc:
+            if len(inputs) <= 1:
+                text = inputs[0]
+                if len(text) > 800:
+                    logger.warning(
+                        "Zhipu embed retry with shorter text offset=%s len=%s: %s",
+                        batch_offset,
+                        len(text),
+                        exc,
+                    )
+                    return [self._embed_one(text[:800] + "…")]
+                logger.error(
+                    "Zhipu embed failed single item offset=%s len=%s preview=%r: %s",
+                    batch_offset,
+                    len(text),
+                    text[:120],
+                    exc,
+                )
+                raise
+            logger.warning(
+                "Zhipu embed batch failed offset=%s size=%s, falling back to singles: %s",
+                batch_offset,
+                len(inputs),
+                exc,
+            )
+            vectors: list[list[float]] = []
+            for j, text in enumerate(inputs):
+                vectors.extend(
+                    self._embed_batch_resilient([text], batch_offset=batch_offset + j)
+                )
+            return vectors
+
     def predict(self, message):
-        data = []
-        batch_size = 20
+        message = self._sanitize_inputs(message)
+        data: list[list[float]] = []
+        batch_size = ZHIPU_BATCH_SIZE
 
         if len(message) > batch_size:
             global GLOBAL_EMBED_STATE
@@ -108,12 +177,7 @@ class ZhipuEmbedding:
                 GLOBAL_EMBED_STATE[task_id]["progress"] = i
 
             group_msg = message[i : i + batch_size]
-            response = self.client.embeddings.create(
-                model=self.model_info.get("default_path", None),
-                input=group_msg,
-            )
-
-            data.extend([a.embedding for a in response.data])
+            data.extend(self._embed_batch_resilient(group_msg, batch_offset=i))
 
         if len(message) > batch_size:
             GLOBAL_EMBED_STATE[task_id]["progress"] = len(message)

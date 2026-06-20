@@ -1,5 +1,7 @@
 import json
 import asyncio
+import queue
+import threading
 import uuid
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, Response
@@ -92,6 +94,19 @@ def _ensure_retrieval_db(meta: dict) -> dict:
     return meta
 
 
+def _skill_script_context(history_manager: HistoryManager, query: str) -> str:
+    """供脚本规划从近期对话中提取 DOI 等标识。"""
+    parts: list[str] = []
+    for msg in (history_manager.messages or [])[-6:]:
+        if msg.get("role") in ("user", "assistant"):
+            content = (msg.get("content") or "").strip()
+            if content:
+                parts.append(content)
+    if query.strip():
+        parts.append(query.strip())
+    return "\n\n".join(parts)
+
+
 def _prepare_chat_query(
     query: str,
     history_manager: HistoryManager,
@@ -99,6 +114,8 @@ def _prepare_chat_query(
     literature_context: str,
     user_id: str,
     cur_res_id: str,
+    *,
+    on_progress=None,
 ) -> tuple[str, dict | None, str | None]:
     from src.services.skills import prepare_skill_turn
 
@@ -108,6 +125,8 @@ def _prepare_chat_query(
         model=startup.model,
         user_id=user_id,
         run_id=cur_res_id,
+        on_progress=on_progress,
+        script_context=_skill_script_context(history_manager, query),
     )
     if skill_info.get("skill_id"):
         meta.update({k: v for k, v in skill_info.items() if v is not None})
@@ -183,6 +202,83 @@ def _message_to_response_content(message) -> tuple[dict, str]:
         content = str(message)
     response_content["content"] = content or ""
     return response_content, response_content["content"]
+
+
+def _should_use_skill_agent(meta: dict, skill_system: str | None, refs: dict | None) -> bool:
+    if meta.get("skill_agent", True) is False:
+        return False
+    if not skill_system:
+        return False
+    if _pending_codegen_approval(refs):
+        return False
+    skill = (refs or {}).get("skill") or {}
+    if not skill.get("skill_id"):
+        return False
+    if (meta.get("skill_mode") or "auto").strip().lower() == "off":
+        return False
+    return True
+
+
+def _run_skill_agent(model, messages: list, skill_id: str) -> str:
+    from src.services.skills.agent import run_skill_agent
+    from src.services.skills.registry import get_skill_registry
+
+    record = get_skill_registry().get(skill_id)
+    if not record:
+        return ""
+    return run_skill_agent(model, messages, record.path).content
+
+
+_PREPARE_DONE = object()
+
+
+def _start_prepare_worker(
+    query: str,
+    history_manager: HistoryManager,
+    meta: dict,
+    literature_context: str,
+    user_id: str,
+    cur_res_id: str,
+) -> tuple[queue.Queue, threading.Thread, dict, dict]:
+    progress_queue: queue.Queue = queue.Queue()
+    result_box: dict = {}
+    error_box: dict = {}
+
+    def worker() -> None:
+        def on_progress(event) -> None:
+            progress_queue.put(event)
+
+        try:
+            result_box["result"] = _prepare_chat_query(
+                query,
+                history_manager,
+                meta,
+                literature_context,
+                user_id,
+                cur_res_id,
+                on_progress=on_progress,
+            )
+        except Exception as exc:
+            error_box["error"] = exc
+        finally:
+            progress_queue.put(_PREPARE_DONE)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    return progress_queue, thread, result_box, error_box
+
+
+def _drain_codegen_progress(progress_queue: queue.Queue, thread: threading.Thread):
+    while True:
+        try:
+            item = progress_queue.get(timeout=0.25)
+        except queue.Empty:
+            if not thread.is_alive() and progress_queue.empty():
+                break
+            continue
+        if item is _PREPARE_DONE:
+            break
+        yield item
 
 
 def _resolve_conversation(
@@ -397,8 +493,13 @@ def chat_post(
         messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get("history_round"))
         messages = _inject_skill_system(messages, skill_system)
         history_manager.add_user(query)
-        message = startup.model.predict(messages, stream=False)
-        response_content, content = _message_to_response_content(message)
+        skill_id = (refs or {}).get("skill", {}).get("skill_id")
+        if _should_use_skill_agent(meta, skill_system, refs) and skill_id:
+            content = _run_skill_agent(startup.model, messages, skill_id)
+            response_content = {"reasoning_content": "", "content": content}
+        else:
+            message = startup.model.predict(messages, stream=False)
+            response_content, content = _message_to_response_content(message)
         refs = _refs_get(user_id, cur_res_id)
         updated_history = persist_turn(
             content,
@@ -420,14 +521,27 @@ def chat_post(
         )
 
     def generate_response():
+        use_skill_progress = _should_emit_skill_progress(meta)
         if meta.get("enable_retrieval"):
             yield make_chunk("", "searching", history=None)
-        elif _should_emit_skill_progress(meta):
+        elif use_skill_progress:
             yield make_chunk("", "skill_running", history=None)
 
-        new_query, refs, skill_system = _prepare_chat_query(
-            query, history_manager, meta, literature_context, user_id, cur_res_id
-        )
+        if use_skill_progress:
+            progress_queue, worker, result_box, error_box = _start_prepare_worker(
+                query, history_manager, meta, literature_context, user_id, cur_res_id
+            )
+            for event in _drain_codegen_progress(progress_queue, worker):
+                payload = event.to_dict() if hasattr(event, "to_dict") else dict(event)
+                yield make_chunk({"skill_progress": payload}, "skill_running", history=None)
+            worker.join(timeout=300)
+            if error_box.get("error"):
+                raise error_box["error"]
+            new_query, refs, skill_system = result_box["result"]
+        else:
+            new_query, refs, skill_system = _prepare_chat_query(
+                query, history_manager, meta, literature_context, user_id, cur_res_id
+            )
         pending = _pending_codegen_approval(refs)
         if pending:
             summary = _codegen_approval_message(pending)
@@ -445,30 +559,83 @@ def chat_post(
 
         content = ""
         response_content = {"reasoning_content": "", "content": ""}
-        for delta in startup.model.predict(messages, stream=True):
-            if not delta.content:
-                continue
-            if startup.model.model_name in ("deepseek-r1:32b", "deepseek-r1:14b"):
-                if hasattr(delta, "is_full") and delta.is_full:
-                    if hasattr(delta, "reasoning_content"):
-                        response_content["reasoning_content"] = delta.reasoning_content
-                    response_content["content"] = delta.content
-                    content = delta.content
-                else:
-                    if hasattr(delta, "reasoning_content"):
-                        response_content["reasoning_content"] += delta.reasoning_content
-                    response_content["content"] += delta.content
-                    content += delta.content
-            else:
-                if hasattr(delta, "is_full") and delta.is_full:
-                    response_content["content"] = delta.content
-                    content = delta.content
-                else:
-                    response_content["content"] += delta.content
-                    content += delta.content
+        skill_id = (refs or {}).get("skill", {}).get("skill_id")
+        use_agent = _should_use_skill_agent(meta, skill_system, refs) and skill_id
+        # 与前端「流式输出」开关一致：关则整段返回，开则逐 token 推送 loading
+        llm_stream = use_stream
 
-            chunk = make_chunk(response_content, "loading", history=history_manager.update_ai(content))
-            yield chunk
+        if use_agent:
+            from src.services.skills.agent import iter_skill_agent
+            from src.services.skills.registry import get_skill_registry
+
+            yield make_chunk("", "skill_agent", history=None)
+            record = get_skill_registry().get(skill_id)
+            agent_status = "skill_agent"
+            agent_streamed = False
+            if record:
+                for event in iter_skill_agent(
+                    startup.model, messages, record.path, stream=llm_stream
+                ):
+                    if event.kind == "tool_step":
+                        if agent_status != "skill_agent":
+                            agent_status = "skill_agent"
+                            yield make_chunk("", "skill_agent", history=None)
+                        continue
+                    if event.kind == "token":
+                        agent_streamed = True
+                        content = event.content
+                        response_content["content"] = content
+                        agent_status = "loading"
+                        chunk = make_chunk(
+                            response_content,
+                            "loading",
+                            history=history_manager.update_ai(content),
+                        )
+                        yield chunk
+                    elif event.kind == "done" and event.result is not None:
+                        content = event.result.content
+                        response_content["content"] = content
+                        if not agent_streamed and content:
+                            chunk = make_chunk(
+                                response_content,
+                                "loading",
+                                history=history_manager.update_ai(content),
+                            )
+                            yield chunk
+            else:
+                content = _run_skill_agent(startup.model, messages, skill_id)
+                response_content["content"] = content
+                chunk = make_chunk(
+                    response_content,
+                    "loading",
+                    history=history_manager.update_ai(content),
+                )
+                yield chunk
+        else:
+            for delta in startup.model.predict(messages, stream=llm_stream):
+                if not delta.content:
+                    continue
+                if startup.model.model_name in ("deepseek-r1:32b", "deepseek-r1:14b"):
+                    if hasattr(delta, "is_full") and delta.is_full:
+                        if hasattr(delta, "reasoning_content"):
+                            response_content["reasoning_content"] = delta.reasoning_content
+                        response_content["content"] = delta.content
+                        content = delta.content
+                    else:
+                        if hasattr(delta, "reasoning_content"):
+                            response_content["reasoning_content"] += delta.reasoning_content
+                        response_content["content"] += delta.content
+                        content += delta.content
+                else:
+                    if hasattr(delta, "is_full") and delta.is_full:
+                        response_content["content"] = delta.content
+                        content = delta.content
+                    else:
+                        response_content["content"] += delta.content
+                        content += delta.content
+
+                chunk = make_chunk(response_content, "loading", history=history_manager.update_ai(content))
+                yield chunk
 
         refs = _refs_get(user_id, cur_res_id)
         updated_history = persist_turn(

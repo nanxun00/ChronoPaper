@@ -6,6 +6,7 @@ from typing import Any
 from src.services.skills.artifact_collector import artifacts_context_block
 from src.services.skills.codegen_common import CodegenLoopResult, extract_python_code
 from src.services.skills.codegen_graph import DEFAULT_MAX_ROUNDS, run_codegen_graph
+from src.services.skills.codegen_progress import ProgressCallback
 from src.services.skills.generated_runner import should_attempt_codegen
 from src.utils.logging_config import setup_logger
 
@@ -31,6 +32,7 @@ def run_codegen_loop(
     user_id: str | None = None,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     input_context: str = "",
+    on_progress: ProgressCallback | None = None,
 ) -> CodegenLoopResult:
     """LangGraph：写代码 → 静态校验 → 执行 → 解析产物 → 未达标再改。"""
     return run_codegen_graph(
@@ -41,6 +43,7 @@ def run_codegen_loop(
         user_id=user_id,
         max_rounds=max_rounds,
         input_context=input_context,
+        on_progress=on_progress,
     )
 
 

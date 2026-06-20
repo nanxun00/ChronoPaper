@@ -14,7 +14,9 @@ logger = setup_logger("SkillArtifacts")
 
 SKILL_ARTIFACTS_DIR = UPLOADS_DIR / "skills"
 # nature-skills 常见产物目录：paper2ppt 用 output/，format-converter 默认 references/
+# codegen 脚本有时 cwd=skill_root 却写入 .generated/output/runs/{run_id}/
 SCAN_SUBDIRS = ("output", "references")
+GENERATED_OUTPUT_SUBDIR = ".generated/output"
 # 同步进技能目录的输入配图，不是脚本交付物
 EXCLUDED_ARTIFACT_PREFIXES = ("output/assets/figures/",)
 ALLOWED_SUFFIXES = frozenset(
@@ -49,7 +51,19 @@ def _scan_roots(skill_root: Path) -> list[tuple[str, Path]]:
         path = skill_root / sub
         if path.is_dir():
             roots.append((sub, path))
+    gen_output = skill_root / GENERATED_OUTPUT_SUBDIR
+    if gen_output.is_dir():
+        roots.append((GENERATED_OUTPUT_SUBDIR, gen_output))
     return roots
+
+
+def _normalize_artifact_rel(rel: str) -> str:
+    """对外 URL 使用 output/…，不暴露 .generated/ 前缀。"""
+    normalized = rel.replace("\\", "/")
+    prefix = f"{GENERATED_OUTPUT_SUBDIR}/"
+    if normalized.startswith(prefix):
+        return normalized[len(".generated/") :]
+    return normalized
 
 
 def snapshot_output_files(skill_root: Path) -> dict[str, float]:
@@ -62,8 +76,9 @@ def snapshot_output_files(skill_root: Path) -> dict[str, float]:
             if path.suffix.lower() not in ALLOWED_SUFFIXES:
                 continue
             rel = f"{sub}/{path.relative_to(root).as_posix()}"
+            public_rel = _normalize_artifact_rel(rel)
             try:
-                snap[rel] = path.stat().st_mtime
+                snap[public_rel] = path.stat().st_mtime
             except OSError:
                 continue
     return snap
@@ -116,7 +131,8 @@ def collect_skill_artifacts(
             if suffix not in ALLOWED_SUFFIXES:
                 continue
             rel = f"{sub}/{path.relative_to(root).as_posix()}"
-            if any(rel.startswith(prefix) for prefix in EXCLUDED_ARTIFACT_PREFIXES):
+            public_rel = _normalize_artifact_rel(rel)
+            if any(public_rel.startswith(prefix) for prefix in EXCLUDED_ARTIFACT_PREFIXES):
                 continue
             try:
                 mtime = path.stat().st_mtime
@@ -124,13 +140,13 @@ def collect_skill_artifacts(
             except OSError:
                 continue
             if size > MAX_ARTIFACT_BYTES:
-                logger.warning("Skip oversized artifact %s (%s bytes)", rel, size)
+                logger.warning("Skip oversized artifact %s (%s bytes)", public_rel, size)
                 continue
             if since_ts is not None and mtime < since_ts - 1.0:
                 continue
-            if not _is_new_or_updated(rel, mtime, before):
+            if not _is_new_or_updated(public_rel, mtime, before):
                 continue
-            candidates.append((rel, path, mtime))
+            candidates.append((public_rel, path, mtime))
 
     candidates.sort(key=lambda x: x[2], reverse=True)
     artifacts: list[dict[str, Any]] = []

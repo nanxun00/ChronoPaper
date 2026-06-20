@@ -63,17 +63,29 @@ def _model_text(response: Any) -> str:
 
 
 def _skill_extra_rules(skill_id: str, query: str, run_id: str) -> str:
-    if skill_id != "nature-paper2ppt":
-        return ""
-    target = parse_target_slide_count(query)
-    minimum = min_required_slides(target)
-    return f"""nature-paper2ppt 专项（必须遵守）：
+    if skill_id == "nature-paper2ppt":
+        target = parse_target_slide_count(query)
+        minimum = min_required_slides(target)
+        return f"""nature-paper2ppt 专项（必须遵守）：
 - 目标 **{target} 张** 幻灯片（含标题页），不得少于 {minimum} 张
 - 用 PyMuPDF 读取 PDF 全文或至少摘要+引言+方法+结果+讨论，禁止 range(min(5, len(doc)))
 - 先定义 slides 列表（title + 2–4 条来自论文的中文 bullet），再循环 prs.slides.add_slide 创建
 - 至少 2 张结果页；可插入 figures 目录中文件名含 mineru 的配图，禁止整页预览 PNG 全屏
 - 禁止占位文案：「方法1：具体技术描述」「本文研究的主要问题和意义」等
 - 保存 output/runs/{run_id}/final_presentation_cn.pptx 与 output/runs/{run_id}/qa_report.md（写明 slide 总数）"""
+    if skill_id == "nature-figure":
+        return f"""nature-figure 专项（必须遵守）：
+- 用 matplotlib（Agg 后端）读取用户消息中的 CSV/表格字符串，解析为数据后绘制柱状图或多子图
+- 输出目录：output/runs/{run_id}/，至少保存 1 张 PNG（如 model_comparison.png），dpi≥300
+- 禁止只 print 路径、禁止 shutil 删除技能根目录、禁止访问技能目录外绝对路径
+- 用户已给出数据时禁止生成 mock 数据"""
+    if skill_id == "nature-reader":
+        return f"""nature-reader 专项（必须遵守）：
+- 主交付：output/runs/{run_id}/paper.md（或 TISS_net_bilingual.md），段落级 **Original / 中文** 对照
+- 用 PyMuPDF 读 PDF 全文；图表必须嵌入 `output/assets/figures/` 下已列出的 *_mineru_* 配图（相对路径）
+- 禁止声称无法访问图像；禁止只写占位翻译「[中文翻译待定]」
+- 可选：source_map.json、translation_notes.md；保存后 print 主文件路径"""
+    return ""
 
 
 def request_codegen_code(

@@ -21,7 +21,7 @@ MIN_NON_CORE_LEN = 80
 
 HIGH_VALUE_SECTIONS = frozenset({"abstract", "intro", "method", "experiment", "conclusion"})
 HIGH_VALUE_BLOCK_TYPES = frozenset({"table", "equation", "figure"})
-TABLE_MAX_CHUNK_LEN = 20_000
+TABLE_MAX_CHUNK_LEN = 6_000
 EQUATION_MAX_CHUNK_LEN = 2_000
 
 _SECTION_KEYWORDS: dict[str, tuple[str, ...]] = {

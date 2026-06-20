@@ -121,7 +121,23 @@ def inspect_skill_deliverables(
         inspector = spec.inspector
         if rel.endswith("/"):
             dir_path = skill_root / rel.rstrip("/")
-            results.append(_inspect_path(dir_path, inspector=inspector, query=query))
+            if inspector == "markdown":
+                md_files = sorted(
+                    (p for p in dir_path.rglob("*.md") if p.is_file()),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                if not md_files:
+                    missing.append(f"{rel} 下无 .md 文件")
+                    continue
+                for path in md_files[: max(1, spec.min_count)]:
+                    results.append(
+                        _inspect_path(path, inspector="markdown", query=query)
+                    )
+            else:
+                results.append(
+                    _inspect_path(dir_path, inspector=inspector, query=query)
+                )
         else:
             for path in paths[: spec.min_count if spec.min_count > 1 else 1]:
                 results.append(

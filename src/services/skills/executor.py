@@ -11,6 +11,7 @@ from src.services.skills.input_sync import (
     collect_paper_ids_from_meta,
     sync_literature_to_skill,
 )
+from src.services.skills.codegen_progress import ProgressCallback
 from src.services.skills.script_planner import maybe_run_skill_scripts
 from src.utils.logging_config import setup_logger
 
@@ -29,7 +30,62 @@ _PLATFORM_NOTE = """## ChronoPaper 平台说明
 - 若显示成功且通过质检：**文件已生成**，请直接告知下载方式，勿称「环境无法生成 pptx/文件」或只贴示例代码。
 - 若质检未达标，如实说明缺口（如页数不足、内容过短），勿按对话规划谎称已完成。
 - **勿在回复正文粘贴完整生成脚本**；正文只说明结果与产物即可。
+- **禁止**在面向用户的回复中列出 manifest.yaml、contract.md、stance.md 或技能目录绝对路径；那是内部路由，不是交付物。
 """
+
+_SKILL_PLATFORM_OVERRIDES: dict[str, str] = {
+    "nature-figure": """## ChronoPaper × nature-figure（覆盖 SKILL 路由器）
+- manifest / contract / stance 已由服务端注入；需要更深层 reference 时用 **read 工具**（相对路径），勿向用户展示绝对路径。
+- 本平台固定用 **Python + matplotlib** 在后台写脚本出图；**不要**问「Python 还是 R？」。
+- 用户消息里的 CSV/表格/指标数据 → 后台 codegen 解析并保存 PNG 到 `output/runs/{run_id}/`。
+- 你的最终回复须：说明生成了哪些图、关键对比结论、如何下载；若下方无成功记录则说明失败原因。
+""",
+    "nature-academic-search": """## ChronoPaper × nature-academic-search（覆盖 MCP 路由）
+- **未挂载 MCP 服务器**；但 `scripts/format-converter.py` 与 `scripts/academic_search.py` 可由平台**自动执行**（stdlib + 公网 API）。
+- 用户要下载/导出 RIS、BibTeX、nbib 时：**禁止**说「格式转换脚本不可用」；若下方有「技能脚本执行结果」且成功，说明已生成文件并提示消息下方下载。
+- 若本轮未跑脚本（例如用户只说「下载论文」但未指明 DOI）：请追问 DOI/PMID，或请用户粘贴要导出的标识；**不要**假装已下载。
+- format-converter 示例：`--doi 10.xxxx/yyyy --format ris`（输出到 references/）。
+""",
+    "nature-citation": """## ChronoPaper × nature-citation（覆盖 SKILL 路由器）
+- 分段找引文可依赖对话推理；**批量导出 RIS/BibTeX** 时，平台可自动调用 `nature-academic-search` 包内的 `format-converter.py`（按 DOI 列表）。
+- **禁止**说「由于环境限制无法调用脚本 / 无法生成引用文件」；若下方有「技能脚本执行结果」且成功，提示用户在消息下方点击 `.ris`/`.bib` 下载。
+- 若消息中含多个 DOI 且用户要导出：后台会用 `--doi doi1,doi2,...` 批量下载；勿让用户手动逐条复制 BibTeX 充数。
+- 完整分段检索 + HTML 浏览器流程需 `scripts/nature_citation.py`；长文稿可提示用户粘贴段落或 DOI 列表。
+""",
+    "nature-reader": """## ChronoPaper × nature-reader（覆盖 SKILL 路由器）
+- 引用文献的 PDF 与 **MinerU 解析配图** 已在对话前同步到技能目录（见「已同步文献资源」中的 `output/assets/figures/*_mineru_*`）。
+- 后台 Python 脚本会生成 `output/runs/{run_id}/` 下的 `.md` 阅读稿，并嵌入 MinerU 图表链接。
+- **禁止**称「无法提取 PDF 图像 / 当前环境看不到图 / 需手动从 PDF 截图」。
+- **禁止**在聊天正文粘贴整篇 bilingual Markdown（可简要概括结构 + 1–2 段示例）；完整稿请让用户在消息下方**下载 .md 文件**。
+- 若「技能多轮代码执行」显示成功或下方有「技能生成的文件」：直接说明文件名、章节覆盖与下载方式，勿忽略已有产物自行重写全文。
+""",
+}
+
+
+def _platform_skill_override(skill_id: str) -> str:
+    return _SKILL_PLATFORM_OVERRIDES.get(skill_id, "")
+
+
+def _chat_final_role(skill_id: str) -> str:
+    from src.services.skills.agent.prompts import SKILL_AGENT_TOOLS_PROMPT
+
+    lines = [
+        "## 【最高优先级】面向用户的最终回复规则",
+        "- 需要读技能 reference 时，在推理阶段使用 read 工具；**给用户的最终回复**必须是中文说明，不含 `<function=...>` 或绝对路径",
+        "- **禁止**在最终回复中输出 manifest.yaml、contract.md 等内部路由路径",
+    ]
+    if skill_id in _FILE_OUTPUT_SKILLS:
+        lines.extend(
+            [
+                "- 若下方有「技能多轮代码执行」且成功：说明已生成的图表/文件、主要对比结论，提示用户点击消息下方下载",
+                "- 若无成功记录：如实说后台生成失败，建议重试",
+            ]
+        )
+        if skill_id == "nature-reader":
+            lines.append(
+                "- nature-reader：勿在回复中贴整篇对照 Markdown；只概括结构并引导下载 .md"
+            )
+    return "\n".join(lines) + "\n\n" + SKILL_AGENT_TOOLS_PROMPT
 
 
 def prepare_skill_turn(
@@ -39,6 +95,8 @@ def prepare_skill_turn(
     model=None,
     user_id: str | None = None,
     run_id: str | None = None,
+    on_progress: ProgressCallback | None = None,
+    script_context: str = "",
 ) -> tuple[str | None, dict[str, Any]]:
     """
     解析并加载技能，返回 (system_prompt, skill_info)。
@@ -106,13 +164,31 @@ def prepare_skill_turn(
             user_id=user_id,
             run_id=run_id,
             input_context=input_context,
+            on_progress=on_progress,
+            script_context=script_context,
         )
 
     system = _SYSTEM_WRAPPER.format(skill_context=ctx)
     if skill_id in _FILE_OUTPUT_SKILLS or allow_codegen:
         system = f"{system}\n\n{_PLATFORM_NOTE}"
+        override = _platform_skill_override(skill_id)
+        if override:
+            system = f"{system}\n\n{override}"
+    elif skill_id in ("nature-academic-search", "nature-citation"):
+        override = _platform_skill_override(skill_id)
+        if override:
+            system = f"{system}\n\n{override}"
     if script_ctx:
         system = f"{system}\n\n{script_ctx}"
+    elif skill_id in _FILE_OUTPUT_SKILLS and allow_codegen and not pending_approval:
+        system = (
+            f"{system}\n\n## 后台脚本状态\n"
+            "本轮未注入执行结果（可能尚未跑完或全部失败）。"
+            "请如实告知用户图表/文件尚未生成，建议重试；**禁止**输出技能 manifest/contract 路径充数。"
+        )
+
+    if skill_id in _FILE_OUTPUT_SKILLS or allow_codegen:
+        system = f"{system}\n\n{_chat_final_role(skill_id)}"
 
     info = {
         "skill_mode": route_mode,

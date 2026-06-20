@@ -115,6 +115,9 @@ skill_script_plan_prompt_template = """
 - 需要查文献、验证引用、转换引用格式、跑检索 API → 选对应脚本
 - script 必须来自上方列表；args 为 CLI 参数列表，不要 shell 元字符
 - academic_search 检索时 args 第一项为查询词，可加 --limit 10
+- 用户要下载/导出 RIS/BibTeX/nbib，且问题或上下文中含 DOI → format-converter：
+  {{"run": true, "script": "scripts/format-converter.py", "args": ["--doi", "10.xxxx/yyyy", "--format", "ris"]}}
+  format 可选 ris / bib / nbib / enw，默认 ris
 """
 
 skill_codegen_write_prompt_template = """

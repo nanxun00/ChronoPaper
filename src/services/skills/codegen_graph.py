@@ -10,6 +10,12 @@ from langgraph.graph import END, StateGraph
 from src.services.skills.artifact_collector import collect_skill_artifacts, snapshot_output_files
 from src.services.skills.artifact_inspection import inspect_skill_deliverables, skill_supports_artifact_inspection
 from src.services.skills.codegen_common import CodegenLoopResult, request_codegen_code
+from src.services.skills.codegen_progress import (
+    CodegenProgressEvent,
+    ProgressCallback,
+    emit_progress,
+    truncate_code_preview,
+)
 from src.services.skills.code_validator import CodeValidationResult, validate_generated_code
 from src.services.skills.generated_runner import (
     GeneratedRunRecord,
@@ -49,6 +55,11 @@ class CodegenGraphContext:
     previous_code: str | None = None
     previous_result: ScriptRunResult | None = None
     purpose: str = "生成技能产物"
+    on_progress: ProgressCallback | None = None
+
+
+def _progress(ctx: CodegenGraphContext, event: CodegenProgressEvent) -> None:
+    emit_progress(ctx.on_progress, event)
 
 
 def _ctx(config: dict) -> CodegenGraphContext:
@@ -60,6 +71,15 @@ def _node_generate(state: CodegenGraphState, config: dict) -> CodegenGraphState:
     round_num = state.get("round_num", 0) + 1
     if round_num > ctx.max_rounds:
         return {"round_num": round_num, "route": "failed"}
+
+    _progress(
+        ctx,
+        CodegenProgressEvent(
+            phase="generating",
+            round=round_num,
+            message=f"正在生成第 {round_num} 轮 Python 脚本…",
+        ),
+    )
 
     code = request_codegen_code(
         ctx.query,
@@ -78,6 +98,17 @@ def _node_generate(state: CodegenGraphState, config: dict) -> CodegenGraphState:
         return {"round_num": round_num, "code": None, "route": "failed"}
 
     ctx.previous_code = code
+    preview = truncate_code_preview(code)
+    _progress(
+        ctx,
+        CodegenProgressEvent(
+            phase="code_ready",
+            round=round_num,
+            message=f"第 {round_num} 轮脚本已生成，正在校验…",
+            code_preview=preview,
+            script_rel=f".generated/run_{sanitize_run_id(ctx.run_id)}_r{round_num}.py",
+        ),
+    )
     return {
         "round_num": round_num,
         "code": code,
@@ -90,6 +121,16 @@ def _node_validate(state: CodegenGraphState, config: dict) -> CodegenGraphState:
     ctx = _ctx(config)
     code = state.get("code") or ""
     round_num = state.get("round_num", 1)
+
+    _progress(
+        ctx,
+        CodegenProgressEvent(
+            phase="validating",
+            round=round_num,
+            message=f"正在校验第 {round_num} 轮脚本…",
+            code_preview=truncate_code_preview(code),
+        ),
+    )
 
     validation = validate_generated_code(code, skill_id=ctx.record.id, query=ctx.query)
     if validation.ok:
@@ -128,6 +169,15 @@ def _node_validate(state: CodegenGraphState, config: dict) -> CodegenGraphState:
                     "round_num": round_num,
                 }
             )
+            _progress(
+                ctx,
+                CodegenProgressEvent(
+                    phase="pending_approval",
+                    round=round_num,
+                    message="脚本需安全审查，等待你确认是否执行…",
+                    code_preview=truncate_code_preview(code),
+                ),
+            )
             logger.info(
                 "Codegen graph round %d pending user approval: %s",
                 round_num,
@@ -155,11 +205,22 @@ def _node_validate(state: CodegenGraphState, config: dict) -> CodegenGraphState:
             stderr="; ".join(validation.errors),
         ),
         validation_errors=validation.errors,
+        source_code=code,
     )
     ctx.loop_result.rounds.append(gen_rec)
     ctx.previous_result = gen_rec.result
     route: Literal["generate", "failed"] = (
         "failed" if round_num >= ctx.max_rounds else "generate"
+    )
+    _progress(
+        ctx,
+        CodegenProgressEvent(
+            phase="validation_failed",
+            round=round_num,
+            message=f"第 {round_num} 轮校验未通过"
+            + ("，已达最大轮次" if route == "failed" else "，准备修订…"),
+            code_preview=truncate_code_preview(code),
+        ),
     )
     logger.warning("Codegen graph round %d static validation failed: %s", round_num, validation.errors)
     return {"validation_errors": validation.errors, "route": route}
@@ -171,11 +232,22 @@ def _node_execute(state: CodegenGraphState, config: dict) -> CodegenGraphState:
     round_num = state.get("round_num", 1)
 
     script_path = write_generated_script(ctx.record.path, ctx.run_id, code, round_num=round_num)
+    _progress(
+        ctx,
+        CodegenProgressEvent(
+            phase="executing",
+            round=round_num,
+            message=f"正在运行第 {round_num} 轮脚本…",
+            code_preview=truncate_code_preview(code),
+            script_rel=script_path.relative_to(ctx.record.path.resolve()).as_posix(),
+        ),
+    )
     result = run_generated_script(ctx.record.path, script_path)
     gen_rec = GeneratedRunRecord(
         purpose=ctx.purpose,
         script_rel=script_path.relative_to(ctx.record.path.resolve()).as_posix(),
         result=result,
+        source_code=code,
     )
     ctx.loop_result.rounds.append(gen_rec)
     ctx.previous_result = result
@@ -183,6 +255,16 @@ def _node_execute(state: CodegenGraphState, config: dict) -> CodegenGraphState:
     if result.returncode != 0:
         route: Literal["generate", "failed"] = (
             "failed" if round_num >= ctx.max_rounds else "generate"
+        )
+        _progress(
+            ctx,
+            CodegenProgressEvent(
+                phase="execution_failed",
+                round=round_num,
+                message=f"第 {round_num} 轮脚本运行失败"
+                + ("，已达最大轮次" if route == "failed" else "，准备修订…"),
+                code_preview=truncate_code_preview(code),
+            ),
         )
         return {
             "validation_errors": [result.stderr or "脚本执行失败"],
@@ -197,8 +279,26 @@ def _node_inspect(state: CodegenGraphState, config: dict) -> CodegenGraphState:
     gen_rec = ctx.loop_result.rounds[-1] if ctx.loop_result.rounds else None
 
     if not skill_supports_artifact_inspection(ctx.record.id):
+        _progress(
+            ctx,
+            CodegenProgressEvent(
+                phase="success",
+                round=round_num,
+                message=f"第 {round_num} 轮脚本执行完成",
+                code_preview=truncate_code_preview(state.get("code")),
+            ),
+        )
         return _finalize_success(ctx, gen_rec)
 
+    _progress(
+        ctx,
+        CodegenProgressEvent(
+            phase="inspecting",
+            round=round_num,
+            message=f"正在质检第 {round_num} 轮产物…",
+            code_preview=truncate_code_preview(state.get("code")),
+        ),
+    )
     report = inspect_skill_deliverables(
         ctx.record.id,
         ctx.record.path,
@@ -214,11 +314,30 @@ def _node_inspect(state: CodegenGraphState, config: dict) -> CodegenGraphState:
 
     if report.ok:
         logger.info("Codegen graph round %d artifact inspection passed", round_num)
+        _progress(
+            ctx,
+            CodegenProgressEvent(
+                phase="success",
+                round=round_num,
+                message=f"第 {round_num} 轮产物通过质检",
+                code_preview=truncate_code_preview(state.get("code")),
+            ),
+        )
         return _finalize_success(ctx, gen_rec)
 
     logger.info("Codegen graph round %d artifact inspection failed", round_num)
     route: Literal["generate", "failed"] = (
         "failed" if round_num >= ctx.max_rounds else "generate"
+    )
+    _progress(
+        ctx,
+        CodegenProgressEvent(
+            phase="inspection_failed",
+            round=round_num,
+            message=f"第 {round_num} 轮产物质检未达标"
+            + ("，已达最大轮次" if route == "failed" else "，准备修订…"),
+            code_preview=truncate_code_preview(state.get("code")),
+        ),
     )
     return {
         "inspection_feedback": feedback,
@@ -336,6 +455,7 @@ def run_codegen_graph(
     user_id: str | None = None,
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     input_context: str = "",
+    on_progress: ProgressCallback | None = None,
 ) -> CodegenLoopResult:
     ctx = CodegenGraphContext(
         record=record,
@@ -347,10 +467,35 @@ def run_codegen_graph(
         max_rounds=max_rounds,
         before_snapshot=snapshot_output_files(record.path),
         started=time.time(),
+        on_progress=on_progress,
     )
     graph = get_codegen_graph()
     graph.invoke(
         {"round_num": 0},
         config={"configurable": {"ctx": ctx}, "recursion_limit": max_rounds * 6 + 4},
     )
+    if ctx.user_id and ctx.run_id and not ctx.loop_result.artifacts:
+        for gen_rec in reversed(ctx.loop_result.rounds):
+            if gen_rec.result.returncode != 0:
+                continue
+            artifacts = collect_skill_artifacts(
+                ctx.record.path,
+                ctx.before_snapshot,
+                ctx.user_id,
+                ctx.run_id,
+                since_ts=ctx.started - 2.0,
+            )
+            if not artifacts:
+                artifacts = collect_skill_artifacts(
+                    ctx.record.path,
+                    {},
+                    ctx.user_id,
+                    ctx.run_id,
+                    since_ts=ctx.started - 2.0,
+                )
+            if artifacts:
+                ctx.loop_result.artifacts = artifacts
+                if gen_rec is not None:
+                    gen_rec.artifacts = artifacts
+                break
     return ctx.loop_result

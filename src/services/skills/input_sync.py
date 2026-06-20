@@ -45,7 +45,9 @@ class SkillInputContext:
             if len(self.page_render_rels) > 8:
                 lines.append(f"- … 另有 {len(self.page_render_rels) - 8} 张整页预览")
         if self.figure_rels:
-            lines.append("论文配图 PNG（可插入结果页 slide.shapes.add_picture，需保留图注）：")
+            lines.append(
+                "论文配图（MinerU 解析或 PDF 渲染，可写入 Markdown 的 ![Fig](...) 或 PPT 结果页）："
+            )
             lines.extend(f"- {p}" for p in self.figure_rels[:40])
             if len(self.figure_rels) > 40:
                 lines.append(f"- … 另有 {len(self.figure_rels) - 40} 张")
@@ -56,6 +58,10 @@ class SkillInputContext:
             "做 PPT 时：用 python-pptx 写中文标题与 bullet 要点；"
             "仅在结果页插入「论文配图 PNG」列表中的图；"
             "禁止把整页预览 PNG 全屏铺满幻灯片，禁止逐页截图拼 deck。"
+        )
+        lines.append(
+            "做阅读稿（nature-reader）时：从 PDF/MinerU 配图路径写入 "
+            "`output/runs/{run_id}/paper.md`，图表用 `output/assets/figures/*_mineru_*`。"
         )
         return "\n".join(lines)
 

@@ -70,6 +70,28 @@ class SkillArtifactCollectorTests(unittest.TestCase):
         self.assertEqual(len(artifacts), 1)
         self.assertEqual(artifacts[0]["name"], "paper.bib")
 
+    def test_collect_from_generated_output_dir(self) -> None:
+        before = snapshot_output_files(self.skill_root)
+        gen_out = self.skill_root / ".generated" / "output" / "runs" / "run1"
+        gen_out.mkdir(parents=True)
+        chart = gen_out / "model_comparison_bars.png"
+        chart.write_bytes(b"\x89PNG\r\n\x1a\n")
+        pdf = gen_out / "model_comparison_bars.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+
+        artifacts = collect_skill_artifacts(
+            self.skill_root,
+            before,
+            "user1",
+            "run-gen",
+            since_ts=time.time() - 5,
+        )
+        self.assertEqual(len(artifacts), 2)
+        names = {a["name"] for a in artifacts}
+        self.assertIn("model_comparison_bars.png", names)
+        self.assertIn("model_comparison_bars.pdf", names)
+        self.assertTrue(all(a["url"].startswith("/uploads/skills/user1/run-gen/output/") for a in artifacts))
+
     def test_skip_synced_input_figures(self) -> None:
         before = snapshot_output_files(self.skill_root)
         fig_dir = self.skill_root / "output" / "assets" / "figures"

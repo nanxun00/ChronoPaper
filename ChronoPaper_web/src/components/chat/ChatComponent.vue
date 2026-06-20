@@ -125,9 +125,17 @@
           <LoadingOutlined spin class="searching-msg-spinner" />
           <span>正在检索</span>
         </div>
-        <div v-else-if="message.status == 'skill_running' && isStreaming" class="searching-msg">
+        <div v-else-if="message.status == 'skill_running' && isStreaming" class="searching-msg skill-running-wrap">
           <LoadingOutlined spin class="searching-msg-spinner" />
-          <span>正在执行技能（生成代码 / 运行脚本 / 质检产物，可能需要 1–3 分钟）</span>
+          <span>{{ message.skill_progress?.message || '正在执行技能（生成代码 / 运行脚本 / 质检产物，可能需要 1–3 分钟）' }}</span>
+          <details v-if="message.skill_progress?.code_preview" class="skill-progress-code">
+            <summary>第 {{ message.skill_progress.round || 1 }} 轮 Python 脚本（点击展开）</summary>
+            <pre>{{ message.skill_progress.code_preview }}</pre>
+          </details>
+        </div>
+        <div v-else-if="message.status == 'skill_agent' && isStreaming" class="searching-msg">
+          <LoadingOutlined spin class="searching-msg-spinner" />
+          <span>正在读取技能参考并整理回复</span>
         </div>
         <div v-else-if="message.status == 'skill_code_approval'" class="codegen-approval-wrap">
           <div v-if="message.text" class="message-md-wrap">
@@ -627,6 +635,10 @@ const updateMessage = (info) => {
       message.codegen_approval_loading = info.codegen_approval_loading;
     }
 
+    if (info.skill_progress !== null && info.skill_progress !== undefined) {
+      message.skill_progress = info.skill_progress;
+    }
+
     if (info.groupedResults !== null && info.groupedResults !== undefined) {
       message.groupedResults = info.groupedResults;
     }
@@ -769,6 +781,35 @@ const parseResponseContent = (responsePayload) => {
 }
 
 const applyChatPayload = (data, cur_res_id) => {
+  const progress = data.response?.skill_progress
+  if (progress) {
+    updateMessage({
+      id: cur_res_id,
+      skill_progress: progress,
+      status: data.status,
+      meta: data.meta,
+    })
+  }
+
+  const rawContent = data.response?.content ?? data.response ?? ''
+  const hasTextPayload =
+    typeof rawContent === 'string'
+      ? rawContent.length > 0
+      : Boolean(rawContent?.content)
+
+  if (!hasTextPayload && !data.response?.codegen_approval && !progress) {
+    if (data.status) {
+      updateMessage({ id: cur_res_id, status: data.status, meta: data.meta })
+    }
+    if (data.history) conv.value.history = data.history
+    if (data.conv_id && !conv.value.conv_id) {
+      conv.value.conv_id = data.conv_id
+      emit('conv-created', data.conv_id)
+    }
+    if (data.refs) applyRefsToMessage(cur_res_id, data.refs)
+    return
+  }
+
   const { textContent, ponderContent } = parseResponseContent(data.response)
   const approvalPayload = data.response?.codegen_approval || data.refs?.skill?.codegen_pending_approval
 
@@ -1491,6 +1532,38 @@ watch(
         flex-shrink: 0;
         font-size: 16px;
         color: var(--main-600);
+      }
+    }
+
+    .skill-running-wrap {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .skill-progress-code {
+      width: 100%;
+      margin-top: 4px;
+
+      summary {
+        cursor: pointer;
+        color: var(--main-700);
+        font-size: 13px;
+        margin-bottom: 8px;
+      }
+
+      pre {
+        max-height: 280px;
+        overflow: auto;
+        padding: 10px;
+        border-radius: 8px;
+        background: #f6f8fa;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        width: 100%;
+        box-sizing: border-box;
       }
     }
 

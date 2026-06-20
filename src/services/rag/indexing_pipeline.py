@@ -69,8 +69,9 @@ def index_chunk_rows(
 ) -> int:
     if not rows:
         return 0
-    upsert_text_chunks_mysql(session, rows)
+    # 先写 Milvus（含 Embedding）；失败则不 commit MySQL，避免「有分块无向量」
     kb.upsert_vectors(rows)
+    upsert_text_chunks_mysql(session, rows)
     return len(rows)
 
 

@@ -64,8 +64,11 @@ class GeneratedRunRecord:
     validation_errors: list[str] | None = None
     artifacts: list[dict[str, Any]] | None = None
     inspection_summary: str | None = None
+    source_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        from src.services.skills.codegen_progress import truncate_code_preview
+
         out: dict[str, Any] = {
             "type": "generated",
             "purpose": self.purpose,
@@ -75,6 +78,9 @@ class GeneratedRunRecord:
             "stdout_preview": self.result.stdout[:2000],
             "stderr_preview": self.result.stderr[:500],
         }
+        preview = truncate_code_preview(self.source_code)
+        if preview:
+            out["code_preview"] = preview
         if self.validation_errors:
             out["validation_errors"] = self.validation_errors
         if self.inspection_summary:
