@@ -74,6 +74,7 @@ class Config(SimpleConfig):
             ),
             des="对话全局系统提示词",
         )
+        self.add_item("custom_prompts", default=[], des="用户自定义输入提示词")
         ### <<< 默认配置结束
 
         self.filename = filename or os.path.join(self.save_dir, "config", "config.yaml")

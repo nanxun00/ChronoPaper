@@ -257,7 +257,7 @@ def try_handle_image_generation(
 
         url = result["url"]
         return {
-            "content": f"图像已生成。\n\n**提示词：** {result['prompt']}\n\n请查看下方图片，可右键保存。",
+            "content": f"图像已生成。\n\n**提示词：** {result['prompt']}\n\n请查看下方图片，点击可预览并下载。",
             "status": "finished",
             "refs": {"image_gen": {"last_url": url, "prompt": result["prompt"]}},
             "images": [url],

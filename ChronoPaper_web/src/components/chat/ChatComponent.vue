@@ -106,10 +106,7 @@
         <!-- 思考过程 -->
         <div v-if="message.role == 'received' && message.ponder" class="ponder" v-html="ponderrenderMarkdown(message)">
         </div>
-        <div v-if="message.images && message.images.length > 0" class="message-images">
-          <img v-for="(imageUrl, index) in message.images" :key="index" :src="imageUrl" alt="Uploaded Image"
-            class="message-image" />
-        </div>
+        <MessageImages v-if="message.images && message.images.length > 0" :images="message.images" />
         <div v-if="message.citations && message.citations.length" class="message-citations">
           <span v-for="cite in message.citations" :key="cite.arxiv_id" class="cite-tag">
             <FileTextOutlined /> {{ cite.title }}
@@ -290,6 +287,7 @@
             v-model="meta.translate_mode"
             v-model:target-lang="meta.translate_target_lang"
           />
+          <PromptPicker @select="insertPrompt" />
         </div>
 
       </div>
@@ -333,6 +331,8 @@ import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import SkillPicker from '@/components/chat/SkillPicker.vue'
 import ImageGenToggle from '@/components/chat/ImageGenToggle.vue'
 import TranslateToggle from '@/components/chat/TranslateToggle.vue'
+import PromptPicker from '@/components/chat/PromptPicker.vue'
+import MessageImages from '@/components/chat/MessageImages.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
 import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
 import { streamTranslate } from '@/api/translate'
@@ -1156,6 +1156,16 @@ const deleteMessageTurn = async (assistantMsgId) => {
 
 const fetchRefs = (cur_res_id) => {
   return fetchChatRefs(cur_res_id).then((data) => data.refs)
+}
+
+const insertPrompt = (content) => {
+  const text = String(content || '').trim()
+  if (!text) return
+  conv.value.inputText = text
+  nextTick(() => {
+    const el = document.querySelector('.input-box .user-input textarea')
+    el?.focus?.()
+  })
 }
 
 // 更新后的 sendMessage 函数
@@ -2311,13 +2321,6 @@ watch(
   display: flex;
   justify-content: center;
   align-items: center;
-}
-
-.message-image {
-  max-width: 150px;
-  height: auto;
-  border-radius: 4px;
-  margin: 5px;
 }
 
 .message-citations {
