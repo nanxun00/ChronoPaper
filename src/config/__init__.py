@@ -16,6 +16,40 @@ MODEL_NAMES = _models["MODEL_NAMES"]
 EMBED_MODEL_INFO = _models["EMBED_MODEL_INFO"]
 RERANKER_LIST = _models["RERANKER_LIST"]
 
+_CONFIG_FILE_ENCODING = "utf-8"
+_LEGACY_CONFIG_ENCODINGS = ("gbk", "cp936", "gb2312")
+_CONFIG_SAVE_BLOCKLIST = frozenset({
+    "_config_items",
+    "model_names",
+    "model_provider_status",
+    "valuable_model_provider",
+    "filename",
+    "milvus",
+    "neo4j",
+    "kb_database_json",
+})
+
+
+def _read_text_file(path: str) -> tuple[str, str | None]:
+    """读取配置文件文本；若非 UTF-8 则尝试 legacy 编码，返回 (text, legacy_encoding)。"""
+    raw = Path(path).read_bytes()
+    if not raw:
+        return "", None
+    try:
+        return raw.decode(_CONFIG_FILE_ENCODING), None
+    except UnicodeDecodeError:
+        for enc in _LEGACY_CONFIG_ENCODINGS:
+            try:
+                return raw.decode(enc), enc
+            except UnicodeDecodeError:
+                continue
+        return raw.decode(_CONFIG_FILE_ENCODING, errors="replace"), "replace"
+
+
+def _open_config_file(path: str, mode: str):
+    """统一以 UTF-8 读写配置文件。"""
+    return open(path, mode, encoding=_CONFIG_FILE_ENCODING, newline="\n")
+
 
 class SimpleConfig(dict):
 
@@ -77,12 +111,18 @@ class Config(SimpleConfig):
         self.add_item("custom_prompts", default=[], des="用户自定义输入提示词")
         ### <<< 默认配置结束
 
-        self.filename = filename or os.path.join(self.save_dir, "config", "config.yaml")
+        config_path = filename or os.path.join(self.save_dir, "config", "config.yaml")
+        object.__setattr__(self, "filename", config_path)
+        object.__setattr__(self, "_needs_utf8_migration", False)
         os.makedirs(os.path.dirname(self.filename), exist_ok=True)
 
         self.load()
         self._apply_env_overrides()
         self.handle_self()
+        if self._needs_utf8_migration:
+            logger.info("Migrating config file to UTF-8: %s", self.filename)
+            self.save()
+            object.__setattr__(self, "_needs_utf8_migration", False)
 
     def _apply_env_overrides(self):
         """从 .env 注入连接信息与知识库配置；仅覆盖 .env 中显式设置的项。"""
@@ -107,12 +147,8 @@ class Config(SimpleConfig):
         self["kb_database_json"] = kb_path
 
     def _strip_secrets_for_save(self, data: dict) -> dict:
-        """保存配置时移除敏感字段，避免写回 yaml。"""
-        data = dict(data)
-        data.pop("milvus", None)
-        data.pop("neo4j", None)
-        data.pop("kb_database_json", None)
-        return data
+        """保存配置时移除敏感字段与运行时字段，避免写回 yaml。"""
+        return {k: v for k, v in data.items() if k not in _CONFIG_SAVE_BLOCKLIST}
 
     def add_item(self, key, default, des=None, choices=None):
         self.__setattr__(key, default)
@@ -123,12 +159,7 @@ class Config(SimpleConfig):
         }
 
     def __dict__(self):
-        blocklist = [
-            "_config_items",
-            "model_names",
-            "model_provider_status",
-        ]
-        return {k: v for k, v in self.items() if k not in blocklist}
+        return {k: v for k, v in self.items() if k not in _CONFIG_SAVE_BLOCKLIST}
 
     def handle_self(self):
         self.model_names = MODEL_NAMES
@@ -165,23 +196,27 @@ class Config(SimpleConfig):
         if self.filename is not None and os.path.exists(self.filename):
 
             if self.filename.endswith(".json"):
-                with open(self.filename, 'r') as f:
-                    content = f.read()
-                    if content:
-                        local_config = json.loads(content)
-                        self.update(local_config)
-                    else:
-                        print(f"{self.filename} is empty.")
+                content, legacy_enc = _read_text_file(self.filename)
+                if content:
+                    local_config = json.loads(content)
+                    self.update(local_config)
+                    if legacy_enc:
+                        object.__setattr__(self, "_needs_utf8_migration", True)
+                else:
+                    print(f"{self.filename} is empty.")
 
             elif self.filename.endswith(".yaml"):
-                with open(self.filename, 'r') as f:
-                    content = f.read()
-                    if content:
-                        local_config = yaml.safe_load(content)
-                        logging.info(local_config)
+                content, legacy_enc = _read_text_file(self.filename)
+                if content:
+                    local_config = yaml.safe_load(content) or {}
+                    if isinstance(local_config, dict):
+                        local_config.pop("filename", None)
                         self.update(local_config)
-                    else:
-                        print(f"{self.filename} is empty.")
+                    if legacy_enc:
+                        object.__setattr__(self, "_needs_utf8_migration", True)
+                    logging.info(local_config)
+                else:
+                    print(f"{self.filename} is empty.")
             else:
                 logger.warning(f"Unknown config file type {self.filename}")
 
@@ -192,18 +227,24 @@ class Config(SimpleConfig):
         logger.info(f"Saving config to {self.filename}")
         if self.filename is None:
             logger.warning("Config file is not specified, save to default config/base.yaml")
-            self.filename = os.path.join(self.save_dir, "config", "config.yaml")
+            object.__setattr__(
+                self,
+                "filename",
+                os.path.join(self.save_dir, "config", "config.yaml"),
+            )
             os.makedirs(os.path.dirname(self.filename), exist_ok=True)
 
+        payload = self._strip_secrets_for_save(self.__dict__())
+
         if self.filename.endswith(".json"):
-            with open(self.filename, 'w+') as f:
-                json.dump(self._strip_secrets_for_save(self.__dict__()), f, indent=4, ensure_ascii=False)
+            with _open_config_file(self.filename, "w") as f:
+                json.dump(payload, f, indent=4, ensure_ascii=False)
         elif self.filename.endswith(".yaml"):
-            with open(self.filename, 'w+') as f:
-                yaml.dump(self._strip_secrets_for_save(self.__dict__()), f, indent=2, allow_unicode=True)
+            with _open_config_file(self.filename, "w") as f:
+                yaml.dump(payload, f, indent=2, allow_unicode=True, sort_keys=False)
         else:
             logger.warning(f"Unknown config file type {self.filename}, save as json")
-            with open(self.filename, 'w+') as f:
-                json.dump(self._strip_secrets_for_save(self.__dict__()), f, indent=4)
+            with _open_config_file(self.filename, "w") as f:
+                json.dump(payload, f, indent=4, ensure_ascii=False)
 
         logger.info(f"Config file {self.filename} saved")
