@@ -121,8 +121,41 @@
           <div></div>
           <div></div>
         </div>
-        <div v-else-if="message.status == 'searching' && isStreaming" class="searching-msg"><i>正在检索……</i></div>
-        <div v-else-if="message.status == 'error' || (message.status != 'finished' && !isStreaming)" class="err-msg"
+        <div v-else-if="message.status == 'searching' && isStreaming" class="searching-msg">
+          <LoadingOutlined spin class="searching-msg-spinner" />
+          <span>正在检索</span>
+        </div>
+        <div v-else-if="message.status == 'skill_running' && isStreaming" class="searching-msg">
+          <LoadingOutlined spin class="searching-msg-spinner" />
+          <span>正在执行技能（生成代码 / 运行脚本 / 质检产物，可能需要 1–3 分钟）</span>
+        </div>
+        <div v-else-if="message.status == 'skill_code_approval'" class="codegen-approval-wrap">
+          <div v-if="message.text" class="message-md-wrap">
+            <MessageMarkdown :message="message" :priority="messageRenderPriority(index)" />
+          </div>
+          <div v-if="message.codegen_approval && !message.codegen_approval_resolved" class="codegen-approval-panel">
+            <details v-if="message.codegen_approval.code_preview" class="codegen-approval-code">
+              <summary>查看待执行脚本片段</summary>
+              <pre>{{ message.codegen_approval.code_preview }}</pre>
+            </details>
+            <div class="codegen-approval-actions">
+              <a-button
+                type="primary"
+                :loading="message.codegen_approval_loading"
+                @click="handleCodegenApproval(message, true)"
+              >
+                放行执行
+              </a-button>
+              <a-button
+                :disabled="message.codegen_approval_loading"
+                @click="handleCodegenApproval(message, false)"
+              >
+                拒绝
+              </a-button>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="message.status == 'error' || (message.status != 'finished' && message.status != 'skill_code_approval' && !isStreaming)" class="err-msg"
           @click="retryMessage(message.id)">
           请求错误，请重试
         </div>
@@ -254,6 +287,7 @@ import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import SkillPicker from '@/components/chat/SkillPicker.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
 import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
+import { approveSkillCodegen } from '@/api/skills'
 import hljs from 'highlight.js';
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
@@ -277,6 +311,7 @@ const chatRoot = ref(null)
 const chatContainer = ref(null)
 const chatContent = ref(null)
 const isStreaming = ref(false)
+const lastChatTurn = ref({ user_msg_id: null, query: null, citations: [] })
 const showScrollToBottom = ref(false)
 const autoScrollEnabled = ref(true)
 const loadingOlderRequested = ref(false)
@@ -564,6 +599,9 @@ const updateMessage = (info) => {
     // 只有在 refs 不为空时更新
     if (info.refs !== null && info.refs !== undefined) {
       message.refs = info.refs;
+      if (info.refs?.skill?.skill_id) {
+        message.skill_active = true
+      }
     }
 
     if (info.model_name !== null && info.model_name !== undefined && info.model_name !== '') {
@@ -577,6 +615,16 @@ const updateMessage = (info) => {
 
     if (info.meta !== null && info.meta !== undefined) {
       message.meta = info.meta;
+    }
+
+    if (info.codegen_approval !== null && info.codegen_approval !== undefined) {
+      message.codegen_approval = info.codegen_approval;
+    }
+    if (info.codegen_approval_resolved !== undefined) {
+      message.codegen_approval_resolved = info.codegen_approval_resolved;
+    }
+    if (info.codegen_approval_loading !== undefined) {
+      message.codegen_approval_loading = info.codegen_approval_loading;
     }
 
     if (info.groupedResults !== null && info.groupedResults !== undefined) {
@@ -722,6 +770,7 @@ const parseResponseContent = (responsePayload) => {
 
 const applyChatPayload = (data, cur_res_id) => {
   const { textContent, ponderContent } = parseResponseContent(data.response)
+  const approvalPayload = data.response?.codegen_approval || data.refs?.skill?.codegen_pending_approval
 
   updateMessage({
     id: cur_res_id,
@@ -729,6 +778,7 @@ const applyChatPayload = (data, cur_res_id) => {
     model_name: data.model_name,
     status: data.status,
     meta: data.meta,
+    ...(approvalPayload ? { codegen_approval: approvalPayload } : {}),
   })
 
   nextTick(() => {
@@ -738,6 +788,7 @@ const applyChatPayload = (data, cur_res_id) => {
       model_name: data.model_name,
       status: data.status,
       meta: data.meta,
+      ...(approvalPayload ? { codegen_approval: approvalPayload } : {}),
     })
   })
 
@@ -755,6 +806,10 @@ const applyChatPayload = (data, cur_res_id) => {
 
 const finishChatResponse = (cur_res_id) => {
   const message = conv.value.messages.find((item) => item.id === cur_res_id)
+  if (message?.status === 'skill_code_approval') {
+    isStreaming.value = false
+    return
+  }
   const useRetrieval = meta.enable_retrieval || message?.meta?.enable_retrieval
   const hasGrouped = message?.groupedResults && Object.keys(message.groupedResults).length > 0
 
@@ -785,8 +840,11 @@ const finishChatResponse = (cur_res_id) => {
   finalize()
 }
 
-const fetchChatResponse = (user_input, user_msg_id, cur_res_id, citedLiteraturePayload = []) => {
+const fetchChatResponse = (user_input, user_msg_id, cur_res_id, citedLiteraturePayload = [], options = {}) => {
   const requestMeta = buildRequestMeta(citedLiteraturePayload)
+  if (options.codegen_approval_id) {
+    requestMeta.codegen_approval_id = options.codegen_approval_id
+  }
   const useStream = requestMeta.stream !== false
 
   postChat({
@@ -851,6 +909,37 @@ const fetchChatResponse = (user_input, user_msg_id, cur_res_id, citedLiteratureP
     });
 };
 
+const handleCodegenApproval = async (msg, approved) => {
+  const approval = msg.codegen_approval
+  if (!approval?.approval_id || msg.codegen_approval_loading) return
+
+  updateMessage({ id: msg.id, codegen_approval_loading: true })
+  try {
+    if (!approved) {
+      await approveSkillCodegen({ approval_id: approval.approval_id, approved: false })
+      updateMessage({
+        id: msg.id,
+        status: 'finished',
+        text: `${msg.text || ''}\n\n**已拒绝执行该脚本。**`,
+        codegen_approval_resolved: true,
+        codegen_approval_loading: false,
+      })
+      return
+    }
+    const res = await approveSkillCodegen({ approval_id: approval.approval_id, approved: true })
+    fetchChatResponse(
+      lastChatTurn.value.query,
+      lastChatTurn.value.user_msg_id,
+      msg.id,
+      lastChatTurn.value.citations || [],
+      { codegen_approval_id: res.approval_id },
+    )
+  } catch (err) {
+    message.error(err.message || '操作失败')
+    updateMessage({ id: msg.id, codegen_approval_loading: false })
+  }
+}
+
 const deleteMessageTurn = async (assistantMsgId) => {
   if (!conv.value.conv_id || isStreaming.value) return
   const assistantIdx = conv.value.messages.findIndex((m) => m.id === assistantMsgId)
@@ -898,6 +987,12 @@ const sendMessage = () => {
     conv.value.inputText = '';
     fileList.value = [];
     meta.db_name = dbName;
+
+    lastChatTurn.value = {
+      user_msg_id,
+      query: finalInput || '请结合引用的文献进行总结或回答',
+      citations,
+    }
 
     fetchChatResponse(
       finalInput || '请结合引用的文献进行总结或回答',
@@ -1385,7 +1480,58 @@ watch(
     }
 
     .searching-msg {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       color: var(--gray-500);
+      font-size: 14px;
+      line-height: 1.5;
+
+      .searching-msg-spinner {
+        flex-shrink: 0;
+        font-size: 16px;
+        color: var(--main-600);
+      }
+    }
+
+    .codegen-approval-wrap {
+      width: 100%;
+    }
+
+    .codegen-approval-panel {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--main-200);
+      border-radius: 10px;
+      background: var(--main-5);
+    }
+
+    .codegen-approval-code {
+      margin-bottom: 12px;
+
+      summary {
+        cursor: pointer;
+        color: var(--main-700);
+        font-size: 13px;
+        margin-bottom: 8px;
+      }
+
+      pre {
+        max-height: 240px;
+        overflow: auto;
+        padding: 10px;
+        border-radius: 8px;
+        background: #f6f8fa;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    }
+
+    .codegen-approval-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
     }
   }
 

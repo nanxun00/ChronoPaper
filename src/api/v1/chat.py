@@ -52,6 +52,18 @@ def _is_stream_enabled(meta: dict) -> bool:
     return meta.get("stream", True) is not False
 
 
+def _should_emit_skill_progress(meta: dict) -> bool:
+    """技能 codegen/脚本在流式正文开始前可能耗时较长，需先推送状态。"""
+    if meta.get("codegen_approval_id"):
+        return True
+    mode = (meta.get("skill_mode") or "auto").strip().lower()
+    if mode == "off":
+        return False
+    if meta.get("skill_run_scripts", True) is False and meta.get("skill_codegen", True) is False:
+        return False
+    return True
+
+
 def _meta_for_persist(meta: dict) -> dict:
     clean = {**meta}
     cited = clean.get("cited_literature")
@@ -120,6 +132,32 @@ def _prepare_chat_query(
         _refs_set(user_id, cur_res_id, refs)
 
     return new_query, refs, skill_system
+
+
+def _pending_codegen_approval(refs: dict | None) -> dict | None:
+    if not refs:
+        return None
+    skill = refs.get("skill") or {}
+    pending = skill.get("codegen_pending_approval")
+    return pending if isinstance(pending, dict) else None
+
+
+def _codegen_approval_message(pending: dict) -> str:
+    review = pending.get("llm_review") or {}
+    errors = pending.get("validation_errors") or []
+    lines = [
+        "生成脚本触发了静态高危规则，已暂停执行。",
+        "",
+        "**拦截项：**",
+        *[f"- {e}" for e in errors],
+        "",
+        f"**LLM 安全审查：** {review.get('summary') or '—'}",
+    ]
+    risks = review.get("risks") or []
+    if risks:
+        lines.extend(["", "**潜在风险：**", *[f"- {r}" for r in risks]])
+    lines.extend(["", "请在下方面板选择 **放行执行** 或 **拒绝**。"])
+    return "\n".join(lines)
 
 
 def _inject_skill_system(messages: list, skill_system: str | None) -> list:
@@ -340,6 +378,22 @@ def chat_post(
         new_query, refs, skill_system = _prepare_chat_query(
             query, history_manager, meta, literature_context, user_id, cur_res_id
         )
+        pending = _pending_codegen_approval(refs)
+        if pending:
+            summary = _codegen_approval_message(pending)
+            payload = {
+                "response": {"content": summary, "codegen_approval": pending},
+                "history": history_manager.messages,
+                "model_name": startup.config.model_name,
+                "status": "skill_code_approval",
+                "meta": meta,
+                "conv_id": conv_id,
+                "refs": refs,
+            }
+            return Response(
+                content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                media_type="application/json",
+            )
         messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get("history_round"))
         messages = _inject_skill_system(messages, skill_system)
         history_manager.add_user(query)
@@ -368,10 +422,22 @@ def chat_post(
     def generate_response():
         if meta.get("enable_retrieval"):
             yield make_chunk("", "searching", history=None)
+        elif _should_emit_skill_progress(meta):
+            yield make_chunk("", "skill_running", history=None)
 
         new_query, refs, skill_system = _prepare_chat_query(
             query, history_manager, meta, literature_context, user_id, cur_res_id
         )
+        pending = _pending_codegen_approval(refs)
+        if pending:
+            summary = _codegen_approval_message(pending)
+            yield make_chunk(
+                {"content": summary, "codegen_approval": pending},
+                "skill_code_approval",
+                refs=refs,
+            )
+            return
+
         messages = history_manager.get_history_with_msg(new_query, max_rounds=meta.get("history_round"))
         messages = _inject_skill_system(messages, skill_system)
         history_manager.add_user(query)

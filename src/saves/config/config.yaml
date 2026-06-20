@@ -7,8 +7,8 @@ enable_search_engine: false
 filename: src/saves\config\config.yaml
 model_local_paths:
   bge-reranker-v2-m3: local/BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
-model_name: deepseek-chat
-model_provider: deepseek
+model_name: mimo-v2-omni
+model_provider: mimo
 reranker: bge-reranker-v2-m3
 save_dir: saves
 stream: true
@@ -18,3 +18,4 @@ valuable_model_provider:
 - zhipu
 - dashscope
 - siliconflow
+- mimo

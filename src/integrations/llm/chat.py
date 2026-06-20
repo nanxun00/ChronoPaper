@@ -144,6 +144,13 @@ class SiliconFlowNew(ChatOpenAIBase):
         base_url = "https://api.siliconflow.cn/v1"
         super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
 
+class MiMoNew(ChatOpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "mimo-v2-flash"
+        api_key = os.getenv("MIMO_API_KEY")
+        base_url = os.getenv("MIMO_API_BASE") or "https://api.xiaomimimo.com/v1"
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
 class CustomModel(OpenAIBase):
     def __init__(self, model_info):
         model_name = model_info["name"]

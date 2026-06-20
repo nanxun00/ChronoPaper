@@ -12,7 +12,6 @@ from src.services.skills.artifact_collector import (
     collect_skill_artifacts,
     snapshot_output_files,
 )
-from src.services.skills.codegen_agent import maybe_run_codegen_loop
 from src.services.skills.generated_runner import _FILE_OUTPUT_SKILLS
 from src.services.skills.registry import SkillRecord
 from src.services.skills.script_runner import ScriptRunResult, list_skill_scripts, run_skill_script
@@ -120,6 +119,7 @@ def _run_builtin_script(
     *,
     user_id: str | None,
     run_id: str | None,
+    query: str = "",
 ) -> tuple[str, dict[str, Any]]:
     before = snapshot_output_files(record.path)
     run_started = time.time()
@@ -151,6 +151,25 @@ def _run_builtin_script(
     artifact_block = artifacts_context_block(artifacts)
     if artifact_block:
         context = f"{context}\n\n{artifact_block}"
+
+    if run_id and result.returncode == 0:
+        from src.services.skills.artifact_inspection import (
+            inspect_skill_deliverables,
+            skill_supports_artifact_inspection,
+        )
+
+        if skill_supports_artifact_inspection(record.id):
+            report = inspect_skill_deliverables(
+                record.id,
+                record.path,
+                run_id,
+                query=query,
+            )
+            context = f"{context}\n\n{report.to_feedback_block()}"
+            run_record["inspection_ok"] = report.ok
+            if not report.ok:
+                run_record["inspection_errors"] = report.errors
+
     return context, run_record
 
 
@@ -164,21 +183,22 @@ def maybe_run_skill_scripts(
     user_id: str | None = None,
     run_id: str | None = None,
     input_context: str = "",
-) -> tuple[str | None, list[dict[str, Any]]]:
+) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
     """
     若启用则先尝试内置 scripts/，再尝试 LLM 生成脚本。
-    返回 (注入 system 的上下文, 运行记录列表)。
+    返回 (注入 system 的上下文, 运行记录列表, 待用户审批信息)。
     """
     if not enabled or record is None:
-        return None, []
+        return None, [], None
 
     runs: list[dict[str, Any]] = []
     scripts = list_skill_scripts(record.path)
     builtin_ran = False
 
-    # 文件型技能优先走「模型写代码」多轮循环（对齐 SKILL 原设计）
-    if allow_codegen and record.id in _FILE_OUTPUT_SKILLS:
-        gen_ctx, gen_runs = maybe_run_codegen_loop(
+    def _codegen_result():
+        from src.services.skills.codegen_agent import codegen_loop_context_block, run_codegen_loop
+
+        loop = run_codegen_loop(
             query,
             record,
             model,
@@ -186,8 +206,19 @@ def maybe_run_skill_scripts(
             run_id=run_id,
             input_context=input_context,
         )
+        if loop.pending_approval:
+            return None, loop.to_run_dicts(), loop.pending_approval
+        if not loop.rounds:
+            return None, [], None
+        return codegen_loop_context_block(loop), loop.to_run_dicts(), None
+
+    # 文件型技能优先走「模型写代码」多轮循环（对齐 SKILL 原设计）
+    if allow_codegen and record.id in _FILE_OUTPUT_SKILLS:
+        gen_ctx, gen_runs, pending = _codegen_result()
+        if pending:
+            return None, gen_runs, pending
         if gen_ctx:
-            return gen_ctx, gen_runs
+            return gen_ctx, gen_runs, None
 
     if scripts:
         plan = plan_skill_script(query, record, model)
@@ -199,28 +230,24 @@ def maybe_run_skill_scripts(
                 plan,
                 user_id=user_id,
                 run_id=run_id,
+                query=query,
             )
             runs.append(run_record)
             builtin_ran = True
             if context:
-                return context, runs
+                return context, runs, None
 
     if allow_codegen:
-        gen_ctx, gen_runs = maybe_run_codegen_loop(
-            query,
-            record,
-            model,
-            user_id=user_id,
-            run_id=run_id,
-            input_context=input_context,
-        )
+        gen_ctx, gen_runs, pending = _codegen_result()
+        if pending:
+            return None, gen_runs, pending
         if gen_ctx:
             runs.extend(gen_runs)
-            return gen_ctx, runs
+            return gen_ctx, runs, None
 
     if builtin_ran:
-        return None, runs
-    return None, []
+        return None, runs, None
+    return None, [], None
 
 
 def _result_to_dict(result: ScriptRunResult, plan: dict[str, Any]) -> dict[str, Any]:

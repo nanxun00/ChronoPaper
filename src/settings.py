@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     xfyun_api_key: str = ""
     xfyun_api_secret: str = ""
     siliconflow_api_key: str = ""
+    mimo_api_key: str = ""
+    mimo_api_base: str = "https://api.xiaomimimo.com/v1"
     qianfan_access_key: str = ""
     qianfan_secret_key: str = ""
     ollama_api_base: str = "http://localhost:11434/v1/"

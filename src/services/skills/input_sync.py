@@ -21,11 +21,12 @@ MAX_PAGE_PIXEL = 1600
 class SkillInputContext:
     paper_ids: list[str] = field(default_factory=list)
     pdf_rels: list[str] = field(default_factory=list)
+    page_render_rels: list[str] = field(default_factory=list)
     figure_rels: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def has_assets(self) -> bool:
-        return bool(self.pdf_rels or self.figure_rels)
+        return bool(self.pdf_rels or self.page_render_rels or self.figure_rels)
 
     def to_prompt_block(self) -> str:
         if not self.has_assets():
@@ -38,8 +39,13 @@ class SkillInputContext:
         if self.pdf_rels:
             lines.append("PDF：")
             lines.extend(f"- {p}" for p in self.pdf_rels)
+        if self.page_render_rels:
+            lines.append("PDF 整页预览 PNG（仅供阅读参考，禁止作为幻灯片背景或全屏贴图）：")
+            lines.extend(f"- {p}" for p in self.page_render_rels[:8])
+            if len(self.page_render_rels) > 8:
+                lines.append(f"- … 另有 {len(self.page_render_rels) - 8} 张整页预览")
         if self.figure_rels:
-            lines.append("页面/配图 PNG（可用于 slide.shapes.add_picture）：")
+            lines.append("论文配图 PNG（可插入结果页 slide.shapes.add_picture，需保留图注）：")
             lines.extend(f"- {p}" for p in self.figure_rels[:40])
             if len(self.figure_rels) > 40:
                 lines.append(f"- … 另有 {len(self.figure_rels) - 40} 张")
@@ -47,8 +53,9 @@ class SkillInputContext:
             lines.append("说明：")
             lines.extend(f"- {n}" for n in self.notes)
         lines.append(
-            "做 PPT 时：为关键结果页插入相关 PNG；用 add_picture 插入，"
-            "并保留图注。勿编造文中不存在的图。"
+            "做 PPT 时：用 python-pptx 写中文标题与 bullet 要点；"
+            "仅在结果页插入「论文配图 PNG」列表中的图；"
+            "禁止把整页预览 PNG 全屏铺满幻灯片，禁止逐页截图拼 deck。"
         )
         return "\n".join(lines)
 
@@ -125,15 +132,17 @@ def sync_literature_to_skill(skill_root: Path, paper_ids: list[str]) -> SkillInp
             ctx.notes.append(f"{paper_id}：PDF 复制失败")
             continue
 
-        ctx.figure_rels.extend(_render_pdf_pages(skill_root, dest_pdf, safe))
+        ctx.page_render_rels.extend(_render_pdf_pages(skill_root, dest_pdf, safe))
         ctx.figure_rels.extend(_copy_mineru_images(skill_root, paper_id, safe))
 
     # 去重保持顺序
+    ctx.page_render_rels = list(dict.fromkeys(ctx.page_render_rels))
     ctx.figure_rels = list(dict.fromkeys(ctx.figure_rels))
     if ctx.pdf_rels:
         logger.info(
-            "Synced %d PDFs, %d figures to skill %s",
+            "Synced %d PDFs, %d page renders, %d figures to skill %s",
             len(ctx.pdf_rels),
+            len(ctx.page_render_rels),
             len(ctx.figure_rels),
             skill_root.name,
         )

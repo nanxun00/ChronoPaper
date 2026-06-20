@@ -22,11 +22,12 @@ _SKILL_IMPORT_CHECKS: list[tuple[str, str, str]] = [
 ]
 
 CODEGEN_ALLOWED_PACKAGES_TEXT = """\
-- 标准库：pathlib、json、re、csv、zipfile、xml 等
+- 标准库：pathlib、json、re、csv、zipfile、xml、tempfile、io 等（优先写到 output/runs/{run_id}/，少用系统临时目录）
 - 文档：pptx (python-pptx)、PIL/Pillow、fitz (PyMuPDF)、docx (python-docx)、pypdf
 - 绘图：matplotlib、seaborn、scipy、statsmodels、tifffile、skimage (scikit-image)
 - 专利公式：latex2mathml
-- 输出目录：output/、references/；配图目录：output/assets/figures/"""
+- 输出目录：output/、references/；配图目录：output/assets/figures/
+- 清理：用 mkdir(exist_ok=True) 覆盖写入；勿 rmtree 删除 references/figures/SKILL.md"""
 
 
 @dataclass

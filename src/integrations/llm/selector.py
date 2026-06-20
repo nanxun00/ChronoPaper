@@ -28,6 +28,9 @@ def select_model(config):
     if model_provider == "siliconflow":
         from src.integrations.llm.chat import SiliconFlowNew
         return SiliconFlowNew(model_name)
+    if model_provider == "mimo":
+        from src.integrations.llm.chat import MiMoNew
+        return MiMoNew(model_name)
     if model_provider == "custom":
         model_info = next((x for x in config.custom_models if x["custom_id"] == model_name), None)
         if model_info is None:

@@ -15,6 +15,13 @@ export function patchSkill(skillId, enabled) {
   })
 }
 
+export function approveSkillCodegen(body) {
+  return apiJson('/api/skills/codegen/approve', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function uploadSkillZip(file) {
   const form = new FormData()
   form.append('file', file)

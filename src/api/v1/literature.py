@@ -192,6 +192,28 @@ def retry_literature_parse(
     return result
 
 
+@router.post("/index")
+def retry_literature_index(
+    body: LiteratureReviewRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = literature_service.retry_literature_index(
+        db,
+        current_user.userid,
+        arxiv_ids=body.arxiv_ids,
+        visibility=body.visibility,
+    )
+    if result["queued"] == 0:
+        if result["not_found"]:
+            raise HTTPException(status_code=404, detail="未找到可入库的文献")
+        if result["not_ready"]:
+            raise HTTPException(status_code=400, detail="解析结果尚未就绪，请先点击「解析」")
+        if result["skipped"]:
+            raise HTTPException(status_code=400, detail="仅已解析、入库中或入库失败的文献可手动入库")
+    return result
+
+
 @router.post("/fetch-pdf")
 def fetch_literature_pdf(
     body: LiteratureReviewRequest,

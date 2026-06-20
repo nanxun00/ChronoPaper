@@ -24,7 +24,12 @@ const fullText = computed(() => (props.message?.text || '').trim())
 
 const cacheKeyFor = (msg) => {
   if (!msg) return ''
-  return `${msg.id}::${msg.text?.length || 0}::${msg.status}`
+  const skillKey =
+    msg.skill_active ||
+    msg.meta?.skill_id ||
+    msg.refs?.skill?.skill_id ||
+    ''
+  return `${msg.id}::${msg.text?.length || 0}::${msg.status}::${skillKey}`
 }
 
 const applyCached = (key) => {
@@ -80,7 +85,15 @@ const scheduleRender = () => {
 }
 
 watch(
-  () => [props.message?.id, props.message?.text, props.message?.status, props.priority],
+  () => [
+    props.message?.id,
+    props.message?.text,
+    props.message?.status,
+    props.message?.skill_active,
+    props.message?.refs?.skill?.skill_id,
+    props.message?.meta?.skill_id,
+    props.priority,
+  ],
   scheduleRender,
   { immediate: true },
 )

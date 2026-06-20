@@ -126,6 +126,8 @@ skill_codegen_write_prompt_template = """
 {input_context}
 </已同步文献资源>
 
+{skill_extra_rules}
+
 请编写一个完整、可独立运行的 Python 3 脚本，在技能工作目录下生成所需文件。
 
 输出要求：
@@ -135,8 +137,12 @@ skill_codegen_write_prompt_template = """
 - 可用 Python 包：
 {allowed_packages}
 - 禁止：subprocess、os.system、eval、exec、网络请求、访问技能目录外路径
+- 输出用 Path.mkdir(parents=True, exist_ok=True)；不要 shutil.rmtree 清理 references/、figures/、SKILL.md
 - nature-paper2ppt 默认输出：output/runs/{run_id}/final_presentation_cn.pptx
-- 若有「页面/配图 PNG」列表，只使用列表中的确切路径插入幻灯片（slide.shapes.add_picture），勿 glob 扫描 figures 目录
+- 幻灯片须为结构化内容：中文标题、2–4 条具体 bullet、可选 speaker notes；结果页可插入 mineru 论文配图
+- 禁止：把 PDF 整页预览 PNG 全屏铺满幻灯片；禁止逐页截图拼 deck；禁止 glob 扫描 figures 目录
+- 若有 PDF，用 PyMuPDF 提取**全文或至少摘要+方法+结果+讨论**的文本，禁止只读前 5 页
+- 禁止占位 bullet（如「方法1：具体技术描述」「本文研究的主要问题和意义」）；内容必须来自论文
 - 脚本直接运行即可，不要依赖命令行参数
 - 创建输出目录；执行结束前应保存主交付文件
 """
@@ -150,6 +156,8 @@ skill_codegen_revise_prompt_template = """
 {input_context}
 </已同步文献资源>
 
+{skill_extra_rules}
+
 你上一轮生成的脚本执行失败（第 {round_num} 轮修订）。请输出**修正后的完整脚本**。
 
 上一轮代码：
@@ -161,7 +169,11 @@ skill_codegen_revise_prompt_template = """
 {error_context}
 
 只输出一个修正后的 ```python 代码块，不要解释。
-主交付文件仍写入 output/runs/{run_id}/；若有配图 PNG 路径，只使用列表中的确切路径插入幻灯片。
+主交付文件仍写入 output/runs/{run_id}/；禁止整页预览 PNG 全屏贴图，仅用论文配图 PNG 插入结果页。
+
+<上一轮产物质检（Agent 已解析真实文件，必须据此修订）>
+{artifact_inspection}
+</上一轮产物质检>
 """
 
 # 保留旧模板供兼容（单轮 JSON 方式，已弃用）

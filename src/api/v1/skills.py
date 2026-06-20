@@ -44,6 +44,33 @@ def patch_skill(
     return rec.to_dict()
 
 
+@router.post("/codegen/approve")
+def approve_skill_codegen(
+    body: dict,
+    current_user: UserInDB = Depends(get_current_active_user),
+):
+    """用户确认是否放行 LLM 已审查通过的高危生成脚本。"""
+    approval_id = str(body.get("approval_id") or "").strip()
+    if not approval_id:
+        raise HTTPException(400, "需要 approval_id")
+
+    approved = body.get("approved", True) is not False
+    if not approved:
+        from src.services.skills.codegen_approval import deny_pending_approval
+
+        if not deny_pending_approval(approval_id, current_user.userid):
+            raise HTTPException(404, "审批请求不存在或已过期")
+        return {"approved": False, "approval_id": approval_id}
+
+    try:
+        from src.services.skills.codegen_approval import execute_approved_codegen
+
+        result = execute_approved_codegen(approval_id, current_user.userid)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return result
+
+
 @router.post("/upload")
 async def upload_skill(
     file: UploadFile = File(...),

@@ -112,6 +112,15 @@
                     {{ parseActionLabel(record) }}
                   </a-button>
                   <a-button
+                    v-if="canRetryIndex(record)"
+                    type="link"
+                    size="small"
+                    :loading="indexRetryingId === record.arxiv_id"
+                    @click="runIndex([record.arxiv_id], 'public')"
+                  >
+                    {{ indexActionLabel(record) }}
+                  </a-button>
+                  <a-button
                     v-if="needsPdfFetch(record)"
                     type="link"
                     size="small"
@@ -286,6 +295,15 @@
                     @click="runParse([record.arxiv_id], 'private')"
                   >
                     {{ parseActionLabel(record) }}
+                  </a-button>
+                  <a-button
+                    v-if="canRetryIndex(record)"
+                    type="link"
+                    size="small"
+                    :loading="indexRetryingId === record.arxiv_id"
+                    @click="runIndex([record.arxiv_id], 'private')"
+                  >
+                    {{ indexActionLabel(record) }}
                   </a-button>
                   <a-button
                     v-if="needsPdfFetch(record)"
@@ -528,7 +546,7 @@ import { Modal, message } from 'ant-design-vue'
 import { DeleteOutlined, PictureOutlined, StarFilled, StarOutlined, UnorderedListOutlined, AppstoreOutlined, ReadFilled, PlusOutlined } from '@ant-design/icons-vue'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import PdfPreview from '@/components/literature/PdfPreview.vue'
-import { approveLiteratureEntries, createLiteratureLibrary, deleteLiteratureEntries, fetchLiteraturePdf, getPaperDetail, listLiteratureLibraries, listPublicPapers, listPrivatePapers, parseLiteratureEntries, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
+import { approveLiteratureEntries, createLiteratureLibrary, deleteLiteratureEntries, fetchLiteraturePdf, getPaperDetail, indexLiteratureEntries, listLiteratureLibraries, listPublicPapers, listPrivatePapers, parseLiteratureEntries, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
 import { streamTranslate } from '@/api/translate'
 import { SOURCE_LABELS } from '@/constants/openreviewVenues'
 import { useSelectionTranslate } from '@/composables/useSelectionTranslate'
@@ -541,6 +559,7 @@ const uploading = ref(false)
 const deleting = ref(false)
 const reviewing = ref(false)
 const parseRetryingId = ref('')
+const indexRetryingId = ref('')
 const fetchRetryingId = ref('')
 const searchLoading = ref(false)
 const previewOpen = ref(false)
@@ -703,7 +722,14 @@ const canRetryParse = (record) => {
   return status === 'waiting_parse' || status === 'parse_failed' || status === 'parsing'
 }
 
+const canRetryIndex = (record) => {
+  const status = resolvePipelineStatus(record)
+  return status === 'index_failed' || status === 'indexing'
+}
+
 const parseActionLabel = (record) => (resolvePipelineStatus(record) === 'parsing' ? '重新解析' : '解析')
+
+const indexActionLabel = (record) => (resolvePipelineStatus(record) === 'indexing' ? '重新入库' : '入库')
 
 const previewExternalUrl = computed(() => {
   const item = previewItem.value
@@ -1081,7 +1107,7 @@ onMounted(() => {
   loadPublicPapers()
   loadPrivateLibraries()
   if (privateViewMode.value === 'list') {
-    loadPrivatePapers()
+  loadPrivatePapers()
   }
 })
 
@@ -1292,6 +1318,24 @@ const runParse = async (arxivIds, visibility) => {
     message.error(err.message || '解析失败')
   } finally {
     parseRetryingId.value = ''
+  }
+}
+
+const runIndex = async (arxivIds, visibility) => {
+  if (!arxivIds.length) return
+  indexRetryingId.value = arxivIds[0]
+  try {
+    const result = await indexLiteratureEntries({ arxiv_ids: arxivIds, visibility })
+    message.success(`已排队入库 ${result.queued} 篇`)
+    if (visibility === 'public') {
+      await loadPublicPapers()
+    } else {
+      await loadPrivatePapers()
+    }
+  } catch (err) {
+    message.error(err.message || '入库失败')
+  } finally {
+    indexRetryingId.value = ''
   }
 }
 

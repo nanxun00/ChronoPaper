@@ -443,6 +443,60 @@ def retry_literature_parse(
     }
 
 
+def retry_literature_index(
+    db: Session,
+    user_id: str,
+    *,
+    arxiv_ids: list[str],
+    visibility: str,
+) -> dict:
+    """对已解析但向量入库失败（或卡住）的文献重新排队入库。"""
+    from src.services.rag import mineru_indexing
+    from src.workers.index_tasks import index_paper_chunks_task
+
+    unique_ids = _unique_paper_ids(arxiv_ids)
+    queued: list[str] = []
+    skipped: list[str] = []
+    not_ready: list[str] = []
+    not_found: list[str] = []
+
+    for paper_id in unique_ids:
+        entry = _entry_query(db, paper_id, visibility, user_id).first()
+        if not entry:
+            not_found.append(paper_id)
+            continue
+
+        paper = db.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+        if not paper:
+            not_found.append(paper_id)
+            continue
+
+        if visibility == "public" and (entry.review_status or "approved") == "pending":
+            skipped.append(paper_id)
+            continue
+
+        status = (paper.parse_status or "pending").lower()
+        if status not in ("parsed", "index_failed", "indexing"):
+            skipped.append(paper_id)
+            continue
+
+        if not mineru_indexing.resolve_paper_content_list_path(paper_id):
+            not_ready.append(paper_id)
+            continue
+
+        owner_user_id = user_id if visibility == "private" else "0"
+        index_paper_chunks_task.delay(paper_id, owner_user_id=owner_user_id)
+        queued.append(paper_id)
+
+    return {
+        "queued": len(queued),
+        "queued_ids": queued,
+        "skipped": skipped,
+        "not_ready": not_ready,
+        "not_found": not_found,
+    }
+
+
 def fetch_literature_pdf(
     db: Session,
     user_id: str,

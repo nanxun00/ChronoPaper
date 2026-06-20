@@ -87,6 +87,17 @@ MODEL_NAMES:
       - meta-llama/Meta-Llama-3.1-70B-Instruct
       - meta-llama/Meta-Llama-3.1-405B-Instruct
 
+  mimo:
+    name: 小米 MiMo
+    url: https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call
+    default: mimo-v2-flash
+    env:
+      - MIMO_API_KEY
+    models:
+      - mimo-v2-flash
+      - mimo-v2-omni
+      - mimo-v2.5-pro
+
 EMBED_MODEL_INFO:
   bge-large-zh-v1.5:
     name: bge-large-zh-v1.5

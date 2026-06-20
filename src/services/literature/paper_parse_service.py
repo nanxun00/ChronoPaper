@@ -123,8 +123,38 @@ def _invalidate_corrupt_pdf(arxiv_id: str, paper: Paper, session: Session) -> No
     session.commit()
 
 
+def _check_mineru_ml_env() -> None:
+    """MinerU pipeline 依赖 transformers，其 import 会校验 numpy 版本元数据。"""
+    import importlib.metadata as im
+    import sys
+
+    try:
+        numpy_ver = im.version("numpy")
+    except im.PackageNotFoundError as exc:
+        raise RuntimeError(
+            "当前 Python 环境未安装 numpy，无法运行 MinerU PDF 解析。"
+            f" 请在后端同一环境中执行: pip install numpy==1.26.4 （当前: {sys.executable}）"
+        ) from exc
+
+    if not numpy_ver or numpy_ver.lower() in {"none", "unknown"}:
+        raise RuntimeError(
+            "numpy 版本元数据损坏（transformers 会报 found=None）。"
+            f" 请在后端环境 {sys.executable} 执行: pip install --force-reinstall numpy==1.26.4"
+        )
+
+    try:
+        import numpy as np  # noqa: F401
+
+        _ = np.__version__
+    except Exception as exc:
+        raise RuntimeError(
+            f"numpy 无法 import: {exc}。请重装 numpy==1.26.4 并确认后端未混用错误的 conda 环境。"
+        ) from exc
+
+
 def parse_paper_with_mineru(arxiv_id: str, pdf_path: str | None = None) -> str:
     """解析单篇论文 PDF，返回 content.md 路径。"""
+    _check_mineru_ml_env()
     resolved_pdf = pdf_path or migrate_legacy_pdf_to_paper_dir(arxiv_id)
     if not resolved_pdf:
         resolved_pdf = resolve_paper_pdf_file(arxiv_id)

@@ -1,5 +1,6 @@
 from src.services.skills.artifact_collector import collect_skill_artifacts, snapshot_output_files
-from src.services.skills.codegen_agent import extract_python_code, maybe_run_codegen_loop
+from src.services.skills.codegen_agent import maybe_run_codegen_loop
+from src.services.skills.codegen_common import CodegenLoopResult, extract_python_code
 from src.services.skills.code_validator import validate_generated_code
 from src.services.skills.executor import prepare_skill_turn
 from src.services.skills.generated_runner import execute_generated_code, should_attempt_codegen

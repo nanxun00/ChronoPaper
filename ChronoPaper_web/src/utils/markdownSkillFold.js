@@ -11,7 +11,9 @@ export function shouldCollapseSkillCode(message) {
   const skill = message.refs?.skill
   if (skill?.skill_id) return true
   if (Array.isArray(skill?.skill_scripts) && skill.skill_scripts.length > 0) return true
-  if (message.meta?.skill_id) return true
+  if (Array.isArray(skill?.artifacts) && skill.artifacts.length > 0) return true
+  const meta = message.meta || {}
+  if (meta.skill_id || meta.skill_mode === 'explicit') return true
   return false
 }
 
@@ -92,9 +94,10 @@ function getDefaultMarked() {
 function getFoldMarked() {
   if (!_foldMarked) {
     _foldMarked = new Marked({ gfm: true, breaks: true, tables: true })
+    // marked v13 .use() 仍走旧式 (text, lang, escaped) 回调，勿解构为 { text, lang }
     _foldMarked.use({
       renderer: {
-        code({ text, lang }) {
+        code(text, lang) {
           return foldPythonCodeBlock(text, lang, true)
         },
       },
@@ -105,17 +108,25 @@ function getFoldMarked() {
 
 export function parseChatMarkdown(text, message) {
   const raw = String(text ?? '')
-  if (raw.length >= LITE_PARSE_THRESHOLD) {
+  const fold = shouldCollapseSkillCode(message)
+  const md = fold ? getFoldMarked() : getDefaultMarked()
+  if (raw.length >= LITE_PARSE_THRESHOLD && !fold) {
     try {
       return getLiteMarked().parse(raw)
     } catch {
       return escapeHtml(raw).replace(/\n/g, '<br>')
     }
   }
-  const md = shouldCollapseSkillCode(message) ? getFoldMarked() : getDefaultMarked()
   try {
     return md.parse(raw)
   } catch {
+    if (fold) {
+      try {
+        return getFoldMarked().parse(raw)
+      } catch {
+        /* fall through */
+      }
+    }
     return getLiteMarked().parse(raw)
   }
 }

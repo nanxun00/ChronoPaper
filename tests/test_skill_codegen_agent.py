@@ -7,11 +7,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.services.skills.codegen_agent import (
-    CodegenLoopResult,
     codegen_loop_context_block,
     extract_python_code,
     run_codegen_loop,
 )
+from src.services.skills.codegen_common import CodegenLoopResult
 from src.services.skills.generated_runner import GeneratedRunRecord
 from src.services.skills.registry import SkillRecord
 from src.services.skills.script_runner import ScriptRunResult
@@ -46,6 +46,7 @@ class CodegenAgentTests(unittest.TestCase):
         )
         ctx = codegen_loop_context_block(loop)
         self.assertIn("成功", ctx)
+        self.assertIn("产物质检", ctx)
         self.assertIn("a.pptx", ctx)
 
     def test_codegen_loop_success_with_mock_model(self) -> None:
@@ -67,7 +68,7 @@ Path("output").mkdir(parents=True, exist_ok=True)
                 path=root.resolve(),
             )
             with patch(
-                "src.services.skills.codegen_agent.collect_skill_artifacts",
+                "src.services.skills.codegen_graph.collect_skill_artifacts",
                 return_value=[
                     {
                         "name": "deck.md",
@@ -76,7 +77,16 @@ Path("output").mkdir(parents=True, exist_ok=True)
                         "size": 4,
                     }
                 ],
-            ):
+            ), patch(
+                "src.services.skills.codegen_graph.inspect_skill_deliverables",
+            ) as mock_inspect:
+                from src.services.skills.artifact_inspection.models import SkillInspectionReport
+
+                mock_inspect.return_value = SkillInspectionReport(
+                    skill_id="nature-paper2ppt",
+                    run_id="r1",
+                    ok=True,
+                )
                 loop = run_codegen_loop(
                     record,
                     "做PPT",

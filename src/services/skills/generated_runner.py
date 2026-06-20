@@ -63,6 +63,7 @@ class GeneratedRunRecord:
     result: ScriptRunResult
     validation_errors: list[str] | None = None
     artifacts: list[dict[str, Any]] | None = None
+    inspection_summary: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -76,6 +77,8 @@ class GeneratedRunRecord:
         }
         if self.validation_errors:
             out["validation_errors"] = self.validation_errors
+        if self.inspection_summary:
+            out["inspection_summary"] = self.inspection_summary
         if self.artifacts:
             out["artifacts"] = self.artifacts
         return out
