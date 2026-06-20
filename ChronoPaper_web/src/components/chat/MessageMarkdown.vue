@@ -114,6 +114,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.message-md-layer {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
 .message-plain-preview {
   margin: 0;
   white-space: pre-wrap;

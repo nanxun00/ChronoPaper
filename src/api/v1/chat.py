@@ -219,6 +219,41 @@ def _should_use_skill_agent(meta: dict, skill_system: str | None, refs: dict | N
     return True
 
 
+def _will_generate_image(query: str, meta: dict, user_id: str, conv_id: str) -> bool:
+    from src.services.image_gen.service import is_confirm_text, resolve_pending
+
+    pending = resolve_pending(user_id, conv_id, meta)
+    if not pending:
+        return False
+    if meta.get("image_gen_confirm") is True:
+        return True
+    return is_confirm_text(query)
+
+
+def _apply_image_gen_result(
+    *,
+    img: dict,
+    query: str,
+    history_manager: HistoryManager,
+    user_id: str,
+    cur_res_id: str,
+    persist_turn,
+) -> tuple[dict, list, dict | None]:
+    history_manager.add_user(query)
+    refs = img.get("refs")
+    if refs:
+        _refs_set(user_id, cur_res_id, refs)
+    updated_history = persist_turn(
+        img.get("content") or "",
+        reasoning_content="",
+        refs=refs,
+        assistant_status=img.get("status") or "finished",
+        assistant_images=img.get("images") or [],
+    )
+    response_content = {"reasoning_content": "", "content": img.get("content") or ""}
+    return response_content, updated_history, refs
+
+
 def _run_skill_agent(model, messages: list, skill_id: str) -> str:
     from src.services.skills.agent import run_skill_agent
     from src.services.skills.registry import get_skill_registry
@@ -440,6 +475,9 @@ def chat_post(
         assistant_content: str,
         reasoning_content: str = "",
         refs=None,
+        *,
+        assistant_status: str = "finished",
+        assistant_images: list | None = None,
     ) -> list[dict]:
         user_meta = build_user_message_metadata(
             ui_msg_id=user_msg_id,
@@ -451,8 +489,9 @@ def chat_post(
             reasoning_content=reasoning_content,
             refs=refs,
             model_name=startup.config.model_name,
-            status="finished",
+            status=assistant_status,
             chat_meta=_meta_for_persist(meta),
+            images=assistant_images,
         )
         persist_chat_turn(
             db,
@@ -470,7 +509,45 @@ def chat_post(
 
     use_stream = _is_stream_enabled(meta)
 
+    from src.services.image_gen import try_handle_image_generation
+
+    if _will_generate_image(query, meta, user_id, conv_id):
+        meta = {**meta, "image_gen_confirm": True}
+
+    img_turn = try_handle_image_generation(
+        query=query,
+        meta=meta,
+        user_id=user_id,
+        conv_id=conv_id,
+        model=startup.model,
+    )
+
     if not use_stream:
+        if img_turn is not None:
+            response_content, updated_history, refs = _apply_image_gen_result(
+                img=img_turn,
+                query=query,
+                history_manager=history_manager,
+                user_id=user_id,
+                cur_res_id=cur_res_id,
+                persist_turn=persist_turn,
+            )
+            payload = {
+                "response": response_content,
+                "history": updated_history,
+                "model_name": startup.config.model_name,
+                "status": img_turn.get("status") or "finished",
+                "meta": meta,
+                "conv_id": conv_id,
+                "refs": refs,
+            }
+            if img_turn.get("images"):
+                payload["response"] = {**response_content, "images": img_turn["images"]}
+            return Response(
+                content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                media_type="application/json",
+            )
+
         new_query, refs, skill_system = _prepare_chat_query(
             query, history_manager, meta, literature_context, user_id, cur_res_id
         )
@@ -521,6 +598,37 @@ def chat_post(
         )
 
     def generate_response():
+        stream_meta = dict(meta)
+        if _will_generate_image(query, stream_meta, user_id, conv_id):
+            stream_meta["image_gen_confirm"] = True
+            yield make_chunk("", "image_generating", history=None)
+
+        img_turn = try_handle_image_generation(
+            query=query,
+            meta=stream_meta,
+            user_id=user_id,
+            conv_id=conv_id,
+            model=startup.model,
+        )
+        if img_turn is not None:
+            response_content, updated_history, refs = _apply_image_gen_result(
+                img=img_turn,
+                query=query,
+                history_manager=history_manager,
+                user_id=user_id,
+                cur_res_id=cur_res_id,
+                persist_turn=persist_turn,
+            )
+            if img_turn.get("images"):
+                response_content["images"] = img_turn["images"]
+            yield make_chunk(
+                response_content,
+                img_turn.get("status") or "finished",
+                history=updated_history,
+                refs=refs,
+            )
+            return
+
         use_skill_progress = _should_emit_skill_progress(meta)
         if meta.get("enable_retrieval"):
             yield make_chunk("", "searching", history=None)

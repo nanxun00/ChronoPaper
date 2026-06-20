@@ -287,6 +287,7 @@ onActivated(() => {
   width: 100%;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   position: relative;
 }

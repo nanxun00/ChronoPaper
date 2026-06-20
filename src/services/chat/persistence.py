@@ -263,6 +263,7 @@ def _ui_message_from_row(row: ChatMessage, *, slim: bool = False) -> dict:
         "text": content,
         "ponder": ponder,
         "refs": refs,
+        "images": meta.get("images") or [],
         "model_name": meta.get("model_name"),
         "status": meta.get("status") or "finished",
         "meta": meta.get("chat_meta") or {},
@@ -360,6 +361,7 @@ def build_assistant_message_metadata(
     model_name: str = "",
     status: str = "finished",
     chat_meta: dict | None = None,
+    images: list | None = None,
 ) -> dict:
     meta: dict = {"ui_msg_id": ui_msg_id, "status": status}
     if reasoning_content:
@@ -370,6 +372,8 @@ def build_assistant_message_metadata(
         meta["model_name"] = model_name
     if chat_meta:
         meta["chat_meta"] = chat_meta
+    if images:
+        meta["images"] = images
     return meta
 
 

@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     ollama_api_key: str = "ollama"
     model_local_dir: str = "local"
 
+    # --- 图像生成（OpenAI 兼容 /images/generations）---
+    image_gen_api_base: str = "https://api.openai-proxy.org/v1"
+    image_gen_api_key: str = ""
+    image_gen_model: str = "gpt-image-2-2026-04-21"
+
     # --- MySQL（MYSQL_PROFILE=local|remote 切换）---
     mysql_profile: str = Field(default="local", validation_alias="MYSQL_PROFILE")
 

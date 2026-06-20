@@ -139,6 +139,10 @@
           <LoadingOutlined spin class="searching-msg-spinner" />
           <span>正在读取技能参考并整理回复</span>
         </div>
+        <div v-else-if="message.status == 'image_generating' && isStreaming" class="searching-msg">
+          <LoadingOutlined spin class="searching-msg-spinner" />
+          <span>正在生成图像，请稍候…</span>
+        </div>
         <div v-else-if="message.status == 'skill_code_approval'" class="codegen-approval-wrap">
           <div v-if="message.text" class="message-md-wrap">
             <MessageMarkdown :message="message" :priority="messageRenderPriority(index)" />
@@ -167,7 +171,27 @@
             </div>
           </div>
         </div>
-        <div v-else-if="message.status == 'error' || (message.status != 'finished' && message.status != 'skill_code_approval' && !isStreaming)" class="err-msg"
+        <div v-else-if="message.status == 'image_gen_confirm'" class="codegen-approval-wrap">
+          <div v-if="message.text" class="message-md-wrap">
+            <MessageMarkdown :message="message" :priority="messageRenderPriority(index)" />
+          </div>
+          <div v-if="!message.image_gen_resolved" class="codegen-approval-actions">
+            <a-button
+              type="primary"
+              :loading="message.image_gen_loading"
+              @click="handleImageGenConfirm(message, true)"
+            >
+              确认生成
+            </a-button>
+            <a-button
+              :disabled="message.image_gen_loading"
+              @click="handleImageGenConfirm(message, false)"
+            >
+              取消
+            </a-button>
+          </div>
+        </div>
+        <div v-else-if="message.status == 'error' || (message.status != 'finished' && message.status != 'skill_code_approval' && message.status != 'image_gen_confirm' && !isStreaming)" class="err-msg"
           @click="retryMessage(message.id)">
           请求错误，请重试
         </div>
@@ -257,6 +281,7 @@
             @update:skill-mode="(v) => (meta.skill_mode = v)"
             @update:skill-id="(v) => (meta.skill_id = v)"
           />
+          <ImageGenToggle v-model="meta.image_gen_mode" />
         </div>
 
       </div>
@@ -298,6 +323,7 @@ import MessageMarkdown from '@/components/chat/MessageMarkdown.vue'
 import CopyablePre from '@/components/chat/CopyablePre.vue'
 import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import SkillPicker from '@/components/chat/SkillPicker.vue'
+import ImageGenToggle from '@/components/chat/ImageGenToggle.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
 import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
 import { approveSkillCodegen } from '@/api/skills'
@@ -459,6 +485,7 @@ const DEFAULT_CHAT_META = {
   history_round: 10,
   skill_mode: 'auto',
   skill_id: null,
+  image_gen_mode: false,
 }
 
 const meta = reactive({
@@ -644,6 +671,17 @@ const updateMessage = (info) => {
       message.skill_progress = info.skill_progress;
     }
 
+    if (info.images !== null && info.images !== undefined) {
+      message.images = info.images;
+    }
+
+    if (info.image_gen_loading !== undefined) {
+      message.image_gen_loading = info.image_gen_loading;
+    }
+    if (info.image_gen_resolved !== undefined) {
+      message.image_gen_resolved = info.image_gen_resolved;
+    }
+
     if (info.groupedResults !== null && info.groupedResults !== undefined) {
       message.groupedResults = info.groupedResults;
     }
@@ -736,7 +774,20 @@ const loadDatabases = () => {
     })
 }
 
-const buildRequestMeta = (citedLiteraturePayload = []) => ({
+const IMAGE_GEN_CONFIRM_RE = /^(确定|确认|好的|好|可以|开始生成|生成吧|生成|ok|yes|y|confirm|go)\s*[。!！]?$/i
+
+const findActiveImageGenPending = () => {
+  for (let i = conv.value.messages.length - 1; i >= 0; i -= 1) {
+    const m = conv.value.messages[i]
+    if (m.role !== 'received') continue
+    if (m.status === 'image_gen_confirm' && !m.image_gen_resolved) {
+      return m.refs?.image_gen_pending || null
+    }
+  }
+  return null
+}
+
+const buildRequestMeta = (citedLiteraturePayload = [], options = {}) => ({
   ...structuredClone(toRaw(meta)),
   stream: meta.stream !== false,
   db_name: resolveDbName() || meta.db_name || null,
@@ -746,6 +797,8 @@ const buildRequestMeta = (citedLiteraturePayload = []) => ({
   distanceThreshold: 0,
   use_llm_filter: false,
   cited_literature: citedLiteraturePayload,
+  ...(options.image_gen_pending ? { image_gen_pending: options.image_gen_pending } : {}),
+  ...(options.image_gen_confirm ? { image_gen_confirm: true } : {}),
 })
 
 const parseResponseContent = (responsePayload) => {
@@ -825,6 +878,7 @@ const applyChatPayload = (data, cur_res_id) => {
     status: data.status,
     meta: data.meta,
     ...(approvalPayload ? { codegen_approval: approvalPayload } : {}),
+    ...(data.response?.images ? { images: data.response.images } : {}),
   })
 
   nextTick(() => {
@@ -835,6 +889,7 @@ const applyChatPayload = (data, cur_res_id) => {
       status: data.status,
       meta: data.meta,
       ...(approvalPayload ? { codegen_approval: approvalPayload } : {}),
+      ...(data.response?.images ? { images: data.response.images } : {}),
     })
   })
 
@@ -852,7 +907,7 @@ const applyChatPayload = (data, cur_res_id) => {
 
 const finishChatResponse = (cur_res_id) => {
   const message = conv.value.messages.find((item) => item.id === cur_res_id)
-  if (message?.status === 'skill_code_approval') {
+  if (message?.status === 'skill_code_approval' || message?.status === 'image_gen_confirm') {
     isStreaming.value = false
     return
   }
@@ -887,13 +942,21 @@ const finishChatResponse = (cur_res_id) => {
 }
 
 const fetchChatResponse = (user_input, user_msg_id, cur_res_id, citedLiteraturePayload = [], options = {}) => {
-  const requestMeta = buildRequestMeta(citedLiteraturePayload)
+  const trimmed = (user_input || '').trim()
+  const pendingFromMsg = options.image_gen_pending || findActiveImageGenPending()
+  const isConfirmInput = IMAGE_GEN_CONFIRM_RE.test(trimmed)
+  const requestOptions = { ...options }
+  if (pendingFromMsg && (requestOptions.image_gen_confirm || isConfirmInput)) {
+    requestOptions.image_gen_confirm = true
+    requestOptions.image_gen_pending = pendingFromMsg
+  }
+  const requestMeta = buildRequestMeta(citedLiteraturePayload, requestOptions)
   if (options.codegen_approval_id) {
     requestMeta.codegen_approval_id = options.codegen_approval_id
   }
   const useStream = requestMeta.stream !== false
 
-  postChat({
+  return postChat({
     query: user_input,
     history: conv.value.history,
     meta: requestMeta,
@@ -954,6 +1017,42 @@ const fetchChatResponse = (user_input, user_msg_id, cur_res_id, citedLiteratureP
       isStreaming.value = false;
     });
 };
+
+const handleImageGenConfirm = (msg, approved) => {
+  if (isStreaming.value) return
+
+  updateMessage({ id: msg.id, image_gen_loading: true, image_gen_resolved: true })
+
+  const confirmText = approved ? '确定' : '取消'
+  const user_msg_id = generateRandomHash(16)
+  conv.value.messages.push({
+    id: user_msg_id,
+    role: 'sent',
+    text: confirmText,
+    images: [],
+    citations: [],
+    status: 'finished',
+  })
+  scrollToBottom()
+  appendAiMessage('', null)
+  const cur_res_id = conv.value.messages[conv.value.messages.length - 1].id
+  isStreaming.value = true
+
+  fetchChatResponse(
+    confirmText,
+    user_msg_id,
+    cur_res_id,
+    [],
+    {
+      image_gen_pending: msg.refs?.image_gen_pending,
+      ...(approved ? { image_gen_confirm: true } : {}),
+    },
+  ).catch((err) => {
+    message.error(err.message || '图像生成失败')
+    updateMessage({ id: msg.id, image_gen_loading: false, image_gen_resolved: false })
+    isStreaming.value = false
+  })
+}
 
 const handleCodegenApproval = async (msg, approved) => {
   const approval = msg.codegen_approval
@@ -1327,12 +1426,13 @@ watch(
   width: 100%;
   height: 100%;
   max-height: 100vh;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: white;
   box-sizing: border-box;
-  flex: 5 5 200px;
+  flex: 1 1 0;
 
   .header {
     user-select: none;
@@ -1378,6 +1478,7 @@ watch(
 .chat-scroll {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
@@ -1493,14 +1594,18 @@ watch(
 .chat-box {
   width: 100%;
   max-width: 900px;
+  min-width: 0;
   margin: 0 auto;
   flex-grow: 1;
   padding: 1rem 2rem;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
 
   .message-box {
-    display: inline-block;
+    display: block;
+    max-width: 100%;
+    min-width: 0;
     border-radius: 1.5rem;
     margin: 0.8rem 0;
     padding: 0.625rem 1.25rem;
@@ -1626,6 +1731,7 @@ watch(
   }
 
   .message-box.sent {
+    display: inline-block;
     line-height: 24px;
     max-width: 95%;
     background: var(--main-light-4);
@@ -1634,15 +1740,24 @@ watch(
 
   .message-box.received {
     color: initial;
-    width: fit-content;
+    width: 100%;
+    max-width: 100%;
     text-align: left;
     word-wrap: break-word;
+    overflow-wrap: anywhere;
     margin: 0;
     padding-bottom: 0;
     padding-top: 16px;
     padding-left: 0;
     padding-right: 0;
     text-align: justify;
+  }
+
+  .message-md-wrap {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
   }
 
   p.message-text {
@@ -2071,10 +2186,13 @@ watch(
 
 .ponder {
   color: #b7b7b7 !important;
-  /* 使用 !important 确保样式生效 */
   border-left: solid 4px #dcdada;
   padding-left: 10px;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
   word-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .icons {
@@ -2169,6 +2287,38 @@ watch(
 }
 
 .message-md {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+
+  img,
+  video {
+    max-width: 100%;
+    height: auto;
+  }
+
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+  }
+
+  pre {
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  code {
+    word-break: break-all;
+  }
+
+  a {
+    overflow-wrap: anywhere;
+  }
 
   .copyable-block {
     position: relative;
