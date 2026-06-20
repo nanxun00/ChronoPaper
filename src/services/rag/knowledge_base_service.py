@@ -276,7 +276,14 @@ class KnowledgeBaseService:
                         "authors": "",
                         "published_at": None,
                     }
-                item["pipeline_status"] = "indexed"
+                if paper:
+                    from src.models.literature import LiteratureEntry
+                    from src.services.literature.literature_service import resolve_pipeline_status
+
+                    fake_entry = LiteratureEntry(review_status="approved")
+                    item["pipeline_status"] = resolve_pipeline_status(paper, fake_entry)
+                else:
+                    item["pipeline_status"] = "indexed"
                 item["chunk_count"] = int(chunk_count or 0)
                 item["indexed_at"] = indexed_at.timestamp() if indexed_at else None
                 items.append(item)

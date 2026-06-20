@@ -33,6 +33,7 @@ _FILE_OUTPUT_SKILLS = frozenset(
         "nature-paper-to-patent",
         "nature-reader",
         "nature-data",
+        "nature-reviewer",
     }
 )
 

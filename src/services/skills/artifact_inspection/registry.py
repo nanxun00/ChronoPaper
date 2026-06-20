@@ -40,6 +40,12 @@ SKILL_DELIVERABLE_SPECS: dict[str, SkillDeliverableSpec] = {
         inspector="markdown",
         min_count=1,
     ),
+    "nature-reviewer": SkillDeliverableSpec(
+        skill_id="nature-reviewer",
+        relative_paths=("output/runs/{run_id}/reviewer_report.md",),
+        inspector="markdown",
+        min_count=1,
+    ),
     "nature-data": SkillDeliverableSpec(
         skill_id="nature-data",
         relative_paths=("output/runs/{run_id}/",),

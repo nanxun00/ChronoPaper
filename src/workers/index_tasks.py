@@ -59,6 +59,11 @@ def index_paper_chunks_task(self, paper_id: str, kb_id: str | None = None, owner
         kb = startup.dbm.knowledge_base
         count = index_chunk_rows(session, kb, rows)
         paper.parse_status = "indexed"
+        if startup.config.enable_knowledge_graph:
+            paper.graph_index_status = "pending"
+            paper.graph_index_error = None
+        else:
+            paper.graph_index_status = "skipped"
         session.add(paper)
         session.commit()
         logger.info("indexed paper %s chunks=%s kb=%s", paper_id, count, kb_id)

@@ -29,11 +29,22 @@ LABEL_FOR_TYPE = {
     "Venue": "Venue",
 }
 
+GRAPH_SECTION_MAP: dict[str, str] = {
+    "abstract": "abstract",
+    "intro": "abstract",
+    "title": "abstract",
+    "text": "abstract",
+    "method": "method",
+    "experiment": "experiment",
+    "conclusion": "experiment",
+}
+
 
 def _group_chunks_by_section(chunks: list[TextChunk]) -> dict[str, list[dict[str, Any]]]:
     groups: dict[str, list[dict[str, Any]]] = {s: [] for s in GRAPH_SECTION_TYPES}
     for chunk in chunks:
-        section = (chunk.section_type or "").lower()
+        raw = (chunk.section_type or "text").lower()
+        section = GRAPH_SECTION_MAP.get(raw)
         if section not in GRAPH_SECTION_TYPES:
             continue
         groups[section].append({"chunk_id": chunk.chunk_id, "chunk_text": chunk.chunk_text})

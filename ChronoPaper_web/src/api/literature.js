@@ -67,6 +67,13 @@ export function indexLiteratureEntries({ arxiv_ids, visibility }) {
   })
 }
 
+export function graphIndexLiteratureEntries({ arxiv_ids, visibility }) {
+  return apiJson('/api/literature/graph-index', {
+    method: 'POST',
+    body: JSON.stringify({ arxiv_ids, visibility }),
+  })
+}
+
 export function fetchLiteraturePdf({ arxiv_ids, visibility }) {
   return apiJson('/api/literature/fetch-pdf', {
     method: 'POST',

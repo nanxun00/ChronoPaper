@@ -214,6 +214,28 @@ def retry_literature_index(
     return result
 
 
+@router.post("/graph-index")
+def retry_literature_graph_index(
+    body: LiteratureReviewRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = literature_service.retry_literature_graph_index(
+        db,
+        current_user.userid,
+        arxiv_ids=body.arxiv_ids,
+        visibility=body.visibility,
+    )
+    if result["queued"] == 0:
+        if result.get("reason") == "graph_disabled":
+            raise HTTPException(status_code=400, detail="知识图谱功能未启用")
+        if result["not_found"]:
+            raise HTTPException(status_code=404, detail="未找到可建图谱的文献")
+        if result["skipped"]:
+            raise HTTPException(status_code=400, detail="仅向量已入库且图谱未成功的文献可重试建图")
+    return result
+
+
 @router.post("/fetch-pdf")
 def fetch_literature_pdf(
     body: LiteratureReviewRequest,

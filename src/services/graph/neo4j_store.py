@@ -130,7 +130,8 @@ class PaperGraphStore:
     ) -> None:
         if label not in {"Model", "Dataset", "Metric", "Venue"}:
             return
-        extra = extra or {}
+        extra = dict(extra or {})
+        fill_desc_only = bool(extra.pop("__fill_description_only", False))
 
         def _write(tx):
             row = tx.run(
@@ -139,7 +140,6 @@ class PaperGraphStore:
             ).single()
             merged_ids = _merge_ids(row["ids"] if row else None, ref_chunk_ids)
             params = {"name": name, "kb_id": kb_id, "ref_chunk_ids": merged_ids, **extra}
-            fill_desc_only = bool(params.pop("__fill_description_only", False))
             set_parts = ["n.kb_id = $kb_id", "n.ref_chunk_ids = $ref_chunk_ids"]
             for key in extra:
                 if key == "description":

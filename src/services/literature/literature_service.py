@@ -35,6 +35,8 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 def resolve_pipeline_status(paper: Paper, entry: LiteratureEntry) -> str:
     """文献处理流水线状态（供前端「状态」列展示）。"""
+    from src.services.rag.startup import startup
+
     review = entry.review_status or "approved"
     ps = (paper.parse_status or "pending").lower()
     has_pdf = resolve_paper_pdf_path(paper) is not None
@@ -53,6 +55,13 @@ def resolve_pipeline_status(paper: Paper, entry: LiteratureEntry) -> str:
     if ps == "indexing":
         return "indexing"
     if ps == "indexed":
+        if not startup.config.enable_knowledge_graph:
+            return "indexed"
+        gis = (getattr(paper, "graph_index_status", None) or "").lower()
+        if gis in ("", "pending", "indexing"):
+            return "graph_indexing"
+        if gis in ("failed", "skipped"):
+            return "graph_index_failed"
         return "indexed"
     if ps == "parsed":
         return "indexing"
@@ -493,6 +502,71 @@ def retry_literature_index(
         "queued_ids": queued,
         "skipped": skipped,
         "not_ready": not_ready,
+        "not_found": not_found,
+    }
+
+
+def retry_literature_graph_index(
+    db: Session,
+    user_id: str,
+    *,
+    arxiv_ids: list[str],
+    visibility: str,
+) -> dict:
+    """向量已入库但 GraphRAG 未成功时，重新排队图谱入库。"""
+    from src.services.rag.startup import startup
+    from src.workers.graph_tasks import graph_index_paper_task
+
+    if not startup.config.enable_knowledge_graph:
+        return {
+            "queued": 0,
+            "queued_ids": [],
+            "skipped": list(_unique_paper_ids(arxiv_ids)),
+            "not_found": [],
+            "reason": "graph_disabled",
+        }
+
+    unique_ids = _unique_paper_ids(arxiv_ids)
+    queued: list[str] = []
+    skipped: list[str] = []
+    not_found: list[str] = []
+
+    for paper_id in unique_ids:
+        entry = _entry_query(db, paper_id, visibility, user_id).first()
+        if not entry:
+            not_found.append(paper_id)
+            continue
+
+        paper = db.query(Paper).filter(Paper.arxiv_id == paper_id).first()
+        if not paper:
+            not_found.append(paper_id)
+            continue
+
+        if visibility == "public" and (entry.review_status or "approved") == "pending":
+            skipped.append(paper_id)
+            continue
+
+        if (paper.parse_status or "").lower() != "indexed":
+            skipped.append(paper_id)
+            continue
+
+        gis = (paper.graph_index_status or "").lower()
+        if gis == "ok":
+            skipped.append(paper_id)
+            continue
+
+        owner_user_id = user_id if visibility == "private" else "0"
+        paper.graph_index_status = "pending"
+        paper.graph_index_error = None
+        db.add(paper)
+        graph_index_paper_task.delay(paper_id, owner_user_id=owner_user_id)
+        queued.append(paper_id)
+
+    db.commit()
+    return {
+        "queued": len(queued),
+        "queued_ids": queued,
+        "skipped": skipped,
         "not_found": not_found,
     }
 

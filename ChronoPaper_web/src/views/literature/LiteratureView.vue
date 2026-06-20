@@ -121,6 +121,15 @@
                     {{ indexActionLabel(record) }}
                   </a-button>
                   <a-button
+                    v-if="canRetryGraphIndex(record)"
+                    type="link"
+                    size="small"
+                    :loading="graphIndexRetryingId === record.arxiv_id"
+                    @click="runGraphIndex([record.arxiv_id], 'public')"
+                  >
+                    {{ graphIndexActionLabel(record) }}
+                  </a-button>
+                  <a-button
                     v-if="needsPdfFetch(record)"
                     type="link"
                     size="small"
@@ -304,6 +313,15 @@
                     @click="runIndex([record.arxiv_id], 'private')"
                   >
                     {{ indexActionLabel(record) }}
+                  </a-button>
+                  <a-button
+                    v-if="canRetryGraphIndex(record)"
+                    type="link"
+                    size="small"
+                    :loading="graphIndexRetryingId === record.arxiv_id"
+                    @click="runGraphIndex([record.arxiv_id], 'private')"
+                  >
+                    {{ graphIndexActionLabel(record) }}
                   </a-button>
                   <a-button
                     v-if="needsPdfFetch(record)"
@@ -546,7 +564,7 @@ import { Modal, message } from 'ant-design-vue'
 import { DeleteOutlined, PictureOutlined, StarFilled, StarOutlined, UnorderedListOutlined, AppstoreOutlined, ReadFilled, PlusOutlined } from '@ant-design/icons-vue'
 import HeaderComponent from '@/components/common/HeaderComponent.vue'
 import PdfPreview from '@/components/literature/PdfPreview.vue'
-import { approveLiteratureEntries, createLiteratureLibrary, deleteLiteratureEntries, fetchLiteraturePdf, getPaperDetail, indexLiteratureEntries, listLiteratureLibraries, listPublicPapers, listPrivatePapers, parseLiteratureEntries, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
+import { approveLiteratureEntries, createLiteratureLibrary, deleteLiteratureEntries, fetchLiteraturePdf, getPaperDetail, graphIndexLiteratureEntries, indexLiteratureEntries, listLiteratureLibraries, listPublicPapers, listPrivatePapers, parseLiteratureEntries, rejectLiteratureEntries, uploadLiteraturePdf } from '@/api/literature'
 import { streamTranslate } from '@/api/translate'
 import { SOURCE_LABELS } from '@/constants/openreviewVenues'
 import { useSelectionTranslate } from '@/composables/useSelectionTranslate'
@@ -560,6 +578,7 @@ const deleting = ref(false)
 const reviewing = ref(false)
 const parseRetryingId = ref('')
 const indexRetryingId = ref('')
+const graphIndexRetryingId = ref('')
 const fetchRetryingId = ref('')
 const searchLoading = ref(false)
 const previewOpen = ref(false)
@@ -691,7 +710,9 @@ const pipelineStatusLabel = (record) => {
     rejected: '未通过',
     download_failed: '下载失败',
     parsing: '解析中',
-    indexing: '入库中',
+    indexing: '向量入库中',
+    graph_indexing: '图谱入库中',
+    graph_index_failed: '图谱失败',
     indexed: '已入库',
     waiting_parse: '待解析',
     parse_failed: '解析失败',
@@ -707,6 +728,8 @@ const pipelineStatusColor = (record) => {
     download_failed: 'error',
     parsing: 'processing',
     indexing: 'cyan',
+    graph_indexing: 'processing',
+    graph_index_failed: 'error',
     indexed: 'success',
     waiting_parse: 'default',
     parse_failed: 'error',
@@ -727,9 +750,17 @@ const canRetryIndex = (record) => {
   return status === 'index_failed' || status === 'indexing'
 }
 
+const canRetryGraphIndex = (record) => {
+  const status = resolvePipelineStatus(record)
+  return status === 'graph_index_failed' || status === 'graph_indexing'
+}
+
 const parseActionLabel = (record) => (resolvePipelineStatus(record) === 'parsing' ? '重新解析' : '解析')
 
 const indexActionLabel = (record) => (resolvePipelineStatus(record) === 'indexing' ? '重新入库' : '入库')
+
+const graphIndexActionLabel = (record) =>
+  resolvePipelineStatus(record) === 'graph_indexing' ? '重试建图' : '建图谱'
 
 const previewExternalUrl = computed(() => {
   const item = previewItem.value
@@ -1336,6 +1367,24 @@ const runIndex = async (arxivIds, visibility) => {
     message.error(err.message || '入库失败')
   } finally {
     indexRetryingId.value = ''
+  }
+}
+
+const runGraphIndex = async (arxivIds, visibility) => {
+  if (!arxivIds.length) return
+  graphIndexRetryingId.value = arxivIds[0]
+  try {
+    const result = await graphIndexLiteratureEntries({ arxiv_ids: arxivIds, visibility })
+    message.success(`已排队建图谱 ${result.queued} 篇`)
+    if (visibility === 'public') {
+      await loadPublicPapers()
+    } else {
+      await loadPrivatePapers()
+    }
+  } catch (err) {
+    message.error(err.message || '建图谱失败')
+  } finally {
+    graphIndexRetryingId.value = ''
   }
 }
 

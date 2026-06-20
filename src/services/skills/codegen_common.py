@@ -85,6 +85,16 @@ def _skill_extra_rules(skill_id: str, query: str, run_id: str) -> str:
 - 用 PyMuPDF 读 PDF 全文；图表必须嵌入 `output/assets/figures/` 下已列出的 *_mineru_* 配图（相对路径）
 - 禁止声称无法访问图像；禁止只写占位翻译「[中文翻译待定]」
 - 可选：source_map.json、translation_notes.md；保存后 print 主文件路径"""
+    if skill_id == "nature-reviewer":
+        return f"""nature-reviewer 专项（必须遵守）：
+- 主交付：**Markdown 审稿报告**，写入 output/runs/{run_id}/reviewer_report.md
+- **禁止**生成 .pptx / .docx；禁止 python-pptx、Presentation
+- 用 PyMuPDF 读取已同步 PDF 全文（或摘要+方法+结果+讨论），基于论文事实撰写
+- 报告须含 Markdown 标题与章节：Review setup、Reviewer 1/2/3、Cross-review synthesis、Risk / unsupported claims
+- 每位 Reviewer 须覆盖：Overall assessment、Major strengths/concerns、Technical failings、Nature-style criteria、Recommendation posture
+- 可选另存 output/runs/{run_id}/review_results.json（结构化摘要）；主交付仍是 .md
+- 禁止占位 bullet；内容必须来自论文，不得编造实验或引用
+- 保存 reviewer_report.md 后 print 其路径"""
     return ""
 
 

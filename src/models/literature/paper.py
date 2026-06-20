@@ -25,6 +25,8 @@ class Paper(Base):
     pdf_url = Column(String(512), nullable=True)
     pdf_path = Column(String(512), nullable=True)
     parse_status = Column(String(32), nullable=False, default="pending")
+    graph_index_status = Column(String(32), nullable=True)
+    graph_index_error = Column(String(512), nullable=True)
     venue = Column(String(255), nullable=True)
     venue_type = Column(String(64), nullable=True)
     citation_count = Column(Integer, nullable=True)
@@ -73,6 +75,8 @@ class Paper(Base):
             "abs_url": self.abs_url,
             "pdf_url": self.pdf_url,
             "parse_status": self.parse_status,
+            "graph_index_status": self.graph_index_status,
+            "graph_index_error": self.graph_index_error,
             "venue": self.venue,
             "venue_type": self.venue_type,
             "citation_count": self.citation_count,

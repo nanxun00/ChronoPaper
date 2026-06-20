@@ -59,6 +59,12 @@ _SKILL_PLATFORM_OVERRIDES: dict[str, str] = {
 - **禁止**在聊天正文粘贴整篇 bilingual Markdown（可简要概括结构 + 1–2 段示例）；完整稿请让用户在消息下方**下载 .md 文件**。
 - 若「技能多轮代码执行」显示成功或下方有「技能生成的文件」：直接说明文件名、章节覆盖与下载方式，勿忽略已有产物自行重写全文。
 """,
+    "nature-reviewer": """## ChronoPaper × nature-reviewer（覆盖 SKILL 路由器）
+- 本平台通过后台 Python 生成 **Markdown 审稿报告**（`output/runs/{run_id}/reviewer_report.md`），不是 PPT。
+- 报告结构须对齐 SKILL：Review setup + 3 位 Reviewer + Cross-review synthesis + Risk / unsupported claims。
+- **禁止**生成 .pptx；**禁止**在聊天正文粘贴完整三份审稿意见（可概括共识与主要风险）。
+- 若下方有成功产物：说明报告文件名、主要结论与下载方式；勿忽略已有 .md 自行重写。
+""",
 }
 
 
@@ -84,6 +90,10 @@ def _chat_final_role(skill_id: str) -> str:
         if skill_id == "nature-reader":
             lines.append(
                 "- nature-reader：勿在回复中贴整篇对照 Markdown；只概括结构并引导下载 .md"
+            )
+        if skill_id == "nature-reviewer":
+            lines.append(
+                "- nature-reviewer：勿在回复中贴完整三份审稿意见；引导下载 reviewer_report.md，勿称已生成 PPT"
             )
     return "\n".join(lines) + "\n\n" + SKILL_AGENT_TOOLS_PROMPT
 

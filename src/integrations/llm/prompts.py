@@ -141,8 +141,9 @@ skill_codegen_write_prompt_template = """
 {allowed_packages}
 - 禁止：subprocess、os.system、eval、exec、网络请求、访问技能目录外路径
 - 输出用 Path.mkdir(parents=True, exist_ok=True)；不要 shutil.rmtree 清理 references/、figures/、SKILL.md
-- nature-paper2ppt 默认输出：output/runs/{run_id}/final_presentation_cn.pptx
-- 幻灯片须为结构化内容：中文标题、2–4 条具体 bullet、可选 speaker notes；结果页可插入 mineru 论文配图
+- 若 skill_extra_rules 未要求 pptx，**禁止**默认输出 .pptx；文本/审稿类技能主交付为 .md
+- nature-paper2ppt 才输出：output/runs/{run_id}/final_presentation_cn.pptx（见 skill_extra_rules）
+- 幻灯片须为结构化内容：中文标题、2–4 条具体 bullet、可选 speaker notes；结果页可插入 mineru 论文配图（仅 paper2ppt）
 - 禁止：把 PDF 整页预览 PNG 全屏铺满幻灯片；禁止逐页截图拼 deck；禁止 glob 扫描 figures 目录
 - 若有 PDF，用 PyMuPDF 提取**全文或至少摘要+方法+结果+讨论**的文本，禁止只读前 5 页
 - 禁止占位 bullet（如「方法1：具体技术描述」「本文研究的主要问题和意义」）；内容必须来自论文

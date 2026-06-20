@@ -33,6 +33,14 @@ def inspect_markdown(path: Path) -> ArtifactInspectionResult:
     if len(headings) < 2:
         errors.append("缺少足够的章节标题（至少 2 个 # 标题）")
 
+    name = path.name.lower()
+    if "reviewer" in name and name.endswith(".md"):
+        lowered = text.lower()
+        for token in ("reviewer 1", "reviewer 2", "cross-review"):
+            if token not in lowered:
+                errors.append(f"审稿报告缺少必要章节：{token}")
+                break
+
     first_line = text.split("\n", 1)[0][:120]
     summary.append(f"开头：{first_line}")
 
