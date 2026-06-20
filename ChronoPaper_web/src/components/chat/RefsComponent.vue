@@ -341,8 +341,8 @@ const getPercent = (value) => {
   max-height: 70vh;
 }
 
-.artifact-md .copyable-block pre {
-  max-height: calc(70vh - 2rem);
+.artifact-md .copyable-block__body pre {
+  max-height: calc(70vh - 36px);
 }
 
 .artifact-download a {

@@ -146,48 +146,53 @@ def _download_url(url: str, user_id: str) -> str:
         return _save_image_bytes(user_id, resp.content, ext=ext)
 
 
-def generate_image(prompt: str, *, size: str = "1024x1024", user_id: str) -> dict[str, Any]:
+def _image_gen_client():
+    from openai import OpenAI
+
     settings = get_settings()
     api_key = (settings.image_gen_api_key or settings.openai_api_key or "").strip()
     if not api_key:
         raise RuntimeError("未配置 IMAGE_GEN_API_KEY，请在 .env 中设置")
-
     base = (settings.image_gen_api_base or "https://api.openai-proxy.org/v1").rstrip("/")
+    return OpenAI(api_key=api_key, base_url=base), settings
+
+
+def _save_image_item(item: Any, user_id: str) -> str:
+    b64_json = getattr(item, "b64_json", None) or (item.get("b64_json") if isinstance(item, dict) else None)
+    if b64_json:
+        raw = base64.b64decode(b64_json)
+        return _save_image_bytes(user_id, raw, ext=".png")
+
+    url = getattr(item, "url", None) or (item.get("url") if isinstance(item, dict) else None)
+    if url:
+        return _download_url(url, user_id)
+
+    raise RuntimeError("图像 API 响应缺少 url / b64_json")
+
+
+def generate_image(prompt: str, *, size: str = "1024x1024", user_id: str) -> dict[str, Any]:
+    client, settings = _image_gen_client()
     model = (settings.image_gen_model or "gpt-image-2-2026-04-21").strip()
-    url = f"{base}/images/generations"
-    payload = {
+
+    kwargs: dict[str, Any] = {
         "model": model,
         "prompt": prompt,
-        "size": size,
         "n": 1,
-        "response_format": "b64_json",
     }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    if size in {"1024x1024", "1792x1024", "1024x1792"}:
+        kwargs["size"] = size
 
-    with httpx.Client(timeout=180.0) as client:
-        resp = client.post(url, json=payload, headers=headers)
-        if resp.status_code >= 400:
-            detail = resp.text[:500]
-            logger.warning("image generation failed status=%s body=%s", resp.status_code, detail)
-            raise RuntimeError(f"图像 API 返回错误 ({resp.status_code})：{detail}")
+    try:
+        response = client.images.generate(**kwargs)
+    except Exception as exc:
+        logger.warning("image generation failed model=%s: %s", model, exc)
+        raise RuntimeError(f"图像 API 调用失败：{exc}") from exc
 
-        data = resp.json()
-        items = data.get("data") or []
-        if not items:
-            raise RuntimeError("图像 API 未返回图片数据")
+    items = getattr(response, "data", None) or []
+    if not items:
+        raise RuntimeError("图像 API 未返回图片数据")
 
-        item = items[0]
-        if item.get("b64_json"):
-            raw = base64.b64decode(item["b64_json"])
-            public_url = _save_image_bytes(user_id, raw, ext=".png")
-        elif item.get("url"):
-            public_url = _download_url(item["url"], user_id)
-        else:
-            raise RuntimeError("图像 API 响应缺少 b64_json / url")
-
+    public_url = _save_image_item(items[0], user_id)
     return {"url": public_url, "prompt": prompt, "size": size, "model": model}
 
 

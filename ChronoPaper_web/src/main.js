@@ -10,6 +10,7 @@ import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';
 import Antd from 'ant-design-vue';
 import 'ant-design-vue/dist/reset.css';
 import './assets/main.css'
+import './assets/copyable-block.css'
 const app = createApp(App)
 const pinia = createPinia();
 pinia.use(piniaPluginPersistedstate);

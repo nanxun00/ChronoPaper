@@ -143,6 +143,10 @@
           <LoadingOutlined spin class="searching-msg-spinner" />
           <span>正在生成图像，请稍候…</span>
         </div>
+        <div v-else-if="message.status == 'translating' && isStreaming && !message.text" class="searching-msg">
+          <LoadingOutlined spin class="searching-msg-spinner" />
+          <span>正在翻译…</span>
+        </div>
         <div v-else-if="message.status == 'skill_code_approval'" class="codegen-approval-wrap">
           <div v-if="message.text" class="message-md-wrap">
             <MessageMarkdown :message="message" :priority="messageRenderPriority(index)" />
@@ -282,6 +286,10 @@
             @update:skill-id="(v) => (meta.skill_id = v)"
           />
           <ImageGenToggle v-model="meta.image_gen_mode" />
+          <TranslateToggle
+            v-model="meta.translate_mode"
+            v-model:target-lang="meta.translate_target_lang"
+          />
         </div>
 
       </div>
@@ -324,8 +332,10 @@ import CopyablePre from '@/components/chat/CopyablePre.vue'
 import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import SkillPicker from '@/components/chat/SkillPicker.vue'
 import ImageGenToggle from '@/components/chat/ImageGenToggle.vue'
+import TranslateToggle from '@/components/chat/TranslateToggle.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
 import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
+import { streamTranslate } from '@/api/translate'
 import { approveSkillCodegen } from '@/api/skills'
 import hljs from 'highlight.js';
 import { Marked } from 'marked';
@@ -486,6 +496,8 @@ const DEFAULT_CHAT_META = {
   skill_mode: 'auto',
   skill_id: null,
   image_gen_mode: false,
+  translate_mode: false,
+  translate_target_lang: 'zh',
 }
 
 const meta = reactive({
@@ -905,6 +917,45 @@ const applyChatPayload = (data, cur_res_id) => {
   }
 }
 
+const fetchTranslateResponse = (user_input, cur_res_id) => {
+  updateMessage({ id: cur_res_id, status: 'translating', text: '' })
+
+  let result = ''
+  return streamTranslate({
+    text: user_input,
+    targetLang: meta.translate_target_lang || 'zh',
+    onChunk: ({ content, error, done }) => {
+      if (error) {
+        updateMessage({ id: cur_res_id, status: 'error', text: error })
+        isStreaming.value = false
+        return
+      }
+      if (content) {
+        result += content
+        updateMessage({ id: cur_res_id, text: result, status: 'translating' })
+        scrollToBottom()
+      }
+      if (done) {
+        const trimmed = result.trim()
+        updateMessage({ id: cur_res_id, status: 'finished', text: trimmed })
+        conv.value.history = [...conv.value.history, [user_input, trimmed]]
+        isStreaming.value = false
+        if (conv.value.messages.length === 2) {
+          renameTitle()
+        }
+      }
+    },
+  }).catch((err) => {
+    updateMessage({
+      id: cur_res_id,
+      status: 'error',
+      text: err.message || '翻译失败',
+    })
+    isStreaming.value = false
+    message.error(err.message || '翻译失败')
+  })
+}
+
 const finishChatResponse = (cur_res_id) => {
   const message = conv.value.messages.find((item) => item.id === cur_res_id)
   if (message?.status === 'skill_code_approval' || message?.status === 'image_gen_confirm') {
@@ -1139,12 +1190,16 @@ const sendMessage = () => {
       citations,
     }
 
-    fetchChatResponse(
-      finalInput || '请结合引用的文献进行总结或回答',
-      user_msg_id,
-      cur_res_id,
-      citations,
-    );
+    if (meta.translate_mode && finalInput.trim()) {
+      fetchTranslateResponse(finalInput.trim(), cur_res_id)
+    } else {
+      fetchChatResponse(
+        finalInput || '请结合引用的文献进行总结或回答',
+        user_msg_id,
+        cur_res_id,
+        citations,
+      )
+    }
     citedLiterature.value = [];
   } else {
     console.log('请输入消息');
@@ -1408,6 +1463,20 @@ onUnmounted(() => {
   contentResizeObserver?.disconnect()
   contentResizeObserver = null
 })
+
+watch(
+  () => meta.translate_mode,
+  (enabled) => {
+    if (enabled) meta.image_gen_mode = false
+  },
+)
+
+watch(
+  () => meta.image_gen_mode,
+  (enabled) => {
+    if (enabled) meta.translate_mode = false
+  },
+)
 
 // 监听 meta 对象的变化，并保存到本地存储（不持久化临时引用）
 watch(
@@ -2320,47 +2389,6 @@ watch(
     overflow-wrap: anywhere;
   }
 
-  .copyable-block {
-    position: relative;
-    margin: 10px 0;
-    border: 1px solid var(--main-light-3);
-    border-radius: 8px;
-    background: #f6f8fa;
-    overflow: hidden;
-  }
-
-  .copyable-block__btn {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 2;
-    padding: 2px 10px;
-    border: 1px solid #d0d7de;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.92);
-    color: #57606a;
-    font-size: 12px;
-    line-height: 20px;
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
-
-    &:hover {
-      background: #fff;
-      color: var(--main-700);
-      border-color: var(--main-300);
-    }
-  }
-
-  .copyable-block pre {
-    margin: 0;
-    border: none;
-    border-radius: 0;
-    padding: 2.5rem 1rem 1rem;
-    max-height: 480px;
-    overflow: auto;
-    background: transparent;
-  }
-
   h1,
   h2,
   h3,
@@ -2413,15 +2441,15 @@ watch(
     border-top: none;
     max-height: 480px;
     overflow: auto;
-    padding: 2.5rem 1rem 1rem;
+    padding: 1rem;
     background: transparent;
   }
 
   .skill-code-fold__body .copyable-block {
+    margin: 0;
     border: none;
     border-radius: 0;
     border-top: 1px solid #e8e8e8;
-    background: transparent;
   }
 
   li,
