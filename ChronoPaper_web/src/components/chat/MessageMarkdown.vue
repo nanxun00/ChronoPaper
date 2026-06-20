@@ -1,7 +1,12 @@
 <template>
   <div class="message-md-layer">
     <p v-if="!html" class="message-plain-preview">{{ fullText }}</p>
-    <div v-else class="message-md" v-html="html"></div>
+    <div
+      v-else
+      class="message-md"
+      v-html="html"
+      @click="onMarkdownClick"
+    ></div>
   </div>
 </template>
 
@@ -9,6 +14,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { parseChatMarkdown } from '@/utils/markdownSkillFold'
 import { enqueueMarkdownRender } from '@/utils/markdownRenderQueue'
+import { handleCopyableBlockClick } from '@/utils/copyBlock'
 
 const renderCache = new Map()
 const props = defineProps({
@@ -21,6 +27,10 @@ const signal = { cancelled: false }
 let generation = 0
 
 const fullText = computed(() => (props.message?.text || '').trim())
+
+const onMarkdownClick = (event) => {
+  handleCopyableBlockClick(event)
+}
 
 const cacheKeyFor = (msg) => {
   if (!msg) return ''

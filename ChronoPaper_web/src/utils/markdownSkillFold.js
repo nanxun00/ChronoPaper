@@ -1,7 +1,7 @@
 /** 技能对话 Markdown：将中间 Python 脚本折叠为 details */
 import { Marked } from 'marked'
-import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
+import { wrapCopyableBlock } from '@/utils/copyBlock'
 
 const FOLD_MIN_LINES = 3
 
@@ -50,17 +50,30 @@ function foldPythonCodeBlock(text, lang, forceSkillFold = false) {
       text.length > 12000
         ? escapeHtml(text)
         : highlightCode(text, 'python')
+    const body = wrapCopyableBlock(
+      `<pre><code class="hljs language-python">${codeHtml}</code></pre>`,
+      'python',
+    )
     return `<details class="skill-code-fold">
 <summary class="skill-code-fold__summary">技能中间代码 (Python · ${lineCount} 行)</summary>
-<div class="skill-code-fold__body"><pre><code class="hljs language-python">${codeHtml}</code></pre></div>
+<div class="skill-code-fold__body">${body}</div>
 </details>`
   }
   if (text.length > 12000) {
-    return `<pre><code>${escapeHtml(text)}</code></pre>`
+    return wrapCopyableBlock(`<pre><code>${escapeHtml(text)}</code></pre>`, lang)
   }
   const hl = highlightCode(text, language || undefined)
   const cls = language ? `hljs language-${language}` : 'hljs'
-  return `<pre><code class="${cls}">${hl}</code></pre>`
+  return wrapCopyableBlock(`<pre><code class="${cls}">${hl}</code></pre>`, lang)
+}
+
+function renderCodeBlock(text, lang) {
+  if (text.length > 12000) {
+    return wrapCopyableBlock(`<pre><code>${escapeHtml(text)}</code></pre>`, lang)
+  }
+  const hl = highlightCode(text, lang)
+  const cls = lang ? `hljs language-${lang}` : 'hljs'
+  return wrapCopyableBlock(`<pre><code class="${cls}">${hl}</code></pre>`, lang)
 }
 
 let _defaultMarked
@@ -72,21 +85,27 @@ const LITE_PARSE_THRESHOLD = 25000
 function getLiteMarked() {
   if (!_liteMarked) {
     _liteMarked = new Marked({ gfm: true, breaks: true, tables: true })
+    _liteMarked.use({
+      renderer: {
+        code(text, lang) {
+          return renderCodeBlock(text, lang)
+        },
+      },
+    })
   }
   return _liteMarked
 }
 
 function getDefaultMarked() {
   if (!_defaultMarked) {
-    _defaultMarked = new Marked(
-      { gfm: true, breaks: true, tables: true },
-      markedHighlight({
-        langPrefix: 'hljs language-',
-        highlight(code) {
-          return hljs.highlightAuto(code).value
+    _defaultMarked = new Marked({ gfm: true, breaks: true, tables: true })
+    _defaultMarked.use({
+      renderer: {
+        code(text, lang) {
+          return renderCodeBlock(text, lang)
         },
-      }),
-    )
+      },
+    })
   }
   return _defaultMarked
 }

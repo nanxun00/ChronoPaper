@@ -130,7 +130,9 @@
           <span>{{ message.skill_progress?.message || '正在执行技能（生成代码 / 运行脚本 / 质检产物，可能需要 1–3 分钟）' }}</span>
           <details v-if="message.skill_progress?.code_preview" class="skill-progress-code">
             <summary>第 {{ message.skill_progress.round || 1 }} 轮 Python 脚本（点击展开）</summary>
-            <pre>{{ message.skill_progress.code_preview }}</pre>
+            <CopyablePre :text="message.skill_progress.code_preview" lang="python">
+              {{ message.skill_progress.code_preview }}
+            </CopyablePre>
           </details>
         </div>
         <div v-else-if="message.status == 'skill_agent' && isStreaming" class="searching-msg">
@@ -144,7 +146,9 @@
           <div v-if="message.codegen_approval && !message.codegen_approval_resolved" class="codegen-approval-panel">
             <details v-if="message.codegen_approval.code_preview" class="codegen-approval-code">
               <summary>查看待执行脚本片段</summary>
-              <pre>{{ message.codegen_approval.code_preview }}</pre>
+              <CopyablePre :text="message.codegen_approval.code_preview" lang="python">
+                {{ message.codegen_approval.code_preview }}
+              </CopyablePre>
             </details>
             <div class="codegen-approval-actions">
               <a-button
@@ -291,6 +295,7 @@ import { useConfigStore, useUserStore } from '@/stores'
 import { message } from 'ant-design-vue'
 import RefsComponent from '@/components/chat/RefsComponent.vue'
 import MessageMarkdown from '@/components/chat/MessageMarkdown.vue'
+import CopyablePre from '@/components/chat/CopyablePre.vue'
 import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import SkillPicker from '@/components/chat/SkillPicker.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
@@ -1557,13 +1562,19 @@ watch(
         max-height: 280px;
         overflow: auto;
         padding: 10px;
-        border-radius: 8px;
+        border-radius: 0 0 8px 8px;
         background: #f6f8fa;
         font-size: 12px;
         white-space: pre-wrap;
         word-break: break-word;
         width: 100%;
         box-sizing: border-box;
+        margin: 0;
+        border: none;
+      }
+
+      .copyable-block {
+        width: 100%;
       }
     }
 
@@ -1593,11 +1604,17 @@ watch(
         max-height: 240px;
         overflow: auto;
         padding: 10px;
-        border-radius: 8px;
+        border-radius: 0 0 8px 8px;
         background: #f6f8fa;
         font-size: 12px;
         white-space: pre-wrap;
         word-break: break-word;
+        margin: 0;
+        border: none;
+      }
+
+      .copyable-block {
+        width: 100%;
       }
     }
 
@@ -2153,6 +2170,47 @@ watch(
 
 .message-md {
 
+  .copyable-block {
+    position: relative;
+    margin: 10px 0;
+    border: 1px solid var(--main-light-3);
+    border-radius: 8px;
+    background: #f6f8fa;
+    overflow: hidden;
+  }
+
+  .copyable-block__btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    padding: 2px 10px;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.92);
+    color: #57606a;
+    font-size: 12px;
+    line-height: 20px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+
+    &:hover {
+      background: #fff;
+      color: var(--main-700);
+      border-color: var(--main-300);
+    }
+  }
+
+  .copyable-block pre {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    padding: 2.5rem 1rem 1rem;
+    max-height: 480px;
+    overflow: auto;
+    background: transparent;
+  }
+
   h1,
   h2,
   h3,
@@ -2202,9 +2260,18 @@ watch(
     margin: 0;
     border: none;
     border-radius: 0;
-    border-top: 1px solid #e8e8e8;
+    border-top: none;
     max-height: 480px;
     overflow: auto;
+    padding: 2.5rem 1rem 1rem;
+    background: transparent;
+  }
+
+  .skill-code-fold__body .copyable-block {
+    border: none;
+    border-radius: 0;
+    border-top: 1px solid #e8e8e8;
+    background: transparent;
   }
 
   li,

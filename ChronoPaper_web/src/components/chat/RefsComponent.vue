@@ -79,7 +79,9 @@
       </div>
       <div v-else-if="artifactPreview?.kind === 'file' && isMarkdown(artifactPreview)" class="artifact-md">
         <a-spin :spinning="artifactLoading" />
-        <pre v-if="artifactText">{{ artifactText }}</pre>
+        <CopyablePre v-if="artifactText" :text="artifactText" lang="markdown">
+          {{ artifactText }}
+        </CopyablePre>
       </div>
       <div v-else class="artifact-download">
         <p>文件已生成，点击下载：</p>
@@ -121,6 +123,7 @@ import {
 } from '@ant-design/icons-vue'
 import GraphContainer from '@/components/graph/GraphContainer.vue'
 import GraphNodeDrawer from '@/components/graph/GraphNodeDrawer.vue'
+import CopyablePre from '@/components/chat/CopyablePre.vue'
 
 const props = defineProps({
   message: Object,
@@ -334,14 +337,12 @@ const getPercent = (value) => {
   }
 }
 
-.artifact-md pre {
+.artifact-md .copyable-block {
   max-height: 70vh;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: #f9f9f9;
-  padding: 12px;
-  border-radius: 6px;
+}
+
+.artifact-md .copyable-block pre {
+  max-height: calc(70vh - 2rem);
 }
 
 .artifact-download a {
