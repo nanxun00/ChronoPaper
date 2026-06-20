@@ -96,7 +96,7 @@
         </div>
       </div>
     </div>
-    <div class="chat-box">
+    <div v-else class="chat-box" ref="chatContent">
       <div v-if="conv.loadingOlder" class="messages-loading-top">
         <LoadingOutlined spin />
         <span>加载更早的消息…</span>
@@ -224,7 +224,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted, toRefs, nextTick, computed, watch, toRaw } from 'vue'
+import { reactive, ref, onMounted, onUnmounted, toRefs, nextTick, computed, watch, toRaw } from 'vue'
 import {
   SendOutlined,
   MenuOutlined,
@@ -275,10 +275,15 @@ const configStore = useConfigStore()
 const { conv, state } = toRefs(props)
 const chatRoot = ref(null)
 const chatContainer = ref(null)
+const chatContent = ref(null)
 const isStreaming = ref(false)
 const showScrollToBottom = ref(false)
 const autoScrollEnabled = ref(true)
 const loadingOlderRequested = ref(false)
+const suppressLoadOlder = ref(false)
+let scrollBottomTimers = []
+let suppressLoadOlderTimer = null
+let contentResizeObserver = null
 const SCROLL_BOTTOM_THRESHOLD = 80
 const LOAD_OLDER_THRESHOLD = 100
 
@@ -294,7 +299,7 @@ const handleChatScroll = () => {
   showScrollToBottom.value = !near && conv.value.messages.length > 0
 
   const el = chatContainer.value
-  if (!el || conv.value.loadingOlder || loadingOlderRequested.value) return
+  if (!el || conv.value.loadingOlder || loadingOlderRequested.value || suppressLoadOlder.value) return
   if (!conv.value.messagesHasMore || conv.value.detailLoading) return
   if (el.scrollTop > LOAD_OLDER_THRESHOLD) return
 
@@ -318,17 +323,39 @@ const handleChatScroll = () => {
   })
 }
 
+const clearScrollBottomTimers = () => {
+  scrollBottomTimers.forEach((id) => clearTimeout(id))
+  scrollBottomTimers = []
+}
+
+const applyScrollToBottom = () => {
+  const el = chatContainer.value
+  if (!el) return
+  el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+}
+
+/** 打开对话或加载完成后滚到底；Markdown 异步渲染会多次撑高，需重试 */
 const scrollToBottom = (force = true) => {
-  nextTick(() => {
-    requestAnimationFrame(() => {
-      const el = chatContainer.value
-      if (!el) return
-      el.scrollTop = el.scrollHeight - el.clientHeight
-      if (force) {
-        autoScrollEnabled.value = true
-        showScrollToBottom.value = false
-      }
-    })
+  if (force) {
+    autoScrollEnabled.value = true
+    showScrollToBottom.value = false
+    suppressLoadOlder.value = true
+    if (suppressLoadOlderTimer) clearTimeout(suppressLoadOlderTimer)
+    suppressLoadOlderTimer = setTimeout(() => {
+      suppressLoadOlder.value = false
+      suppressLoadOlderTimer = null
+    }, 800)
+  }
+
+  clearScrollBottomTimers()
+  const delays = [0, 50, 120, 250, 500, 900]
+  delays.forEach((delay) => {
+    const id = setTimeout(() => {
+      nextTick(() => {
+        requestAnimationFrame(applyScrollToBottom)
+      })
+    }, delay)
+    scrollBottomTimers.push(id)
   })
 }
 
@@ -1093,21 +1120,38 @@ watch(
 watch(
   () => conv.value?.detailLoading,
   (loading, wasLoading) => {
-    if (wasLoading && !loading && conv.value?.messages?.length) {
-      autoScrollEnabled.value = true
-      scrollToBottom()
-      for (const m of conv.value.messages) {
-        if (m.role === 'received' && m.refs?.knowledge_base && !m.groupedResults) {
-          groupRefs(m.id)
+    if (wasLoading && !loading) {
+      nextTick(() => bindContentResizeObserver())
+      if (conv.value?.messages?.length) {
+        scrollToBottom()
+        for (const m of conv.value.messages) {
+          if (m.role === 'received' && m.refs?.knowledge_base && !m.groupedResults) {
+            groupRefs(m.id)
+          }
         }
       }
     }
   },
 )
 
+const bindContentResizeObserver = () => {
+  contentResizeObserver?.disconnect()
+  const target = chatContent.value
+  if (!target || typeof ResizeObserver === 'undefined') return
+  contentResizeObserver = new ResizeObserver(() => {
+    if (autoScrollEnabled.value && !conv.value?.detailLoading) {
+      applyScrollToBottom()
+    }
+  })
+  contentResizeObserver.observe(target)
+}
+
 // 从本地存储加载数据
 onMounted(() => {
-  scrollToBottom()
+  bindContentResizeObserver()
+  if (!conv.value?.detailLoading && conv.value?.messages?.length) {
+    scrollToBottom()
+  }
   nextTick(() => handleChatScroll())
   loadDatabases()
   if (meta.stream === undefined || meta.stream === null) {
@@ -1116,6 +1160,13 @@ onMounted(() => {
   if (!meta.skill_mode) {
     meta.skill_mode = 'auto'
   }
+})
+
+onUnmounted(() => {
+  clearScrollBottomTimers()
+  if (suppressLoadOlderTimer) clearTimeout(suppressLoadOlderTimer)
+  contentResizeObserver?.disconnect()
+  contentResizeObserver = null
 })
 
 // 监听 meta 对象的变化，并保存到本地存储（不持久化临时引用）

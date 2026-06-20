@@ -123,9 +123,16 @@ def _prepare_chat_query(
 
 
 def _inject_skill_system(messages: list, skill_system: str | None) -> list:
-    if not skill_system:
+    parts: list[str] = []
+    global_prompt = (startup.config.get("chat_system_prompt") or "").strip()
+    if global_prompt:
+        parts.append(global_prompt)
+    if skill_system and skill_system.strip():
+        parts.append(skill_system.strip())
+    if not parts:
         return messages
-    return [{"role": "system", "content": skill_system}, *messages]
+    combined = "\n\n".join(parts)
+    return [{"role": "system", "content": combined}, *messages]
 
 
 def _message_to_response_content(message) -> tuple[dict, str]:

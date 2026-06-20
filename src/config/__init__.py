@@ -66,6 +66,14 @@ class Config(SimpleConfig):
         self.add_item("embed_model", default="zhipu-embedding-3", des="Embedding 模型", choices=list(EMBED_MODEL_INFO.keys()))
         self.add_item("reranker", default="bge-reranker-v2-m3", des="Re-Ranker 模型", choices=list(RERANKER_LIST.keys()))
         self.add_item("model_local_paths", default={}, des="本地模型路径")
+        self.add_item(
+            "chat_system_prompt",
+            default=(
+                "你是 ChronoPaper 科研助手，帮助用户进行文献检索、论文阅读、"
+                "知识库问答与学术写作。回答应准确、结构化；引用资料时注明来源，不确定时请明确说明。"
+            ),
+            des="对话全局系统提示词",
+        )
         ### <<< 默认配置结束
 
         self.filename = filename or os.path.join(self.save_dir, "config", "config.yaml")

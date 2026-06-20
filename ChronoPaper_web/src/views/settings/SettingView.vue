@@ -19,6 +19,7 @@
         <a-button type="text" :class="{ activesec: state.section === 'model'}" @click="state.section='model'" :icon="h(CodeOutlined)"> 模型配置 </a-button>
         <a-button type="text" :class="{ activesec: state.section === 'path'}" @click="state.section='path'" :icon="h(FolderOutlined)"> 路径配置 </a-button>
         <a-button type="text" :class="{ activesec: state.section === 'skills'}" @click="state.section='skills'" :icon="h(ThunderboltOutlined)"> 技能管理 </a-button>
+        <a-button type="text" :class="{ activesec: state.section === 'prompt'}" @click="state.section='prompt'" :icon="h(MessageOutlined)"> 系统提示词 </a-button>
       </div>
       <div class="setting" v-if="state.section === 'base'">
         <h3>基础模型配置</h3>
@@ -177,6 +178,12 @@
         <h3>技能管理</h3>
         <SkillManagementPanel ref="skillPanelRef" />
       </div>
+      <div class="setting" v-if="state.section === 'prompt'">
+        <h3>系统提示词管理</h3>
+        <div class="section">
+          <SystemPromptPanel ref="systemPromptPanelRef" />
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -195,9 +202,11 @@ import {
   EditOutlined,
   InfoCircleOutlined,
   ThunderboltOutlined,
+  MessageOutlined,
 } from '@ant-design/icons-vue';
 import HeaderComponent from '@/components/common/HeaderComponent.vue';
 import SkillManagementPanel from '@/components/settings/SkillManagementPanel.vue';
+import SystemPromptPanel from '@/components/settings/SystemPromptPanel.vue';
 import { notification, Button } from 'ant-design-vue';
 
 const configStore = useConfigStore()
@@ -220,12 +229,16 @@ const state = reactive({
   section: 'base'
 })
 const skillPanelRef = ref(null)
+const systemPromptPanelRef = ref(null)
 
 watch(
   () => state.section,
   (sec) => {
     if (sec === 'skills') {
       skillPanelRef.value?.loadSkills?.()
+    }
+    if (sec === 'prompt') {
+      systemPromptPanelRef.value?.syncFromStore?.()
     }
   },
 )

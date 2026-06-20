@@ -1,7 +1,8 @@
+chat_system_prompt: 你是 ChronoPaper 科研助手，帮助用户进行文献检索、论文阅读、知识库问答与学术写作。回答应准确、结构化；引用资料时注明来源，不确定时请明确说明。
 embed_model: zhipu-embedding-3
 enable_knowledge_base: true
 enable_knowledge_graph: true
-enable_reranker: true
+enable_reranker: false
 enable_search_engine: false
 filename: src/saves\config\config.yaml
 model_local_paths:
@@ -9,7 +10,7 @@ model_local_paths:
 model_name: deepseek-chat
 model_provider: deepseek
 reranker: bge-reranker-v2-m3
-save_dir: src/saves
+save_dir: saves
 stream: true
 valuable_model_provider:
 - openai

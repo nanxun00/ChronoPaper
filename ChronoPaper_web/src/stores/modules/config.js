@@ -19,17 +19,24 @@ export const useConfigStore = defineStore('config', () => {
   }
   function setConfigValue(key, value) {
     config.value[key] = value
-    fetch('/api/config', {
+    return fetch('/api/config', {
       method: 'POST',
       body: JSON.stringify({ key, value }),
       headers: {
         'Content-Type': 'application/json',
       }
     })
-    .then(response => response.json())
+    .then(response => {
+      if (!response.ok) {
+        return response.json().then((data) => {
+          throw new Error(data.detail || `保存失败 (${response.status})`)
+        })
+      }
+      return response.json()
+    })
     .then(data => {
-      console.debug('Success:', data)
       setConfig(data)
+      return data
     })
   }
 
