@@ -12,6 +12,8 @@ def apply_ml_import_env() -> None:
     os.environ.setdefault("USE_TF", "0")
     os.environ.setdefault("USE_TORCH", "1")
     os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+    # 解决 Windows 上多个 libiomp5md.dll 冲突导致的 WinError 1114 错误
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 apply_ml_import_env()
