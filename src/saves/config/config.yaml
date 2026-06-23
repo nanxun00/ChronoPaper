@@ -4,8 +4,8 @@ enable_reranker: false
 enable_knowledge_base: true
 enable_knowledge_graph: true
 enable_search_engine: false
-model_provider: mimo
-model_name: mimo-v2-omni
+model_provider: deepseek
+model_name: deepseek-chat
 embed_model: zhipu-embedding-3
 reranker: bge-reranker-v2-m3
 model_local_paths:

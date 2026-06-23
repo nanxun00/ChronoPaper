@@ -50,3 +50,5 @@ uploads
 # 本地模型 / OCR 等大文件目录（勿上传 GitHub）
 /local/
 /local/**
+
+.env

@@ -21,6 +21,7 @@
         <a-button type="text" :class="{ activesec: state.section === 'skills'}" @click="state.section='skills'" :icon="h(ThunderboltOutlined)"> 技能管理 </a-button>
         <a-button type="text" :class="{ activesec: state.section === 'prompt'}" @click="state.section='prompt'" :icon="h(MessageOutlined)"> 系统提示词 </a-button>
         <a-button type="text" :class="{ activesec: state.section === 'prompts'}" @click="state.section='prompts'" :icon="h(BulbOutlined)"> 提示词 </a-button>
+        <a-button type="text" :class="{ activesec: state.section === 'memory'}" @click="state.section='memory'" :icon="h(DatabaseOutlined)"> 长期记忆 </a-button>
       </div>
       <div class="setting" v-if="state.section === 'base'">
         <h3>基础模型配置</h3>
@@ -191,6 +192,31 @@
           <CustomPromptsPanel ref="customPromptsPanelRef" />
         </div>
       </div>
+      <div class="setting" v-if="state.section === 'memory'">
+        <h3>长期记忆</h3>
+        <div class="section">
+          <div class="card">
+            <a-button type="primary" @click="loadMemories" :loading="memoryState.loading">
+              刷新记忆
+            </a-button>
+          </div>
+          <div v-if="memoryState.loading" style="text-align:center; padding:20px;">
+            <a-spin />
+          </div>
+          <div v-else-if="memoryState.error" style="color: var(--gray-600); padding: 10px 0;">
+            {{ memoryState.error }}
+          </div>
+          <div v-else-if="memoryState.memories.length === 0 && memoryState.loaded" style="color: var(--gray-600); padding: 10px 0;">
+            暂无长期记忆。请在聊天中开启「记忆」开关并对话，MemOS 会自动从对话中提炼事实与偏好记忆。
+          </div>
+          <div v-else class="memory-list">
+            <div v-for="(mem, idx) in memoryState.memories" :key="idx" class="memory-item">
+              <div class="memory-index">{{ idx + 1 }}</div>
+              <div class="memory-content">{{ mem }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -212,12 +238,14 @@ import {
   ThunderboltOutlined,
   MessageOutlined,
   BulbOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons-vue';
 import HeaderComponent from '@/components/common/HeaderComponent.vue';
 import SkillManagementPanel from '@/components/settings/SkillManagementPanel.vue';
 import SystemPromptPanel from '@/components/settings/SystemPromptPanel.vue';
 import CustomPromptsPanel from '@/components/settings/CustomPromptsPanel.vue';
 import { notification, Button } from 'ant-design-vue';
+import { fetchMemories } from '@/api/chat';
 
 const configStore = useConfigStore()
 const route = useRoute()
@@ -243,6 +271,34 @@ const skillPanelRef = ref(null)
 const systemPromptPanelRef = ref(null)
 const customPromptsPanelRef = ref(null)
 
+const memoryState = reactive({
+  memories: [],
+  loading: false,
+  loaded: false,
+  error: '',
+})
+
+async function loadMemories() {
+  memoryState.loading = true
+  memoryState.error = ''
+  memoryState.loaded = false
+  try {
+    const data = await fetchMemories()
+    if (data.ok) {
+      memoryState.memories = Array.isArray(data.memories) ? data.memories : []
+      memoryState.loaded = true
+    } else {
+      memoryState.error = data.error || '获取记忆失败'
+      memoryState.memories = []
+    }
+  } catch (err) {
+    memoryState.error = err?.message || '获取记忆失败'
+    memoryState.memories = []
+  } finally {
+    memoryState.loading = false
+  }
+}
+
 watch(
   () => route.query.section,
   (sec) => {
@@ -265,6 +321,11 @@ watch(
     if (sec === 'prompts') {
       await nextTick()
       customPromptsPanelRef.value?.syncFromStore?.()
+    }
+    if (sec === 'memory') {
+      if (memoryState.memories.length === 0 && !memoryState.loaded) {
+        await loadMemories()
+      }
     }
   },
 )
@@ -645,6 +706,51 @@ const sendRestart = () => {
         }
       }
 
+    }
+  }
+
+  .memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 10px;
+
+    .memory-item {
+      display: flex;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--gray-50);
+      border-radius: 8px;
+      border: 1px solid var(--gray-300);
+      transition: all 0.1s;
+
+      &:hover {
+        background: var(--gray-100);
+        border-color: var(--gray-400);
+      }
+
+      .memory-index {
+        flex: 0 0 24px;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: var(--main-color);
+        color: white;
+        font-size: 12px;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .memory-content {
+        flex: 1;
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--gray-800);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
     }
   }
 

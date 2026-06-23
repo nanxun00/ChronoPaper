@@ -14,7 +14,7 @@ class ChatOpenAIBase():
         self.client = ChatOpenAI(api_key=api_key, base_url=base_url, model=model_name)
         self.model_name = model_name
 
-    def predict(self, message, stream=False):
+    def predict(self, message, stream=False, tools=None, *, user_id: str = "", session_id: str = ""):
         if isinstance(message, str):
             messages = [
                 SystemMessage(content="You're a helpful assistant"),
@@ -22,6 +22,9 @@ class ChatOpenAIBase():
             ]
         else:
             messages = message
+
+        if tools:
+            return self._predict_with_tools(messages, tools, user_id=user_id, session_id=session_id)
 
         if stream:
             return self._stream_response(messages)
@@ -37,6 +40,99 @@ class ChatOpenAIBase():
     def _get_response(self, messages):
         response = self.client.invoke(messages, stream=False)
         return response
+
+    def _predict_with_tools(self, messages, tools, *, user_id: str = "", session_id: str = ""):
+        """支持 Function Calling 的预测方法。
+
+        当 tools 非空时，模型可能返回 tool_calls，需要执行工具并将结果
+        回传给模型，直到模型返回最终文本响应。
+        """
+        from src.services.memos import get_memory_service
+
+        bound_client = self.client.bind_tools(tools) if tools else self.client
+        response = bound_client.invoke(messages, stream=False)
+
+        # 如果模型没有调用工具，直接返回
+        if not getattr(response, "tool_calls", None):
+            return response
+
+        # 执行工具调用并循环
+        max_rounds = 5
+        current_messages = list(messages) + [response]
+
+        for _ in range(max_rounds):
+            tool_calls = getattr(response, "tool_calls", [])
+            if not tool_calls:
+                break
+
+            tool_results = self._execute_tool_calls(tool_calls, user_id=user_id, session_id=session_id)
+            current_messages.extend(tool_results)
+
+            response = bound_client.invoke(current_messages, stream=False)
+            current_messages.append(response)
+
+            if not getattr(response, "tool_calls", None):
+                break
+
+        return response
+
+    def _execute_tool_calls(self, tool_calls, *, user_id: str = "", session_id: str = ""):
+        """执行模型的 tool_calls 并返回 ToolMessage 列表。
+
+        MemOS 实际工具名称：add_message / search_memory / delete_memory。
+        user_id/session_id 从上下文注入，不依赖工具 schema 参数。
+        """
+        from langchain_core.messages import ToolMessage
+        from src.services.memos import get_memory_service
+
+        memos_service = get_memory_service()
+        results = []
+
+        for tc in tool_calls:
+            tool_name = tc.get("name", "")
+            tool_args = dict(tc.get("args", {}))
+            tool_id = tc.get("id", "")
+
+            content = ""
+            try:
+                if tool_name == "add_message":
+                    # MemOS 的 add_message：conversation_first_message + messages
+                    # 强制使用 session_id 作为 conversation_first_message，
+                    # 确保所有记忆都存储在统一的会话标识下，便于后续检索。
+                    messages = tool_args.get("messages", [])
+                    msg_text = ""
+                    if isinstance(messages, list):
+                        for m in messages:
+                            if isinstance(m, dict):
+                                msg_text += m.get("content", "") + "\n"
+                    result = memos_service.add_memory(
+                        user_id=user_id,
+                        session_id=session_id,
+                        content=msg_text.strip(),
+                    )
+                    content = result.content or result.error
+                elif tool_name == "search_memory":
+                    query = tool_args.get("query", "")
+                    result = memos_service.search_memory(
+                        user_id=user_id,
+                        session_id=session_id,
+                        query=query,
+                    )
+                    content = result.content or result.error
+                elif tool_name == "delete_memory":
+                    result = memos_service.clear_session_memory(
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    content = result.content or result.error
+                else:
+                    content = f"未知工具: {tool_name}"
+            except Exception as exc:
+                content = f"工具执行失败: {exc}"
+
+            results.append(ToolMessage(content=content, tool_call_id=tool_id))
+
+        return results
 
 class OpenAIBase():
     def __init__(self, api_key, base_url, model_name):

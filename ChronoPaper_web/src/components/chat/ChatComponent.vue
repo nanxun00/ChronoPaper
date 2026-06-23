@@ -288,6 +288,7 @@
             v-model:target-lang="meta.translate_target_lang"
           />
           <PromptPicker @select="insertPrompt" />
+          <MemoryToggle v-model="meta.enable_memory" />
         </div>
 
       </div>
@@ -331,6 +332,7 @@ import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import SkillPicker from '@/components/chat/SkillPicker.vue'
 import ImageGenToggle from '@/components/chat/ImageGenToggle.vue'
 import TranslateToggle from '@/components/chat/TranslateToggle.vue'
+import MemoryToggle from '@/components/chat/MemoryToggle.vue'
 import PromptPicker from '@/components/chat/PromptPicker.vue'
 import MessageImages from '@/components/chat/MessageImages.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
@@ -498,6 +500,7 @@ const DEFAULT_CHAT_META = {
   image_gen_mode: false,
   translate_mode: false,
   translate_target_lang: 'zh',
+  enable_memory: false,
 }
 
 const meta = reactive({

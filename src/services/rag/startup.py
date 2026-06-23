@@ -19,6 +19,11 @@ class Startup:
 
     def restart(self):
         logger.info("Restarting...")
+        from src.services.memos import reset_memory_service
+        from src.settings import get_settings
+
+        reset_memory_service()
+        get_settings.cache_clear()
         self.start()
         logger.info("Restarted")
 

@@ -28,6 +28,7 @@ from src.services.chat import (
 )
 from src.services.rag import HistoryManager
 from src.services.rag.startup import startup
+from src.services.memos import get_memory_service
 from src.utils.logging_config import setup_logger
 
 chat = APIRouter(prefix="/chat")
@@ -228,6 +229,26 @@ def _will_generate_image(query: str, meta: dict, user_id: str, conv_id: str) -> 
     if meta.get("image_gen_confirm") is True:
         return True
     return is_confirm_text(query)
+
+
+def _get_memory_tools(enable_memory: bool) -> list:
+    """根据 enable_memory 开关获取 MemOS 工具 Schema。
+
+    开关关闭（硬隔离机制，禁止仅靠提示词约束）：
+    业务工具管理器不加载 MemOS 全套 MCP 工具，
+    传递给大模型的 tools 数组不含记忆相关函数，
+    所有模型完全感知不到记忆读写、检索能力，杜绝私自调用记忆。
+
+    开关开启：加载云端 MemOS 全部 MCP 工具。
+    开关逻辑与联网检索 Hosted MCP 保持统一代码架构、统一分支判断逻辑。
+    记忆模块无任何模型绑定逻辑，所有支持 Function Calling 的模型均可统一使用。
+    """
+    if not enable_memory:
+        return []
+    memos_service = get_memory_service()
+    if not memos_service.is_enabled:
+        return []
+    return memos_service.get_tools_schema(enable_memory=True)
 
 
 def _apply_image_gen_result(
@@ -575,7 +596,31 @@ def chat_post(
             content = _run_skill_agent(startup.model, messages, skill_id)
             response_content = {"reasoning_content": "", "content": content}
         else:
-            message = startup.model.predict(messages, stream=False)
+            memory_tools = _get_memory_tools(meta.get("enable_memory", False))
+            # 启用记忆时，注入系统提示词引导模型调用记忆工具
+            if memory_tools:
+                from langchain_core.messages import SystemMessage
+                memory_system_prompt = SystemMessage(
+                    content=(
+                        "【记忆功能已启用】你拥有长期记忆工具。当用户分享以下信息时，"
+                        "请务必调用 add_message 工具将关键信息存入长期记忆：\n"
+                        "1. 用户的个人偏好（喜欢的食物、颜色、音乐、运动、书籍、电影等）\n"
+                        "2. 用户的研究方向、研究领域、研究兴趣\n"
+                        "3. 用户的学习目标、职业规划\n"
+                        "4. 用户的工作信息（职位、公司、项目等）\n"
+                        "5. 用户的生活习惯（作息时间、运动习惯等）\n"
+                        "6. 用户的知识获取方式偏好\n"
+                        "7. 用户分享的任何重要个人信息或需求\n\n"
+                        "调用 add_message 时，messages 参数格式为：\n"
+                        '[{"role": "user", "content": "用户说的话"}, {"role": "assistant", "content": "你的回复"}]\n\n'
+                        "如果用户没有分享新的关键信息，则不需要调用记忆工具。"
+                    )
+                )
+                messages = [memory_system_prompt] + messages
+            message = startup.model.predict(
+                messages, stream=False, tools=memory_tools or None,
+                user_id=user_id, session_id=conv_id,
+            )
             response_content, content = _message_to_response_content(message)
         refs = _refs_get(user_id, cur_res_id)
         updated_history = persist_turn(
@@ -720,30 +765,44 @@ def chat_post(
                 )
                 yield chunk
         else:
-            for delta in startup.model.predict(messages, stream=llm_stream):
-                if not delta.content:
-                    continue
-                if startup.model.model_name in ("deepseek-r1:32b", "deepseek-r1:14b"):
-                    if hasattr(delta, "is_full") and delta.is_full:
-                        if hasattr(delta, "reasoning_content"):
-                            response_content["reasoning_content"] = delta.reasoning_content
-                        response_content["content"] = delta.content
-                        content = delta.content
-                    else:
-                        if hasattr(delta, "reasoning_content"):
-                            response_content["reasoning_content"] += delta.reasoning_content
-                        response_content["content"] += delta.content
-                        content += delta.content
-                else:
-                    if hasattr(delta, "is_full") and delta.is_full:
-                        response_content["content"] = delta.content
-                        content = delta.content
-                    else:
-                        response_content["content"] += delta.content
-                        content += delta.content
-
+            # 如果启用了记忆工具，使用非流式调用（Function Calling 需要完整响应处理工具调用）
+            memory_tools = _get_memory_tools(meta.get("enable_memory", False))
+            if memory_tools:
+                # 使用非流式调用，支持工具调用循环
+                message = startup.model.predict(
+                    messages, stream=False, tools=memory_tools,
+                    user_id=user_id, session_id=conv_id,
+                )
+                response_content, content = _message_to_response_content(message)
+                # 生成一个包含完整内容的块
                 chunk = make_chunk(response_content, "loading", history=history_manager.update_ai(content))
                 yield chunk
+            else:
+                # 正常的流式调用
+                for delta in startup.model.predict(messages, stream=llm_stream):
+                    if not delta.content:
+                        continue
+                    if startup.model.model_name in ("deepseek-r1:32b", "deepseek-r1:14b"):
+                        if hasattr(delta, "is_full") and delta.is_full:
+                            if hasattr(delta, "reasoning_content"):
+                                response_content["reasoning_content"] = delta.reasoning_content
+                            response_content["content"] = delta.content
+                            content = delta.content
+                        else:
+                            if hasattr(delta, "reasoning_content"):
+                                response_content["reasoning_content"] += delta.reasoning_content
+                            response_content["content"] += delta.content
+                            content += delta.content
+                    else:
+                        if hasattr(delta, "is_full") and delta.is_full:
+                            response_content["content"] = delta.content
+                            content = delta.content
+                        else:
+                            response_content["content"] += delta.content
+                            content += delta.content
+
+                    chunk = make_chunk(response_content, "loading", history=history_manager.update_ai(content))
+                    yield chunk
 
         refs = _refs_get(user_id, cur_res_id)
         updated_history = persist_turn(
@@ -780,3 +839,20 @@ def get_refs(
     if refs is not None:
         _refs_pop(current_user.userid, cur_res_id)
     return {"refs": refs}
+
+
+@chat.get("/memories")
+def get_long_term_memories(
+    current_user: UserInDB = Depends(get_current_active_user),
+):
+    """获取当前用户的所有长期记忆（全局，不按会话分割）。"""
+    memos_service = get_memory_service()
+    if not memos_service.is_enabled:
+        return {"ok": False, "error": "记忆功能未启用", "memories": []}
+
+    result = memos_service.list_all_memories(
+        user_id=current_user.userid,
+        top_k=100,
+        enable_memory=True,
+    )
+    return result
