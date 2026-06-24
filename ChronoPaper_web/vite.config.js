@@ -22,6 +22,10 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_API_URL || 'http://localhost:8081',
           changeOrigin: true,
         },
+        '^/tool': {
+          target: env.VITE_API_URL || 'http://localhost:8081',
+          changeOrigin: true,
+        },
       },
       watch: {
         usePolling: true,

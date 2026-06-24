@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "LLM_output_with_docxpdf_MCP_Agent_Challenge": {
+      "type": "streamable_http",
+      "url": "https://mcp.api-inference.modelscope.net/25a0eebdcc842/mcp"
+    }
+  }
+}

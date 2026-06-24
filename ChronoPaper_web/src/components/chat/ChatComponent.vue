@@ -195,10 +195,6 @@
             </a-button>
           </div>
         </div>
-        <div v-else-if="message.status == 'error' || (message.status != 'finished' && message.status != 'skill_code_approval' && message.status != 'image_gen_confirm' && !isStreaming)" class="err-msg"
-          @click="retryMessage(message.id)">
-          请求错误，请重试
-        </div>
         <div v-else class="message-md-wrap" @click="consoleMsg(message)">
           <MessageMarkdown :message="message" :priority="messageRenderPriority(index)" />
         </div>
@@ -293,8 +289,29 @@
             v-model:target-lang="meta.translate_target_lang"
           />
           <PromptPicker @select="insertPrompt" />
+          <PromptEnhancer
+            :current-input="conv.inputText"
+            :context-info="promptEnhancerContext"
+            :is-streaming="isStreaming"
+            @apply="handlePromptEnhancerApply"
+          />
           <MemoryToggle v-model="meta.enable_memory" />
+          <button
+            type="button"
+            class="tool-chip tool-chip--doc-gen"
+            :class="{ 'tool-chip--active': showDocDialog }"
+            @click="showDocDialog = true"
+            title="点击生成 DOCX/PDF 文档并自动下载"
+          >
+            <FileTextOutlined />
+            <span> 文档生成</span>
+          </button>
         </div>
+
+        <MCPDocumentDialog
+          v-model:visible="showDocDialog"
+          @generate-document="handleGenerateDocument"
+        />
 
       </div>
       <p class="note">请注意辨别内容的可靠性 模型供应商：{{ configStore.config?.model_provider }}: {{ configStore.config?.model_name }}
@@ -337,8 +354,10 @@ import LiteratureCitePicker from '@/components/chat/LiteratureCitePicker.vue'
 import SkillPicker from '@/components/chat/SkillPicker.vue'
 import ImageGenToggle from '@/components/chat/ImageGenToggle.vue'
 import TranslateToggle from '@/components/chat/TranslateToggle.vue'
-import MemoryToggle from '@/components/chat/MemoryToggle.vue'
 import PromptPicker from '@/components/chat/PromptPicker.vue'
+import PromptEnhancer from '@/components/chat/PromptEnhancer.vue'
+import MemoryToggle from '@/components/chat/MemoryToggle.vue'
+import MCPDocumentDialog from '@/components/chat/MCPDocumentDialog.vue'
 import MessageImages from '@/components/chat/MessageImages.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
 import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
@@ -474,6 +493,7 @@ const scrollToBottomIfNeeded = () => {
   }
 }
 const citedLiterature = ref([])
+const showDocDialog = ref(false)
 const canSend = computed(() => {
   return Boolean(conv.value.inputText?.trim()) || citedLiterature.value.length > 0
 })
@@ -539,6 +559,23 @@ const kbDisplayName = computed(() => {
     return '不使用'
   }
   return opts.databases[meta.selectedKB]?.name || '不使用'
+})
+
+const promptEnhancerContext = computed(() => {
+  const selectedDb = opts.databases[meta.selectedKB]
+  return {
+    retrievalEnabled: Boolean(meta.enable_retrieval),
+    knowledgeBaseActive: Boolean(meta.enable_retrieval && !meta.kbOptOut && selectedDb),
+    knowledgeBaseName: selectedDb?.name || '',
+    useGraph: Boolean(meta.enable_retrieval && meta.use_graph),
+    useWeb: Boolean(meta.enable_retrieval && meta.use_web),
+    memoryEnabled: Boolean(meta.enable_memory),
+    citations: citedLiterature.value.map((item) => ({
+      arxiv_id: item.arxiv_id,
+      title: item.title,
+      year: item.year || item.published_year || item.published_at,
+    })),
+  }
 })
 
 const marked = new Marked(
@@ -1205,6 +1242,140 @@ const insertPrompt = (content) => {
   })
 }
 
+const handlePromptEnhancerApply = ({ mode, content }) => {
+  const text = String(content || '').trim()
+  if (!text) return
+
+  if (mode === 'send') {
+    if (isStreaming.value) {
+      message.warning('当前回复尚未完成，请稍后再发送')
+      return
+    }
+    conv.value.inputText = text
+    sendMessage()
+    return
+  }
+
+  if (mode === 'insert') {
+    const current = String(conv.value.inputText || '').trim()
+    conv.value.inputText = current ? `${current}\n\n${text}` : text
+    message.success('已插入增强提示词')
+  } else {
+    conv.value.inputText = text
+    message.success('已替换为增强提示词')
+  }
+
+  nextTick(() => {
+    const el = document.querySelector('.input-box .user-input textarea')
+    el?.focus?.()
+  })
+}
+
+const handleGenerateDocument = (docPayload) => {
+  const { title, content, format, template, fontFamily, fontSize, lineSpacing, includeToc, includePageNumbers } = docPayload
+  
+  // 使用相对路径走 Vite 代理
+  const api_url = '/tool'
+  
+  const requestBody = {
+    title,
+    content,
+    format: format.toLowerCase(),
+    template: template || 'academic',
+    font_family: fontFamily || 'Times New Roman',
+    font_size: fontSize || 12,
+    line_spacing: lineSpacing || 1.5,
+    include_toc: includeToc || false,
+    include_page_numbers: includePageNumbers || true,
+  }
+  
+  console.log('📝 文档生成请求:', JSON.stringify(requestBody, null, 2))
+  console.log('📡 请求地址:', '/tool/generate-document')
+    
+  fetch('/tool/generate-document', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody)
+  })
+  .then(async response => {
+    console.log(' 响应状态:', response.status, response.statusText)
+    const text = await response.text()
+    console.log('📦 原始响应文本:', text)
+    
+    try {
+      const data = JSON.parse(text)
+      console.log('📦 解析后的数据:', data)
+      console.log(' 所有字段:', Object.keys(data))
+      console.log('🔍 download_url 存在吗?', 'download_url' in data)
+      return data
+    } catch (e) {
+      console.error('❌ JSON 解析失败:', e)
+      throw new Error('响应不是有效的 JSON 格式')
+    }
+  })
+  .then(data => {
+    if (data.download_url) {
+      message.success('文档已生成，正在下载...')
+      // download_url 已经是完整路径，不需要再加前缀
+      const downloadUrl = data.download_url
+      console.log(' 下载链接:', downloadUrl)
+      
+      // 使用 fetch 获取文件 blob，避免被 Vue Router 拦截
+      fetch(downloadUrl, { method: 'GET' })
+        .then(async response => {
+          if (!response.ok) {
+            console.warn('️ 下载请求返回非 200 状态:', response.status)
+            return null // 静默处理，不显示错误
+          }
+          const blob = await response.blob()
+          const url = window.URL.createObjectURL(blob)
+          
+          const link = document.createElement('a')
+          link.href = url
+          link.download = data.filename || 'document.docx'
+          link.style.display = 'none'
+          document.body.appendChild(link)
+          link.click()
+          
+          setTimeout(() => {
+            document.body.removeChild(link)
+            window.URL.revokeObjectURL(url)
+          }, 100)
+        })
+        .catch(err => {
+          // 静默处理下载错误，不显示错误提示
+          console.warn('⚠️ 下载文件时出现错误（可能已成功）:', err.message)
+        })
+      
+      appendAiMessage(`**文档生成成功**\n\n- 标题: ${title}\n- 格式: ${format}\n- 文件大小: ${Math.round(data.file_size / 1024)} KB\n\n✅ 文档已自动下载，请查看浏览器下载目录。`)
+    } else if (data.doc_id) {
+      // 如果有 doc_id 但没有 download_url，构造下载链接
+      const downloadUrl = `${api_url}/tool/download-document/${data.doc_id}`
+      console.log('🔗 构造下载链接:', downloadUrl)
+      
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = `${data.doc_id}.${format.toLowerCase()}`
+      link.style.display = 'none'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      appendAiMessage(`**文档生成成功**\n\n- 标题: ${title}\n- 格式: ${format}\n\n✅ 文档已自动下载。`)
+    } else {
+      const errorMsg = data.detail || data.message || '文档生成失败'
+      console.error('❌ 生成失败:', errorMsg, data)
+      message.error(errorMsg)
+      appendAiMessage(`❌ 文档生成失败：${errorMsg}`)
+    }
+  })
+  .catch(err => {
+    console.error('❌ 请求失败:', err)
+    message.error(`请求失败：${err.message}`)
+    appendAiMessage(` 请求错误：${err.message}`)
+  })
+}
+
 // 更新后的 sendMessage 函数
 const sendMessage = () => {
   const user_input = conv.value.inputText.trim();
@@ -1750,17 +1921,6 @@ watch(
     color: black;
     /* box-shadow: 0px 0.3px 0.9px rgba(0, 0, 0, 0.12), 0px 1.6px 3.6px rgba(0, 0, 0, 0.16); */
     /* animation: slideInUp 0.1s ease-in; */
-
-    .err-msg {
-      color: #FF6B6B;
-      border: 1px solid #FF6B6B;
-      padding: 0.2rem 1rem;
-      border-radius: 8px;
-      text-align: center;
-      background: #FFF0F0;
-      margin-bottom: 10px;
-      cursor: pointer;
-    }
 
     .searching-msg {
       display: flex;

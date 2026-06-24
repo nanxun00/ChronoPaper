@@ -234,24 +234,24 @@ const handleSpeakMessage = async (speakerMessage) => {
       const played = await player.playText(text, { forceUnmute: true })
       if (requestId !== speechRequestId.value) return
       if (played) return
-      clearSpeakingMessage()
-      return
+      console.warn('Virtual human playText returned false, fallback to browser speech')
     } catch (err) {
       if (requestId !== speechRequestId.value) return
       console.warn('Virtual human playText failed:', err)
-      clearSpeakingMessage()
-      return
     }
   }
 
   if (requestId !== speechRequestId.value) return
-  speakWithBrowser(text, {
+  const spoken = speakWithBrowser(text, {
     onEnd: () => {
       if (requestId === speechRequestId.value) {
         clearSpeakingMessage()
       }
     },
   })
+  if (!spoken) {
+    clearSpeakingMessage()
+  }
 }
 
 const mapConvSummary = (row) => ({
