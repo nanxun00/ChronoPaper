@@ -1,0 +1,21 @@
+stream: true
+save_dir: saves
+enable_reranker: false
+enable_knowledge_base: true
+enable_knowledge_graph: true
+enable_search_engine: false
+model_provider: mimo
+model_name: mimo-v2-omni
+embed_model: zhipu-embedding-3
+reranker: bge-reranker-v2-m3
+model_local_paths:
+  bge-reranker-v2-m3: local/BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
+chat_system_prompt: 你是 ChronoPaper 科研助手，帮助用户进行文献检索、论文阅读、知识库问答与学术写作。回答应准确、结构化；引用资料时注明来源，不确定时请明确说明。
+custom_prompts:
+- content: '你是深耕深度学习方向的一线科研学者兼专职英文学术编辑，立足作者真实科研视角改写文本。
+
+    严格恪守三条底线：原文研究逻辑、专业名词、实验数据完全不动，不得篡改指标与公式。 改写核心要求： 行文贴合真人撰稿习惯，长短句错落排布，摒弃 AI 惯用的成套模板句式、标准化连接套词；在段落里自然穿插本人实操试验后的细碎心得、简短主观评述，不用生硬凑话；
+    局部少量轻量化自然口语化学术表达（仅限科研语境口语，不低俗），体现边梳理思路边写作的临场感； 大范围重组句子语序、替换同义学术词汇，规避重复措辞，同一段落避免相同连接词复用；
+    杜绝大段冗长复合句堆砌，拆分机器典型长难句；不套用通用 SCI 万能写作模板。 保留文中得参考文献引用不丢失'
+  id: prompt-m5fwy64j
+  title: 降AIGC率

@@ -1,0 +1,329 @@
+import os
+from openai import OpenAI
+from openai.types.beta.threads import Message
+
+from src.utils.logging_config import setup_logger
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
+logger = setup_logger(__name__)
+
+class ChatOpenAIBase():
+
+    def __init__(self, api_key, base_url, model_name):
+        self.client = ChatOpenAI(api_key=api_key, base_url=base_url, model=model_name)
+        self.model_name = model_name
+
+    def predict(self, message, stream=False):
+        if isinstance(message, str):
+            messages = [
+                SystemMessage(content="You're a helpful assistant"),
+                HumanMessage(content=message),
+            ]
+        else:
+            messages = message
+
+        if stream:
+            return self._stream_response(messages)
+        else:
+            return self._get_response(messages)
+
+    def _stream_response(self, messages):
+        response = self.client.stream(messages, stream=True)
+        for chunk in response:
+            yield chunk
+
+
+    def _get_response(self, messages):
+        response = self.client.invoke(messages, stream=False)
+        return response
+
+class OpenAIBase():
+    def __init__(self, api_key, base_url, model_name):
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.model_name = model_name
+
+    def predict(self, message, stream=False):
+        if isinstance(message, str):
+            messages=[{"role": "user", "content": message}]
+        else:
+            messages = message
+
+        if stream:
+            return self._stream_response(messages)
+        else:
+            return self._get_response(messages)
+
+    def _stream_response(self, messages):
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,
+            stream=True,
+        )
+        for chunk in response:
+            yield chunk.choices[0].delta
+
+    def _get_response(self, messages):
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=messages,
+            stream=False,
+        )
+        return response.choices[0].message
+
+
+class OpenModel(OpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "gpt-4o-mini"
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_API_BASE")
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class OpenModelNew(ChatOpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "gpt-4o-mini"
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("OPENAI_API_BASE")
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class DeepSeek(OpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "deepseek-chat"
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        base_url = "https://api.deepseek.com"
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+# TODO
+class DeepSeekNew(ChatOpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "deepseek-chat"
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        base_url = "https://api.deepseek.com"
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class DeepSeekLocal(ChatOpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "deepseek-r1:14b"
+        from src.settings import get_settings
+        s = get_settings()
+        super().__init__(api_key=s.ollama_api_key, base_url=s.ollama_api_base, model_name=model_name)
+
+# class DeepSeekLocal(OpenAIBase):
+#     def __init__(self, model_name=None):
+#         model_name = model_name or "deepseek-r1:14b"
+#         # api_key = os.getenv("DEEPSEEKNEW_API_KEY")
+#         api_key = 'ollama'
+#         base_url = "http://47.103.8.209:19020/v1/"
+#         super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class Zhipu(OpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "glm-4-flash"
+        api_key = os.getenv("ZHIPUAI_API_KEY")
+        base_url = "https://open.bigmodel.cn/api/paas/v4/"
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class ZhipuNew(ChatOpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "glm-4-flash"
+        api_key = os.getenv("ZHIPUAI_API_KEY")
+        base_url = "https://open.bigmodel.cn/api/paas/v4/"
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class SiliconFlow(OpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "meta-llama/Meta-Llama-3.1-8B-Instruct"
+        api_key = os.getenv("SILICONFLOW_API_KEY")
+        base_url = "https://api.siliconflow.cn/v1"
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class SiliconFlowNew(ChatOpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "meta-llama/Meta-Llama-3.1-8B-Instruct"
+        api_key = os.getenv("SILICONFLOW_API_KEY")
+        base_url = "https://api.siliconflow.cn/v1"
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class MiMoNew(ChatOpenAIBase):
+    def __init__(self, model_name=None):
+        model_name = model_name or "mimo-v2-flash"
+        api_key = os.getenv("MIMO_API_KEY")
+        base_url = os.getenv("MIMO_API_BASE") or "https://api.xiaomimimo.com/v1"
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class CustomModel(OpenAIBase):
+    def __init__(self, model_info):
+        model_name = model_info["name"]
+        api_key = model_info["api_key"]
+        base_url = model_info["api_base"]
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class CustomModelNew(ChatOpenAIBase):
+    def __init__(self, model_info):
+        model_name = model_info["name"]
+        api_key = model_info["api_key"]
+        base_url = model_info["api_base"]
+        super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
+
+class GeneralResponse:
+    def __init__(self, content):
+        self.content = content
+        self.is_full = False
+
+class Qianfan:
+
+    def __init__(self, model_name="ernie_speed") -> None:
+        import qianfan
+        self.model_name = model_name
+        access_key = os.getenv("QIANFAN_ACCESS_KEY")
+        secret_key = os.getenv("QIANFAN_SECRET_KEY")
+        self.client = qianfan.ChatCompletion(ak=access_key, sk=secret_key)
+
+    def predict(self, message, stream=False):
+        if isinstance(message, str):
+            messages=[{"role": "user", "content": message}]
+        else:
+            messages = message
+
+        if stream:
+            return self._stream_response(messages)
+        else:
+            return self._get_response(messages)
+
+    def _stream_response(self, messages):
+        response = self.client.do(
+            model=self.model_name,
+            messages=messages,
+            stream=True,
+        )
+        for chunk in response:
+            yield GeneralResponse(chunk["body"]["result"])
+
+    def _get_response(self, messages):
+        response = self.client.do(
+            model=self.model_name,
+            messages=messages,
+            stream=False,
+        )
+        return GeneralResponse(response["body"]["result"])
+
+
+
+class DashScope:
+
+    def __init__(self, model_name="qwen-max-latest") -> None:
+        self.model_name = model_name
+        self.api_key= os.getenv("DASHSCOPE_API_KEY")
+
+    def predict(self, message, stream=False):
+        if isinstance(message, str):
+            messages=[{"role": "user", "content": message}]
+        else:
+            messages = message
+
+        if stream:
+            return self._stream_response(messages)
+        else:
+            return self._get_response(messages)
+
+    def _stream_response(self, messages):
+        import dashscope
+        response = dashscope.Generation.call(
+            api_key=self.api_key,
+            model=self.model_name,
+            messages=messages,
+            result_format='message',
+            stream=True,
+        )
+        for chunk in response:
+            message = chunk.output.choices[0].message
+            message.is_full = True
+            yield chunk.output.choices[0].message
+
+    def _get_response(self, messages):
+        import dashscope
+        response = dashscope.Generation.call(
+            api_key=self.api_key,
+            model=self.model_name,
+            messages=messages,
+            result_format='message',
+            stream=False,
+        )
+        return response.output.choices[0].message
+
+
+# if __name__ == "__main__":    #openai的测试接口
+#     # model = SiliconFlow()
+#     # for a in model.predict("你好", stream=True):
+#     #     print(a.content, end="")
+#
+#     model = DeepSeekNew("llama3")
+#     for a in model.predict("你好", stream=True):
+#         print(a.content, end="")
+
+if __name__ == "__main__":    #chatopenai的测试接口
+    # model = SiliconFlow()
+    # for a in model.predict("你好", stream=True):
+    #     print(a.content, end="")
+    import re
+
+    content = ""
+    reasoning_content = ""
+    # 初始化响应内容字典
+    response_content = {
+        'reasoning_content': '',
+        'content': ''
+    }
+
+    model = DeepSeekLocal("deepseek-r1:14b")
+    # model = DeepSeekLocal("deepseek-r1:14b")
+
+    text=""" """
+    for delta in model.predict("1+1=?", stream=True):
+        print(delta,end="")
+
+    # text="""<think>\nFirst, I need to add the numbers 1 and 1 together.\n\nAdding these two numbers results in 2.\n</think>\n\nTo find \\(1 + 1\\), follow these simple steps:\n\n1. **Start with the first number:**  \n   You begin with the number 1.\n\n2. **Add the second number:**  \n   Add another 1 to it.\n\n3. **Calculate the sum:**  \n   \\[\n   1 + 1 = 2\n   \\]\n\n**Final Answer:**\n\\[\n\\boxed{2}\n\\]"""
+    # # # 使用正则表达式提取<think>标签内的内容
+    # think_pattern = r"<think>(.*?)</think>"
+    # think_match = re.search(think_pattern, text, re.DOTALL)
+    # think_content = think_match.group(1).strip() if think_match else ""
+    #
+    # # 使用正则表达式提取<think>标签之后的内容
+    # remaining_pattern = r"</think>(.*)"
+    # remaining_match = re.search(remaining_pattern, text, re.DOTALL)
+    # remaining_content = remaining_match.group(1).strip() if remaining_match else ""
+
+    # # 打印结果
+    # print("Content inside <think>:\n", think_content)
+    # print("Content after <think>:\n", remaining_content)
+
+
+    # for chunk in model.predict("1+1=?", stream=True):
+    #     if chunk.reasoning_content:
+    #         reasoning_content += chunk.choices[0].delta.reasoning_content
+    #     else:
+    #         content += chunk.content
+
+    # print(reasoning_content)
+    # print(content)
+    # model = DeepSeekNew("deepseek-chat")
+    # for delta in model.predict("1+1=?", stream=False):
+    #     print(delta.content, end="")
+
+
+        # think_start = delta[1].find('<think>')
+        # think_end = delta[1].find('</think>')
+        # if think_start != -1 and think_end != -1:
+        #     reasoning_content = delta[1][think_start + len('<think>'): think_end].strip()
+        #     response_content['reasoning_content'] = reasoning_content
+        #
+        # # 提取content
+        # if think_end != -1:
+        #     left_content = delta[1][think_end + len('</think>\n\n'):].strip()
+        #     response_content['content'] = left_content
+        #     content = left_content
+        #
+        # print(response_content)
+    # model = DeepSeek()
+    # for a in model.predict("你是谁？", stream=True):
+    #     print(a.content, end="")

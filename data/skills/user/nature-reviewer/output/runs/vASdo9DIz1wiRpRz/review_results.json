@@ -1,0 +1,18 @@
+{
+  "run_id": "vASdo9DIz1wiRpRz",
+  "innovations": {
+    "cascade_dual_task": {
+      "title": "级联双任务",
+      "description": "创新性地将两个相关任务级联处理，可能提高模型效率与性能"
+    },
+    "perceptual_loss": {
+      "title": "感知损失",
+      "description": "引入感知损失函数，使模型学习更符合人类感知的特征表示"
+    },
+    "error_consistency": {
+      "title": "误差预测一致性",
+      "description": "通过误差预测一致性约束，增强模型的预测稳定性和可靠性"
+    }
+  },
+  "overall_evaluation": "本文提出的三个创新点相互补充，共同构建了一个更强大的模型框架"
+}

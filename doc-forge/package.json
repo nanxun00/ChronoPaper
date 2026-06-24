@@ -1,0 +1,31 @@
+{
+  "name": "doc-forge",
+  "version": "1.0.0",
+  "description": "软件工程文档优化工具链",
+  "type": "module",
+  "scripts": {
+    "render-uml": "node scripts/plantuml-render.js",
+    "gen-image": "node scripts/image-generate.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ljy-negroni/doc-forge.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ljy-negroni/doc-forge/issues"
+  },
+  "homepage": "https://github.com/ljy-negroni/doc-forge#readme",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "global-agent": "^4.1.3",
+    "https-proxy-agent": "^9.0.0",
+    "openai": "^6.39.0",
+    "pdfkit": "^0.18.0",
+    "plantuml-encoder": "^1.4.0",
+    "sharp": "^0.34.5",
+    "undici": "^7.25.0"
+  }
+}

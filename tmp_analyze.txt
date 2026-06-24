@@ -1,0 +1,37 @@
+raw_table_blocks=14
+total_chunks=90
+table_like_chunks=6
+fig_chunks=4
+short_chunks=0
+RAW:
+67|equation|equation|$$
+\mathcal { L } _ { s y n - g } ( x _ { t ^ { \prime } } , x _ { t } ) = \alpha _ { g } | | x _ { 
+73|equation|equation|$$
+\mathcal L _ { s y n - t } ( \hat { x } _ { t ^ { \prime } } , \hat { x } _ { t } ) = \alpha _ { 
+93|equation|equation|$$
+\mathcal { L } _ { c o n } ( y _ { f } , y _ { r } ) = { | | y _ { f } - y _ { r } | | } _ { 2 } 
+119|table|table|<table><tr><td rowspan="2">Input</td><td colspan="4">Loss functions</td><td colspan="4">Synthesis qu
+134|table|table|<table><tr><td>Input</td><td colspan="3">Training loss</td><td colspan="3">Segmentation Performance<
+138|table|table|<table><tr><td>Results Used</td><td>Dice (%)</td><td>ASSD (mm)</td><td>HD95 (mm)</td></tr><tr><td> $
+140|text|text|Table 4 shows a quantitative comparison between these methods. For the existing separated synthesis 
+143|table|table|<table><tr><td>Methods</td><td> $\mathrm { D i c e } ( \% )$ </td><td>ASSD (mm)</td><td>HD95 (mm)</t
+150|table|chart|
+151|table|chart|
+164|table|table|<table><tr><td colspan="4">Loss functions</td><td colspan="4">Synthesis quality</td><td colspan="3">
+169|table|table|<table><tr><td rowspan="2">Input</td><td colspan="3">Training loss</td><td colspan="3">Segmentation 
+171|table|table|<table><tr><td>Methods</td><td>Dice (%)</td><td>ASSD (mm)</td><td>HD95 (mm)</td></tr><tr><td>#Pix2Pi
+172|text|text|Table 7 shows a quantitative comparison between these methods. Our method achieved an average Dice o
+TABLE CHUNKS:
+len=1966 type=text | In Table 1, it can be observed that our tumor-aware synthesis loss $\mathcal { L } _ { s y n - t }$ helps to improve the image quality in terms of SSI
+len=2514 type=table | <table><tr><td rowspan="2">Input</td><td colspan="4">Loss functions</td><td colspan="4">Synthesis quality</td><td colspan="3">Perceptibility</td></tr>
+len=2604 type=table | <table><tr><td>Input</td><td colspan="3">Training loss</td><td colspan="3">Segmentation Performance</td></tr><tr><td></td><td> $\mathcal { L } _ { f i
+len=1886 type=table | <table><tr><td>Methods</td><td> $\mathrm { D i c e } ( \% )$ </td><td>ASSD (mm)</td><td>HD95 (mm)</td></tr><tr><td> $\# \mathrm { P i x } 2 \mathrm { 
+len=1871 type=text | The quantitative evaluation results are shown in Table 5. It can be observed that our tumor-aware synthesis loss ${ \mathcal { L } } _ { s y n \mathrm
+len=3216 type=table | <table><tr><td rowspan="2">Input</td><td colspan="3">Training loss</td><td colspan="3">Segmentation Performance</td></tr><tr><td> $\mathcal { L } _ { 
+FIG CHUNKS:
+len=1964 | 3. Methods
+Fig. 2(d) is an overview of our TISS-Net for end-to-end target modality synthesis and brain tumor segmentation, where only partial modaliti
+len=1125 | Fig. 3. Details of the 2.5D dual-branch network structure used in this work. It includes one encoder and two decoders, where the two highest resolutio
+len=423 | Overall Synthesis Loss: As shown in Fig. 4, our proposed synthesis loss is a combination of the global synthesis loss, the tumor-aware synthesis loss 
+len=1057 | Fig. 4. Illustration of our proposed synthesis loss. Global synthesis loss $\mathcal { L } _ { s y n - g }$ encourages good quality in the entire imag
+SHORT:

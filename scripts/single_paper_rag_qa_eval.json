@@ -1,0 +1,954 @@
+{
+  "meta": {
+    "title": "TISS-net 单文献 RAG 评测问答集",
+    "paper_id": "doi:10.1016_j.neucom.2023.126295",
+    "paper_title": "TISS-net: Brain tumor image synthesis and segmentation using cascaded dual-task networks",
+    "kb_id": "318358647963648",
+    "eval_date": "2026-06-19",
+    "note": "responses.*.answer 为检索上下文注入后由配置 LLM 真实生成；metrics 由同一 LLM 对照标准答案与检索上下文评判。",
+    "links": {
+      "vector": "知识库检索 ON，图数据库 OFF",
+      "graph": "知识库 OFF，图数据库 ON",
+      "both": "知识库检索 ON，图数据库 ON"
+    },
+    "eval_pipeline": "retrieval → LLM answer → LLM judge",
+    "db_name": "k358647963648"
+  },
+  "summary": {
+    "vector": {
+      "count": 3,
+      "answer_correctness_avg": 0.93,
+      "hallucination_rate_avg": 0.0,
+      "answer_relevance_avg": 5.0,
+      "completeness_avg": 0.9
+    },
+    "graph": {
+      "count": 5,
+      "answer_correctness_avg": 0.7,
+      "hallucination_rate_avg": 0.24,
+      "answer_relevance_avg": 4.2,
+      "completeness_avg": 0.66
+    },
+    "both": {
+      "count": 4,
+      "answer_correctness_avg": 0.6,
+      "hallucination_rate_avg": 0.15,
+      "answer_relevance_avg": 4.5,
+      "completeness_avg": 0.57
+    }
+  },
+  "items": [
+    {
+      "id": "V1",
+      "category": "单向量",
+      "primary_link": "vector",
+      "question": "TISS-net 的整体架构是什么？双任务（合成 + 分割）是如何级联的？",
+      "reference_answer": "TISS-net 提出级联双任务网络（cascaded dual-task network），面向脑肿瘤图像合成与分割。整体包含双任务正则化生成器（dual-task regularized generator）与双任务分割器（dual-task segmenter）：在模态缺失时先合成目标模态，再基于合成结果进行肿瘤分割，合成与分割两任务端到端级联训练，实现「先补模态、再分割」的流程。",
+      "responses": {
+        "vector": {
+          "answer": "根据提供的参考资料，TISS-Net 的整体架构主要包括两个核心任务：图像合成与分割，两者以级联方式协同工作。\n\n首先，在合成阶段，模型利用已有的源模态图像生成缺失的目标模态图像。具体来说，网络会生成合成的目标模态图像 \\( \\mathbf{X}_{t'} \\) 以及一个粗分割结果 \\( y_c \\)。\n\n其次，在分割阶段，模型将原始输入图像 \\( x_s \\)、合成的目标模态图像 \\( x_{t'} \\) 以及粗分割结果 \\( y_c \\) 这三者进行拼接（即 \\( \\tilde{x} = x_s \\diamond x_{t'} \\diamond y_c \\)），然后将拼接后的结果送入后续的分割网络。这样一来，分割任务不仅依赖原始可用的模态信息，还能同时利用合成出的缺失模态信息以及粗分割的结果，从而提升最终分割性能。\n\n简而言之，TISS-Net 的级联流程为：先通过合成网络生成缺失模态图像和粗分割，再将这些信息与原始输入拼接后，输入分割网络得到更精细的分割结果。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答准确描述了双任务级联流程（先合成目标模态和粗分割，再拼接后输入分割网络得到精细分割），与标准答案‘先补模态、再分割’的核心要点一致，所有内容均来自检索上下文，无错误或杜撰信息。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029849: 3.3. Multi-Task Segmentor with Error-Prediction Consistency\nWith the synthesized target modality image $ { \\boldsymbol { X } } _ { t ^ { \\prime } }$ and the coarse segmentation $y _ { c }$ , we concatenate them with the original input image $x _ { s }$ and denote the concatenation result as $\\tilde { x } = x _ { s } \\pmb { \\diamond } x _ { t ^ { \\pr"
+        },
+        "graph": {
+          "answer": "TISS-net（Task Interaction and Synergistic Segmentation Network）是一个用于医学图像分割的网络架构，其核心特点是**将图像合成（Synthesis）与分割（Segmentation）两个任务进行级联和协同学习**。下面从整体架构和双任务级联方式两个层面进行说明。\n\n### 1. TISS-net 的整体架构\n\nTISS-net 主要由三个核心模块构成，形成一个**端到端**的训练框架：\n\n- **合成网络（Synthesis Network）**：负责将输入图像（如低质量、缺失模态或有噪声的图像）转换为高质量的“任务导向型”图像。其目标不是生成视觉上完美的图像，而是生成**对分割任务最有帮助**的图像。\n- **分割网络（Segmentation Network）**：基于合成后的图像或原始图像，输出像素级的分割结果（如病变区域、器官边界等）。\n- **任务交互模块（Task Interaction Module）**：连接合成与分割两个任务，实现信息双向流动。这是TISS-net的关键创新点。\n\n整体输入为原始医学图像（CT/MRI等），输出为：\n- 合成图像（辅助输出）\n- 分割掩码（主输出）\n\n### 2. 双任务（合成 + 分割）是如何级联的？\n\nTISS-net 的级联不是简单的“先合成、后分割”串行，而是**双向交互、协同优化**。具体级联方式如下：\n\n#### (1) 前向级联：合成引导分割\n- **流程**：原始图像 → 合成网络 → 合成图像 → 分割网络 → 分割结果。\n- **作用**：合成网络通过图像增强、模态校正、噪声去除等方式，为分割网络提供更清晰、更一致的输入，从而提升分割精度。\n- **关键设计**：合成网络的损失函数不仅包含图像重建损失（如L1、感知损失），还包含**分割引导损失**，即合成图像需要“有利于分割网络准确预测”。\n\n#### (2) 反向级联：分割指导合成\n- **流程**：分割网络输出的特征或预测结果 → 反馈到合成网络，指导其生成更具判别性的图像。\n- **实现方式**：\n  - **特征对齐**：分割网络的高层语义特征被传入合成网络，强制合成网络关注与分割相关的区域（如病灶边界、器官边缘）。\n  - **梯度反向传播**：分割网络的梯度会直接更新合成网络的参数，使得合成网络学会“自动忽略不相关的图像细节，强化分割有用的结构信息”。\n\n#### (3) 任务交互模块的具体机制\n通常包括：\n- **注意力互馈**：合成网络和分割网络的中间特征图相互进行注意力加权，让一个任务的特征帮助另一个任务聚焦关键区域。\n- **共享编码器**（部分变体）：早期层共享特征提取器，后期分叉为合成和分割两条路径，再通过跨连接交互。\n- **协同损失**：总损失 = 分割损失（如Dice Loss）+ 合成损失（如L1 Loss）+ **交互一致性损失**（如强制合成图像的梯度与分割边界一致）。\n\n### 3. 级联带来的核心优势\n\n- **双任务互惠**：合成任务帮助分割抑制噪声/补全缺失信息；分割任务帮助合成任务只生成对分割重要的结构，避免生成无关甚至误导性细节。\n- **缓解数据短缺**：在仅有部分标注数据时，合成任务可以作为辅助监督信号，提升分割泛化能力。\n- **领域适应能力**：在跨模态（如MRI→CT）或低质量图像场景下，合成网络可进行风格迁移，使分割网络适应不同数据分布。\n\n### 总结\n\nTISS-net 采用 **“合成辅助分割，分割指导合成”** 的双向级联架构，通过任务交互模块实现特征与梯度的双向流动，最终让两个任务在训练中相互加强。这种级联方式比简单串行更有效，因为合成网络不是单独优化图像质量，而是被强约束为生成对分割“有用”的图像。",
+          "metrics": {
+            "answer_correctness": 0,
+            "hallucination_rate": 1,
+            "answer_relevance": 1,
+            "completeness": 0,
+            "judge_reason": "系统回答完全虚构了TISS-net的架构细节（如任务交互模块、共享编码器等），与标准答案和检索上下文中‘级联双任务网络’、‘双任务正则化生成器与双任务分割器’等关键事实严重不符，属于完全幻觉。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-Net"
+            ]
+          },
+          "context_preview": "TISS-net 的整体架构是什么？双任务（合成 + 分割）是如何级联的？"
+        },
+        "both": {
+          "answer": "根据查询到的资料，TISS-Net（脑肿瘤图像合成与分割网络）基于级联的双任务架构设计，用于端到端的训练和推理。其整体架构中，合成任务和分割任务被有机地级联在一起：首先，通过合成任务生成缺失模态的目标模态图像，在此过程中，引入了一个粗分割作为辅助任务来正则化合成任务，从而实现了“分割感知”的目标模态图像合成；然后，利用生成的分割友好图像以及原始可用模态，共同输入到分割网络中进行最终的分割。这种级联方式使得合成和分割模型能够协同学习，并借助多种新型高层次正则化策略提升整体性能。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答准确描述了TISS-Net的级联双任务架构，与标准答案高度一致，未包含虚构信息，完整覆盖了关键要点。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601026600963: <table><tr><td rowspan=\"2\">Input</td><td colspan=\"3\">Training loss</td><td colspan=\"3\">Segmentation Performance</td></tr><tr><td> $\\mathcal { L } _ { f i n e }$ </td><td> $\\mathcal { L } _ { e r r }$ </td><td> ${ \\mathcal { L } } _ { c o n }$ </td><td>Dice (%)</td><td>ASSD (mm)</td><td>HD95 (mm)</td></tr><tr><td>$X\\}$</td><td></td><td></td><td></td>"
+        }
+      }
+    },
+    {
+      "id": "V2",
+      "category": "单向量",
+      "primary_link": "vector",
+      "question": "为什么需要同时做图像合成和分割？论文解决了什么问题？",
+      "reference_answer": "临床脑肿瘤 MRI 常为多模态（T1、T2、FLAIR 等），实际采集时部分模态可能缺失；仅做分割无法利用不完整模态信息，仅做合成又不能直接服务临床分割需求。TISS-net 同时解决模态缺失场景下的目标模态合成与脑肿瘤分割，使模型在模态不全时仍能完成可靠分割。",
+      "responses": {
+        "vector": {
+          "answer": "根据查询到的资料，该论文之所以需要同时做图像合成和分割，是因为在测试时只有部分模态的医学图像可用，而真实的目标模态图像无法获取。论文提出了一种端到端的TISS-Net框架，通过一个双任务生成器同时获得合成的目标模态图像和粗分割结果，再结合一个多任务分割器，利用合成模态和粗分割信息来得到更精细的分割结果。这样就解决了在缺失模态条件下，如何依然能获得高质量分割性能的问题。论文的核心贡献在于：一方面，通过感知损失让合成图像与真实目标模态图像在语义特征上保持一致，从而提升分割效果；另一方面，生成器和分割器通过端到端训练互相适应，使得合成与分割任务相互促进。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答与标准答案事实一致，完整覆盖了模态缺失场景下同时合成与分割的核心问题及解决方案，且未引入检索上下文之外的信息。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029847: Perceptibility Regularization: As good low-level synthesis quality measurement such as SSIM and PSNR may not necessarily lead to a high segmentation performance due to the high-level semantic gap between $\\pmb { \\chi } _ { t ^ { \\prime } }$ and $x _ { t }$ [32], we introduce a perceptibility loss to encourage a segmentation model trained with real targetmodality images to keep high performance on the synthesized images with parameters freezed, which makes synthesized and real target-modality images have similar semantic features. Let $S _ { p }$ denote a segmentation model pre-trained with real targetmodality images and freezed during training of $G ,$ we aim to generate $\\boldsymbol { \\chi } _ { t ^ { \\prime } }$ so that $S _ { p }$ performs well on x<sub>t0</sub> . In this paper, $S _ { \n318601022029849: 3.3. Multi-Task Segmentor with Error-Prediction Consistency\nWith the synthesized target modality image $ { \\boldsymbol { X } } _ { t ^ { \\prime } }$ and the coarse segmentation $y _ { c }$ , we concatenate them with the original input image $x _ { s }$ and denote the concatenation result as $\\tilde { x } = x _ { s } \\pmb { \\diamond } x _ { t ^ { \\pr"
+        },
+        "graph": {
+          "answer": "这是一个很核心的问题。简单来说，**图像合成**（生成）负责“创造”数据，而**图像分割**负责“理解”数据。将两者结合，不是为了做两个任务，而是为了解决一个核心的**因果困境**——即“鸡生蛋还是蛋生鸡”的问题。\n\n下面我来详细拆解这个问题。\n\n### 1. 为什么需要同时做图像合成和分割？\n\n单独做合成或分割都有其局限性。同时做，是为了形成一个**正向循环 (Virtuous Cycle)**：\n\n-   **如果只做分割（缺少合成）：**\n    -   **痛点：** 需要海量、高质量、带有像素级标注的数据集。手动标注一张图要几十分钟甚至几小时（尤其是医疗影像、自动驾驶场景）。数据是个巨大瓶颈。\n    -   **局限性：** 模型对未见过的、稀有或长尾的场景（例如，雪山上的黑色轿车）泛化能力极差。\n\n-   **如果只做合成（缺少分割）：**\n    -   **痛点：** 即使是最牛的生成模型（如扩散模型），生成一张“逼真”的图很容易，但很难**精确控制**生成的**内容、布局、形状、大小和类别**。\n    -   **局限性：** 你没办法说“帮我生成一张图，左边是一把红色的椅子，右边是一张黄色桌子，桌子和椅子的位置不能重叠”。没有分割信息的引导，生成是混乱和难以控制的。\n\n**所以，同时做的核心价值在于互相赋能：**\n\n1.  **分割赋能合成：** 分割图（语义标签、边缘图、关键点图）为生成过程提供了**精确的结构控制**。作者可以根据一个简单的涂鸦（分割图）来引导生成模型，要求它“在红色区域画一个苹果，在蓝色区域画一个香蕉”。这解决了图像合成中**可控性**（Controllability）的难题。\n2.  **合成赋能分割：** 生成的图像天然带着对应的分割标签（因为这个标签就是输入的条件）。因此，我们可以**自动化地生成无限的、带标注的数据集**。这直接解决了分割任务中**数据标注**的瓶颈，并且可以轻松创建罕见场景的数据。\n\n### 2. 论文具体解决了什么问题？\n\n这里的“论文”通常指的是像 **GAN-based (如 GauGAN, SPADE, OASIS)** 或 **Diffusion-based (如 ControlNet, Semantic Diffusion Models)** 的相关工作。它们解决的核心问题是：\n\n#### 核心问题一：**可控图像生成的结构控制问题（语义到像素）**\n\n-   **旧有方法：** 文本到图像（Text-to-Image）模型无法准确理解空间关系。输入“一个蓝色的方块在红色的方块上面”，结果可能杂乱无章。\n-   **论文思路：** 接受一张语义分割图（Semantic Map）作为输入。\n    -   *例子：* 用户画一个涂鸦——“天空（蓝色色块）”在顶部，“草地（绿色色块）”在底部，“树（棕色方块）”在中间。\n    -   **论文解决：** 模型能**严格尊重**这个布局，生成具有该精确几何结构、但极度逼真的照片。这是解决**布局对齐**问题。\n\n#### 核心问题二：**语义分割的数据缺乏和泛化瓶颈（像素到语义）**\n\n-   **旧有方法：** 在小规模数据集上训练的分割模型，换到不同天气、不同城市、不同光照环境下，性能断崖式下跌。\n-   **论文思路：** 生成器和分割器（判别器）进行博弈。\n    -   **生成器**的任务：不仅要生成像真的图，还要生成能**骗过**分割器的图。如果分割器能正确识别出“这块区域是天空”，那么生成器生成的天空区域就足够好。\n    -   **分割器**的任务：接受真实图像和生成图像，学习如何将其完美分割。同时，它也在不知不觉中从巨量的、从未见过的生成数据中学习到了更鲁棒的特征。\n    -   **论文解决：** 通过这种博弈，**提升了分割器在域迁移（Domain Adaptation）上的能力**。因为生成器可以随时改变风格（晴天、暴雨、夜晚），分割器被迫学会了不依赖于特定纹理或光照的、更本质的**形状和语义信息**。\n\n### 总结：它解决了哪个最高级的问题？\n\n**论文最终解决的是“语义一致性”（Semantic Consistency）和“双向映射”的难题。**\n\n-   **正向映射（合成）：** 从语义标签 $ \\rightarrow $ 逼真图像。**解决了：** 如何在像素层面精确实现布局控制。\n-   **反向映射（分割）：** 从真实图像 $ \\rightarrow $ 语义标签。**解决了：** 如何在数据稀缺的情况下，训练出强大且鲁棒的分割模型。\n\n**一句话总结：** 同时做合成和分割，本质上是**用结构约束内容（合成），用内容增强结构（分割）**。论文解决的终极问题是：**如何在同一框架下，训练一个既能随心所欲“画”出指定场景的画画大师（合成器），又能训练出一个无论场景怎么变都能一眼看穿本质的学霸裁判（分割器）。**\n\n这样一来，模型不再是僵硬的工具，而是一个能够**自我生成训练数据、自我校验、自我进化**的循环系统。",
+          "metrics": {
+            "answer_correctness": 0,
+            "hallucination_rate": 1,
+            "answer_relevance": 1,
+            "completeness": 0,
+            "judge_reason": "系统回答完全偏离了标准答案中关于临床脑肿瘤MRI多模态缺失的具体问题，虚构了图像合成与分割的‘因果困境’、‘可控性’等通用讨论，所有内容无法从给定的检索上下文中推出，属于严重幻觉。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "为什么需要同时做图像合成和分割？论文解决了什么问题？"
+        },
+        "both": {
+          "answer": "根据参考资料，同时进行图像合成和分割是为了弥补单一模态在分割任务中的信息不足。具体来说，论文提出了一种多任务分割器，它利用合成出的缺失模态图像和粗分割结果，与原始输入图像拼接起来，再输入分割网络。这样做的目的是让网络能够同时利用可获取模态、合成缺失模态以及粗分割的信息，从而获得比仅使用可用模态进行分割更好的结果。\n\n论文解决的核心问题是：仅仅依赖可获得的模态进行医学图像分割，效果往往不够理想。通过引入图像合成技术生成缺失的模态数据，并结合粗分割结果，能够有效提升分割性能。此外，论文还注意到仅仅关注低层合成质量（如SSIM、PSNR）并不一定能带来高的分割性能，因为存在高层语义上的差距。因此，他们引入了感知正则化（Perceptibility Regularization）损失，鼓励用真实目标模态图像预训练的分割模型，在合成图像上也能保持高性能，从而使合成图像与真实目标模态图像具有相似的语义特征。这样，通过同时优化图像合成和分割任务，并加入语义层面的约束，最终在分割性能（如Dice系数、ASSD、HD95等指标）上取得了更好的结果。",
+          "metrics": {
+            "answer_correctness": 0.8,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.7,
+            "judge_reason": "系统回答准确描述了同时合成和分割的技术动机与论文方法，但未提及临床多模态缺失的具体场景（如脑肿瘤MRI的T1/T2/FLAIR）和TISS-net这一具体模型名称，部分要点覆盖不全。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029849: 3.3. Multi-Task Segmentor with Error-Prediction Consistency\nWith the synthesized target modality image $ { \\boldsymbol { X } } _ { t ^ { \\prime } }$ and the coarse segmentation $y _ { c }$ , we concatenate them with the original input image $x _ { s }$ and denote the concatenation result as $\\tilde { x } = x _ { s } \\pmb { \\diamond } x _ { t ^ { \\prime } } \\pmb { \\diamond } y _ { c }$ Then \\~x is sent to the following segmentation network that can leverage the information from the synthesized missing modality and coarse segmentation to obtain better segmentation results than just using the available modalities for segmentation.\n318601022029843: Global Synthesis Loss: The global synthesis loss in typical image synthesis methods [15] is formulated as a combination of an L1 term and an adversarial term:\n\n$$\n\\mathcal { L } _ { s y n - g } ( x _ { t ^ { \\prime } } , x _ { t } ) = \\alpha _ { g } | | x _ { t ^ { \\prime } } - x _ { t } | | _ { 1 } + \\mathcal { L } _ { G } ( x _ { t ^ { \\prime } } , D _ { g } )\\tag{ð<sup>1</sup>Þ}\n$$\n\nwhere $\\alpha _ { g }$ is weight for the L1 term. $D _ { g }$ is a global discriminator implemented by PatchGANs [15] to recogn"
+        }
+      }
+    },
+    {
+      "id": "V3",
+      "category": "单向量",
+      "primary_link": "vector",
+      "question": "论文实验部分用了哪些成像模态？训练/测试大致怎么设置？",
+      "reference_answer": "实验涉及 T1、T2、FLAIR 等多模态 MRI；在 BraTS（及 BraTS 2020 等）脑肿瘤 benchmark 上评估，采用标准训练/验证/测试划分，对比不同模态组合与缺失模态设定下的合成与分割性能。",
+      "responses": {
+        "vector": {
+          "answer": "根据查询到的资料，论文实验中用到的成像模态包括T1、ceT1（增强T1）和T2。为了验证多模态输入的有效性，还进行了仅使用T2图像的对比实验，结果显示去除T1和ceT1后，平均Dice值从86.09%下降至83.71%。\n\n训练和测试的设置方面：实验使用PyTorch框架，在Ubuntu 20.04系统上运行，配备Intel i9-10940X CPU和NVIDIA GeForce RTX 2080Ti GPU。生成器G和分割网络S均采用基于2.5D U-Net的双分支结构，判别器Dg和Dt则使用16个70×70的PatchGAN。对于胶质瘤和VS分割任务，批大小设为2，图像块大小为16×128×128。优化器采用Adam，生成器、分割网络和判别器的初始学习率均为1×10⁻⁴。在与已有方法的对比中，分别采用了分离式（先合成再分割，如Pix2pix和PGAN）和端到端式（如Wang等人、PSCGAN、UAGAN）的多种方法进行比较。",
+          "metrics": {
+            "answer_correctness": 0.8,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.7,
+            "judge_reason": "回答正确指出了T1、ceT1、T2三种成像模态，并详细描述了训练/测试设置（框架、硬件、网络结构、超参数、对比方法），但标准答案还涉及FLAIR模态和BraTS基准数据集的名称，系统回答未提及此关键点。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029865: In addition, to demonstrate the effectiveness of combining all the three available modalities as input, we conducted an experiment with only using T2 images as input. The results in the last row of Table 1 shows that removing T1 and ceT1 from the network input led the average Dice value to drop from 86.09% to 83.71%, which shows the importance of le"
+        },
+        "graph": {
+          "answer": "根据查询到的资料，论文实验部分使用了四种成像模态，分别是T1、ceT1（增强T1）、T2和FLAIR。训练和测试的设置是基于Multimodal Brain Tumor Segmentation Challenge (BraTS) 2020训练集进行的，该数据集包含369名患者的数据，所有模态的MRI图像已经过空间对齐。资料中提及了训练集的使用，但未明确说明训练集与测试集的具体划分比例或方式。",
+          "metrics": {
+            "answer_correctness": 0.9,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.8,
+            "judge_reason": "系统回答正确指出了四种成像模态（T1、ceT1、T2、FLAIR）及使用了BraTS 2020训练集，与标准答案基本一致；但未提及标准答案中的'标准训练/验证/测试划分'以及'不同模态组合与缺失模态设定下的合成与分割性能'等关键要点，因此完整性略有不足，但整体事实正确、无幻觉、切题。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 10,
+            "graph_edges": 15,
+            "graph_chunks": 1,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【图谱补充 · 关系】\nTISS-net: Brain tumor image synthesis and segmentation using cas...和brats的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和multimodalbraintumorsegmentationchallenge(brats)2020trainingset的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和vsdataset的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和brats2020的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和bratsdataset的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和flair的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和cet1的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和t1的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和t2的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和brats的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和multimodalbraintumorsegmentationchallenge(brats)2020trainingset的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentati"
+        },
+        "both": {
+          "answer": "根据查询到的资料，该论文的实验主要使用了多模态脑肿瘤分割挑战（BraTS）2020训练集的数据。涉及的成像模态包括T1、ceT1（对比增强T1）、T2和FLAIR，共四种3D MRI模态。实验中，为了验证所有模态共同输入的有效性，还进行了仅使用T2图像的对比实验。\n\n训练/测试方面，实验基于Ubuntu 20.04系统，使用PyTorch框架，硬件配置为Intel i9-10940X CPU和NVIDIA GeForce RTX 2080Ti GPU。网络采用双分支结构，基于2.5D U-Net骨干网络，生成器和分割器使用该结构，判别器则基于16个70×70的PatchGAN。批大小设置为2，图像块大小为16×128×128。优化器选用Adam，学习率初始化为1×10^(-4)。在对比实验中，也采用了Pix2pix和PGAN等现有方法进行合成与分割的对比。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答准确涵盖了T1、ceT1、T2、FLAIR四种模态，以及训练/测试设置（硬件、网络结构、批大小、优化器等），与标准答案一致且无幻觉。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 10,
+            "graph_edges": 15,
+            "graph_chunks": 1,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029865: In addition, to demonstrate the effectiveness of combining all the three available modalities as input, we conducted an experiment with only using T2 images as input. The results in the last row of Table 1 shows that removing T1 and ceT1 from the network input led the average Dice value to drop from 86.09% to 83.71%, which shows the importance of le"
+        }
+      }
+    },
+    {
+      "id": "G1",
+      "category": "单图谱",
+      "primary_link": "graph",
+      "question": "TISS-net 使用了哪些数据集？",
+      "reference_answer": "图谱 USE_DATASET 关系显示 TISS-net 论文使用：t1、t2、flair、brats / bratsdataset、brats2020、vsdataset 等；均为脑肿瘤分割与图像合成相关数据。",
+      "responses": {
+        "vector": {
+          "answer": "根据查询到的资料，文中提到TISS-Net在两个应用场景下进行了验证：一、使用T1、T2和ceT1图像合成FLAIR图像，用于全胶质瘤（glioma）分割；二、使用T2 MR图像合成ceT1图像，用于前庭神经鞘瘤（VS）分割。资料中明确提及了“胶质瘤”和“VS”这两种肿瘤的分割任务，并给出了具体的输入模态，但并未直接说明所使用的具体数据集名称（如公开数据集名称或来源）。因此，仅从现有资料无法确定TISS-Net具体使用了哪些数据集。",
+          "metrics": {
+            "answer_correctness": 0,
+            "hallucination_rate": 0,
+            "answer_relevance": 4.0,
+            "completeness": 0.2,
+            "judge_reason": "系统回答基于检索上下文准确描述了所用模态和应用任务，但未提及标准答案中的具体数据集名称（如BraTS、VSdataset等），所以事实正确性低且不完整，但回答切题且无幻觉。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022029862: 4.2.2. Ablation Study"
+        },
+        "graph": {
+          "answer": "根据查询到的资料，TISS-net 论文使用了 Multimodal Brain Tumor Segmentation Challenge (BraTS) 2020 training set 作为数据集。此外，参考资料中多次提到 TISS-net 与 brats、brats2020、bratsdataset、vsdataset 以及具体的 MRI 模态（如 FLAIR、ceT1、T1、T2）之间的关系均为“使用数据集”，结合原文片段，该数据集包含 T1、ceT1、T2 和 FLAIR 四种模态的 3D MRI 图像，共 369 名患者的影像数据。因此，TISS-net 主要使用 BraTS 2020 训练集（及其包含的各个模态数据）作为实验数据集。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答准确说明了TISS-net使用了BraTS 2020训练集及其包含的T1、ceT1、T2、FLAIR四种模态，并提及了brats、brats2020、bratsdataset、vsdataset等关联，与标准答案和检索上下文一致，无幻觉，完全切题且覆盖关键要点。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 10,
+            "graph_edges": 9,
+            "graph_chunks": 1,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【图谱补充 · 关系】\nTISS-net: Brain tumor image synthesis and segmentation using cas...和brats的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和multimodalbraintumorsegmentationchallenge(brats)2020trainingset的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和vsdataset的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和brats2020的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和bratsdataset的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和flair的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和cet1的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和t1的关系是使用数据集（论文使用数据集）\nTISS-net: Brain tumor image synthesis and segmentation using cas...和t2的关系是使用数据集（论文使用数据集）\n\n【图谱补充 · 原文片段】\n318601022029861: 4.2. Glioma Segmentation from Multimodal MR Images with Absence of FLAIR\n4.2.1. Data\nWe used the Multimodal Brain Tumor Segmentation Challenge (BraTS) 2020 training set for experiments [22]. In this dataset, spatially aligned four 3D MRI modalities (T1, ceT1, T2"
+        },
+        "both": {
+          "answer": "根据参考资料，TISS-net 主要使用了两个数据集：一是 Multimodal Brain Tumor Segmentation Challenge (BraTS) 2020 训练集，用于神经胶质瘤分割实验；二是 VS 数据集（vestibular schwannoma dataset，即前庭神经鞘瘤数据集），用于 VS 肿瘤分割实验。具体来说，BraTS 2020 数据集包含了 369 名患者的四种模态 MRI 图像（T1、ceT1、T2 和 FLAIR），而 VS 数据集则用于基于 T2 图像合成 ceT1 图像并进行肿瘤分割的任务。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.9,
+            "judge_reason": "系统回答准确指出了BraTS 2020和VS数据集两种主要数据来源，并详细说明了模态组成，与标准答案和检索上下文一致；但未明确列出‘t1、t2、flair、bratsdataset、brats2020、vsdataset’等标签，因此completeness扣0.1。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 10,
+            "graph_edges": 9,
+            "graph_chunks": 1,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022029862: 4.2.2. Ablation Study"
+        }
+      }
+    },
+    {
+      "id": "G2",
+      "category": "单图谱",
+      "primary_link": "graph",
+      "question": "TISS-net 用哪些指标评测？",
+      "reference_answer": "主要评测指标：Dice 系数（分割重叠，公式 2|A∩B|/(|A|+|B|)）用于分割任务；SSIM / structural similarity index（结构相似性）用于合成图像质量评估。对应图谱 EVALUATE_BY 关系连至 dice、structuralsimilarityindex 节点。",
+      "responses": {
+        "vector": {
+          "answer": "根据参考资料，TISS-Net 的评测指标包括：\n\n低层合成质量方面，使用峰值信噪比（PSNR）和结构相似性指数（SSIM），这两个指标分别从全局（整个图像区域）和局部（真实肿瘤周围区域）进行计算。高层合成质量方面，通过感知性（perceptability）来评估，即利用分割网络在合成图像上的表现衡量合成图像与真实目标模态图像之间的语义相似度。此外，对于分割性能的定量评估，报告了 Dice 系数和平均对称表面距离（ASSD）。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "回答准确列出了PSNR、SSIM、perceptability、Dice和ASSD等指标，与标准答案一致，且无虚构内容，完全切题。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029859: To evaluate low-level synthesis quality, we used Peak Signal to Noise Ratio (PSNR) and Structural Similarity Index (SSIM). These two metrics were calculated both globally (i.e., in the entire image region) and locally (i.e., around the ground truth tumor). In addition, we evaluated high-level synthesis quality based on perceptability, which was measured by the performance of $S _ { p }$ on synthesized images. A high perceptability indicates a high semantic similarity between synthesized and real target-modality images. For quantitative evaluation of segmentation performance, we reported Dice, Average Symmetric Surface Distance (ASSD)\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a wh"
+        },
+        "graph": {
+          "answer": "TISS-net（Task-oriented Interaction Scene Segmentation Network）通常用于评测其在**任务导向的交互场景分割**中的性能。根据其研究目标和任务特性，评测指标主要包含以下几类：\n\n1.  **语义分割指标**：由于TISS-net的核心是对场景中的物体进行分割，因此标准的语义分割指标是必需的。\n    -   **mIoU（平均交并比）**：最核心的指标，计算每个类别预测分割与真实分割的交集与并集之比，然后取所有类别的平均值。\n    -   **Acc（像素/类别准确率）**：包括全局准确率和各类别准确率。\n    -   **mAcc（平均准确率）**：所有类别准确率的平均值。\n\n2.  **任务导向交互的特定指标**：为了衡量模型在理解“任务与物体交互关系”方面的表现，可能会引入额外的评估维度。\n    -   **交互状态分割准确率**：在交互发生前后，对特定交互区域（如手与物体的接触点、工具与物体的接触面）的分割精度。\n    -   **交互物体检测率**：正确识别并分割出正在被交互的物体的比例。\n    -   **关系预测准确率**：如果模型同时预测物体之间的交互关系（如“手拿着杯子”、“刀切苹果”），会使用该指标评测关系分类的准确性。\n\n3.  **时序一致性指标（如果是视频输入）**：如果TISS-net处理的是视频流，会评测分割结果在时间上的稳定性。\n    -   **时间一致性误差**：相邻帧之间分割结果的变化是否平滑，避免闪烁或突变。\n\n4.  **效率指标**：考虑到机器人或交互应用的实时性需求。\n    -   **FPS（每秒帧数）**：模型的推理速度。\n\n**补充说明：**\n由于“TISS-net”并非像“UNet”或“ResNet”那样广泛使用的标准名词，它很可能出自某篇针对**人机交互场景理解**的特定论文。具体的指标名称和计算方式会在该论文的实验部分明确列出。\n\n如果你能提供该研究的论文标题、作者或发表年份，我可以帮你查找更精确的评测指标和数值结果。",
+          "metrics": {
+            "answer_correctness": 0,
+            "hallucination_rate": 0.9,
+            "answer_relevance": 3.0,
+            "completeness": 0,
+            "judge_reason": "系统回答完全未提及标准答案中的Dice系数和SSIM，而是虚构了mIoU、mAcc、交互状态分割准确率等不相关的指标，大部分内容属于幻觉"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net",
+              "指标"
+            ]
+          },
+          "context_preview": "TISS-net 用哪些指标评测？"
+        },
+        "both": {
+          "answer": "根据参考资料，TISS-Net 的评测使用了多种指标。对于低层合成质量，采用了峰值信噪比（PSNR）和结构相似性指数（SSIM），并分别在全局图像区域和肿瘤局部区域进行计算。对于高层合成质量，则基于可感知性进行评估，通过分割网络在合成图像上的表现来衡量语义相似度。此外，对于分割性能的定量评估，使用了Dice系数和平均对称表面距离（ASSD）这两个指标。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答完整、准确地列出了TISS-Net使用的全部评测指标（PSNR、SSIM、感知性、Dice、ASSD），与标准答案一致，且无任何错误或无关信息。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net",
+              "指标"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029859: To evaluate low-level synthesis quality, we used Peak Signal to Noise Ratio (PSNR) and Structural Similarity Index (SSIM). These two metrics were calculated both globally (i.e., in the entire image region) and locally (i.e., around the ground truth tumor). In addition, we evaluated high-level synthesis quality based on perceptability, which was measured by the performance of $S _ { p }$ on synthesized images. A high perceptability indicates a high semantic similarity between synthesized and real target-modality images. For quantitative evaluation of segmentation performance, we reported Dice, Average Symmetric Surface Distance (ASSD)\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a wh"
+        }
+      }
+    },
+    {
+      "id": "G3",
+      "category": "单图谱",
+      "primary_link": "graph",
+      "question": "TISS-net 模型的改进关系是什么？它改进自哪些模型？",
+      "reference_answer": "通过 IMPROVE_FROM 时序链描述模型演进：前序 Model 节点 → tissnet(2023)。chain_summary 给出如「模型A(年份) → 模型B(年份) → tissnet(2023)」的改进路径，说明 TISS-net 在哪些前人模型基础上改进。",
+      "responses": {
+        "vector": {
+          "answer": "根据参考资料，TISS-Net（肿瘤图像合成与分割网络）是基于一个级联双任务架构设计的，其改进关系主要体现在以下几个方面：\n\n一、TISS-Net 的核心改进在于它将目标模态图像合成与脑肿瘤分割任务进行端到端的联合学习。模型中的生成器（G）和分割器（S）都采用了基于2.5D U-Net骨架的双分支网络结构，并通过共享编码器实现不同任务之间的相互正则化。\n\n二、在合成任务方面，TISS-Net 引入了分割感知的目标模态图像合成策略。它将粗分割作为辅助任务来正则化合成过程，并设计了肿瘤感知的合成损失与感知性正则化，以生成更有利于分割的合成图像。\n\n三、在分割任务方面，模型提出了一种新的误差预测一致性损失，用于改进分割性能。分割器以粗分割、输入模态和合成模态作为输入，一个分支直接预测精细分割，另一个分支则预测粗分割中的误差以进行修正。\n\n至于它改进自哪些具体模型，参考资料明确提到，其生成器和分割器均基于2.5D U-Net的骨架结构，而判别器（$D_g$ 和 $D_t$）则基于16×70×70的PatchGAN。因此，TISS-Net 主要改进自2.5D U-Net和PatchGAN等基础网络结构，通过级联双任务架构和多种高级正则化策略实现了合成与分割的协同优化。",
+          "metrics": {
+            "answer_correctness": 0,
+            "hallucination_rate": 0.2,
+            "answer_relevance": 3.0,
+            "completeness": 0.2,
+            "judge_reason": "回答虽然描述了TISS-Net的结构改进，但未能按照标准答案要求明确给出改进自哪些具体模型的时序链（如2.5D U-Net、PatchGAN），且声称改进自“2.5D U-Net和PatchGAN”等基础网络，但标准答案要求的是模型演进路径，因此事实部分不完全匹配；存在一定推测性陈述但未严重偏离上下文。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022091267: 4.3.2. Ablation Study"
+        },
+        "graph": {
+          "answer": "根据查询到的资料，TISS-Net 模型改进自多个模型，其具体的改进关系如下：\n\n一、TISS-Net 改进自 25dunet、pix2pix、pgan、pscgan、uagan、wangetal 以及 tissnet 本身（后者改进自前者）。\n\n二、在技术实现上，TISS-Net 使用了 2.5D U-Net 作为骨干网络，并在此基础上增加了另一个解码器，形成了具有双分支结构的网络，即 2.5D DB-Net，从而实现了目标模态合成与脑肿瘤分割的双任务学习。",
+          "metrics": {
+            "answer_correctness": 0.5,
+            "hallucination_rate": 0.3,
+            "answer_relevance": 3.0,
+            "completeness": 0.5,
+            "judge_reason": "系统回答提到了TISS-Net改进自多个模型（如25dunet、pix2pix等），与标准答案的IMPROVE_FROM时序链一致，但错误地将'tissnet本身'列为改进自的对象（模型不能改进自自身），属于幻觉；另外回答包含了技术实现细节（2.5D U-Net、双分支结构），这部分虽来自上下文但并非问题核心，部分偏离用户问题对'改进关系'的聚焦；整体覆盖了关键改进点但不完整。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 7,
+            "graph_edges": 6,
+            "graph_chunks": 5,
+            "has_chain": true,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【图谱补充 · 模型时序链】\n25dunet(2023) → pix2pix(2023) → pgan(2023) → pscgan(2023) → uagan(2023) → wangetal(2023) → tissnet(2023)\n\n【图谱补充 · 关系】\ntissnet和25dunet的关系是改进自（模型演进：后者改进自前者）\ntissnet和pix2pix的关系是改进自（模型演进：后者改进自前者）\ntissnet和pgan的关系是改进自（模型演进：后者改进自前者）\ntissnet和wangetal的关系是改进自（模型演进：后者改进自前者）\ntissnet和pscgan的关系是改进自（模型演进：后者改进自前者）\ntissnet和uagan的关系是改进自（模型演进：后者改进自前者）\n\n【图谱补充 · 原文片段】\n318601022029839: 3. Methods\nFig. 2(d) is an overview of our TISS-Net for end-to-end target modality synthesis and brain tumor segmentation, where only partial modalities are given and the real target modality is not available at test time. Both the target-modality generator and brain tumor segmentor have two branches with a shared encoder for different tasks that can regularize each other. The dual-task generator obtains a synthesized target-modality image and a coarse segmentation simultaneously, and it is further regularized by a tumoraware perceptibility loss. The segmentor takes the coarse segmentation, th\n318601022029840: Theoretically, G can be implemented by any image-in and image-out CNNs. In this work, we use a 2.5D U-Net [27] as the backbone for the glioma and VS segmentation from 3D volumes due to the following r"
+        },
+        "both": {
+          "answer": "根据查询到的资料，TISS-Net 模型改进自多个模型，具体演进关系为：25dunet → pix2pix → pgan → pscgan → uagan → wangetal → tissnet。也就是说，TISS-Net 是在 wangetal 模型的基础上进一步改进而来，而 wangetal 又依次改进自 uagan、pscgan、pgan、pix2pix 和 25dunet。在具体结构上，TISS-Net 使用了基于 2.5D U-Net 的骨干网络，并在此基础上加入了双分支网络结构（2.5D DB-Net）来实现合成与分割的协同学习。",
+          "metrics": {
+            "answer_correctness": 0.6,
+            "hallucination_rate": 0.2,
+            "answer_relevance": 4.0,
+            "completeness": 0.5,
+            "judge_reason": "系统回答正确指出了TISS-Net是在2.5D U-Net骨干上加入双分支结构改进而来，但对模型演进链的描述存在明显错误：图谱显示所有模型（25dunet、pix2pix等）都是TISS-Net的直接前序（平行改进关系），而非串联的链条；且将'25dunet'误作'25dunet'（原文为2.5D U-Net），另外'pgan'应为'pGAN'等小错误。整体核心事实基本正确但包含低级事实错误。 completeness部分遗漏了标准答案要求的'模型演进关系是平行而非串联'这一关键要点。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 7,
+            "graph_edges": 6,
+            "graph_chunks": 5,
+            "has_chain": true,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022091267: 4.3.2. Ablation Study"
+        }
+      }
+    },
+    {
+      "id": "G4",
+      "category": "单图谱",
+      "primary_link": "graph",
+      "question": "脑肿瘤分割领域有哪些 SOTA 模型？",
+      "reference_answer": "按 task_domain「脑肿瘤分割与图像合成」聚合 SOTA：包括 tissnet 及库内其他 Model（约 19 个），sota_summary 列出各模型、提出论文、关联数据集与评测指标。",
+      "responses": {
+        "vector": {
+          "answer": "根据查询到的资料，脑肿瘤分割领域的一些代表性先进模型（SOTA）包括：Bahrami等人提出的联合学习两个并行CNN用于7T MR图像重建和脑组织分割的方法；Sun等人提出的用于同时进行压缩感知MRI重建和脑组织分割的统一网络；以及Wang等人提出的使用级联各向异性卷积神经网络的自动脑肿瘤分割方法。此外，资料中重点介绍了一项名为TISS-Net（Tumor Image Synthesis and Segmentation Network）的工作，它基于级联双任务架构，将图像合成与分割模型协同学习，并引入了多种高级正则化策略、分割感知的目标模态合成以及误差预测一致性损失，以应对缺失模态下的脑肿瘤分割问题。这些模型代表了该领域在利用深度学习，特别是CNN和GAN进行合成与分割联合学习方面的前沿进展。",
+          "metrics": {
+            "answer_correctness": 0.6,
+            "hallucination_rate": 0,
+            "answer_relevance": 4.0,
+            "completeness": 0.4,
+            "judge_reason": "系统回答正确列举了检索上下文中的部分模型（如Bahrami、Sun、Wang及TISS-Net），但遗漏了标准答案提及的约19个模型集合及sota_summary等关键信息，完整性不足。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029838: Compared with sequential synthesis and segmentation, simultaneous synthesize and segmentation takes a better advantage of the inter-dependency between these two tasks. In such methods, a model takes the available modalities as input, and gives target modality and segmentation result simultaneously, where the implicit constraints between synthesis and segmentation is used as a regularization. For example, Bahrami et al. [1] jointly learned two parallel CNNs for 7T MR image reconstruction and brain tissue segmentation from 3T MR images. Sun et al. [30] proposed a unified network for simultaneous compressed sensing MRI reconstruction and brain tissue segmentation, where a high-quality MRI synthesis network and a segmentation model share the encoder and use independent decodes to get the outpu\n318601022029830: To tackle these problems, synthesizing a missing target modality from one or more available modalities for the downstream segmentation has attracted increasing attentions recently [8,36]. Traditionally, researchers have used dictionary learning [13] and random forest [17] methods for this purpose. But they usually focus on a low-level pixel-wise opt"
+        },
+        "graph": {
+          "answer": "根据查询到的资料，在脑肿瘤图像合成与分割领域，TISS-net 论文中涉及了多个 SOTA 模型，包括：tissnet、25dunet、patchgan、dualtaskgenerator、dualtasksegmentor、25ddbnet、globaldiscriminator、tumorfocuseddiscriminator 以及 s_p。这些模型都在 Brats 2020 等数据集上使用 SSIM、PSNR、Dice、HD95、ASSD 等指标进行了评估。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.8,
+            "judge_reason": "系统回答正确列出了检索上下文中提及的脑肿瘤分割SOTA模型及评测指标，与标准答案一致，但未提及共有约19个模型这一细节，略有遗漏。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 10,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": true,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【图谱补充 · 领域SOTA】\ntissnet(2023) | 论文:TISS-net: Brain tumor image synthesis and segmentation using cascaded dual-task networks and error-prediction consistency | 数据集:brats, multimodalbraintumorsegmentationchallenge(brats)2020trainingset, vsdataset, brats2020, bratsdataset, flair, cet1, t1, t2 | 指标:ssim, structuralsimilarityindex(ssim), peaksignaltonoiseratio(psnr), 95%hausdorffdistance(hd95), averagesymmetricsurfacedistance(assd), 95%hausdorffdistance, averagesymmetricsurfacedistance, structuralsimilarityindex, peaksignaltonoiseratio, psnr, dice, assd, hd95\n25dunet(2023) | 论文:TISS-net: Brain tumor image synthesis and segmentation using cascaded dual-task networks and error-prediction consistency | 数据集:brats, multimodalbraintumorsegmentationchallenge(brats)2020trainingset, vsdataset, brats2020, bratsdataset, flair, cet1, t1, t2 | 指标:ssim, structuralsimilarityindex(ssim), peaksignaltonoiseratio(psnr), 95%hausdorffdistance(hd95), averagesymmetricsurfacedistance(assd), 95%hausdorffdistance, averagesymmetricsurfacedistance, structuralsimilarityindex, peaksignaltonoiseratio, psnr, dice, assd, hd95\npatchgan(2023) | 论文:TISS-net: Brain tumor image synthesis and segmentation using cascaded dual"
+        },
+        "both": {
+          "answer": "根据查询到的资料，脑肿瘤分割领域的代表性SOTA模型包括：\n\nTISS-Net（脑肿瘤图像合成与分割网络），这是一种基于级联双任务架构的端到端训练模型，能够同时进行图像合成与分割，并引入了分割感知的目标模态合成、肿瘤感知合成损失、可感知正则化以及误差预测一致性损失等高级策略。\n\n此外，该领域还有其他相关模型，例如用于7T MRI图像重建与脑组织分割的并行CNN方法、用于压缩感知MRI重建与分割的统一网络、以及基于GAN的模态合成与分割方法（如从T1图像生成FLAIR图像用于脑肿瘤分割）。参考资料中提及的对比方法还包括2.5D U-Net、PatchGAN、双任务生成器、双任务分割器、2.5D DBNet、全局判别器和肿瘤聚焦判别器等。",
+          "metrics": {
+            "answer_correctness": 0.3,
+            "hallucination_rate": 0.2,
+            "answer_relevance": 3.0,
+            "completeness": 0.2,
+            "judge_reason": "系统回答提到了TISS-Net及部分相关方法，但未按标准答案要求聚合列出完整的19个SOTA模型及sota_summary信息，且部分描述（如2.5D U-Net等）虽在上下文中出现但并非明确列为SOTA，存在轻微混入非核心信息的现象。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 10,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": true,
+            "has_cite": false,
+            "entities": [
+              "脑肿瘤分割",
+              "SOTA"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029838: Compared with sequential synthesis and segmentation, simultaneous synthesize and segmentation takes a better advantage of the inter-dependency between these two tasks. In such methods, a model takes the available modalities as input, and gives target modality and segmentation result simultaneously, where the implicit constraints between synthesis and segmentation is used as a regularization. For example, Bahrami et al. [1] jointly learned two parallel CNNs for 7T MR image reconstruction and brain tissue segmentation from 3T MR images. Sun et al. [30] proposed a unified network for simultaneous compressed sensing MRI reconstruction and brain tissue segmentation, where a high-quality MRI synthesis network and a segmentation model share the encoder and use independent decodes to get the outpu\n318601022029830: To tackle these problems, synthesizing a missing target modality from one or more available modalities for the downstream segmentation has attracted increasing attentions recently [8,36]. Traditionally, researchers have used dictionary learning [13] and random forest [17] methods for this purpose. But they usually focus on a low-level pixel-wise opt"
+        }
+      }
+    },
+    {
+      "id": "G5",
+      "category": "单图谱",
+      "primary_link": "graph",
+      "question": "TISS-net 的引用关系是怎样的？引用了哪些论文？",
+      "reference_answer": "通过 CITE 边与 cite_summary 展示：TISS-net 论文 → 引用 → 多篇参考文献；引用网络包含 outgoing/incoming 引用关系，可列出被引论文标题及引用方向。",
+      "responses": {
+        "vector": {
+          "answer": "根据查询到的资料，TISS-Net 在论文中引用了多篇相关研究，具体引用关系如下：\n\n一、在模型结构方面，TISS-Net 的生成器和分割器采用了基于 2.5D U-Net 骨架的双分支网络结构，该结构引用了文献 [27]。\n\n二、在判别器设计方面，TISS-Net 使用了 16×70×70 的 PatchGANs，并说明这种设计已被证明性能优于仅让判别器输出单一标量来评判整张合成图像的方法，此处引用的是文献 [15]。\n\n此外，参考资料中还列出了其他相关文献（如 [38]–[41]），但这些文献并未在正文的实现细节或方法描述中被直接引用为模型设计的依据，因此 TISS-Net 主要引用的论文是 [15] 和 [27]。",
+          "metrics": {
+            "answer_correctness": 0.5,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.5,
+            "judge_reason": "系统回答正确指出了TISS-Net引用了文献[27]（2.5D U-Net骨架）和[15]（PatchGANs），事实正确且来自检索上下文，无幻觉；但未提及标准答案要求的引用关系展示方式（如CITE边、cite_summary、引用方向等），也未列出[38]–[41]等参考文献的具体引用关系，覆盖不全。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022029862: 4.2.2. Ablation Study"
+        },
+        "graph": {
+          "answer": "根据提供的资料，TISS-net: Brain tumor image synthesis and segmentation using cas... 这篇论文引用了以下文献：\n\n一、Simulation and Synthesis in Medical Imaging\n\n二、Shuojue Yang is an undergraduate student at University of Electr...\n\n三、Management of image registration and segmentation, its exploitation...\n\n四、Jonathan's academic interest focuses on the application of medical...\n\n五、Stereotaxis and image-guided neurosurgery for brain tumours, and...\n\n六、He is a Columbia University and Ecole Polytechnique graduate and...\n\n七、He then obtained his PhD degree of Medical and Biomedical Imaging...\n\n八、European academy of otology and neurotology.\n\n九、Population-based studies on incidence, survival rates, and genetic...\n\n十、The Multimodal Brain Tumor Image Segmentation Benchmark (BRATS)\n\n十一、Brain Tumor Segmentation Using Convolutional Neural Networks in ...\n\n十二、HeMIS: Hetero-Modal Image Segmentation\n\n十三、Random Forest Regression for Magnetic Resonance Image Synthesis\n\n十四、Image-to-Image Translation with Conditional Adversarial Networks\n\n十五、Joint Reconstruction and Segmentation of 7T-like MR Images from ...\n\n这些被引用的文献涵盖医学影像仿真与合成、图像分割、肿瘤研究、多模态分割基准、图像翻译以及图像重建与分割等多个相关领域。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答完整列出了检索上下文中所有TISS-net引用的文献标题，事实准确、无虚构，紧扣用户问题，覆盖标准答案中关于引用关系的核心要点。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 1,
+            "graph_edges": 15,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": true,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【图谱补充 · 引用脉络（本文→参考文献）】\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Simulation and Synthesis in Medical Imaging\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Shuojue Yang is an undergraduate student at University of Electr...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Management of image registration and segmentation, its exploitat...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Jonathan's academic interest focuses on the application of medic...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Stereotaxis and image-guided neurosurgery for brain tumours, and...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → He is a Columbia University and Ecole Polytechnique graduate and...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → He then obtained his PhD degree of Medical and Biomedical Imagin...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → European academy of otology and neurotology.\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Popul"
+        },
+        "both": {
+          "answer": "根据查询到的资料，TISS-net（即《TISS-net: Brain tumor image synthesis and segmentation using cascaded dual-task networks and adversarial training》这篇论文）引用了多篇参考文献，具体包括：\n\n一、《Simulation and Synthesis in Medical Imaging》\n\n二、与作者背景相关的文献，如《Shuojue Yang is an undergraduate student at University of Electro-Communications》等（这些条目实际上是对作者的介绍，并非标准的学术引用，但图谱中标注为引用关系）\n\n三、《Management of image registration and segmentation, its exploitation...》\n\n四、《Jonathan's academic interest focuses on the application of medical...》\n\n五、《Stereotaxis and image-guided neurosurgery for brain tumours, and...》\n\n六、《He is a Columbia University and Ecole Polytechnique graduate and...》\n\n七、《He then obtained his PhD degree of Medical and Biomedical Imagin...》\n\n八、《European academy of otology and neurotology.》\n\n九、《Population-based studies on incidence, survival rates, and genet...》\n\n十、《The Multimodal Brain Tumor Image Segmentation Benchmark (BRATS)》\n\n十一、《Brain Tumor Segmentation Using Convolutional Neural Networks in ...》\n\n十二、《HeMIS: Hetero-Modal Image Segmentation》\n\n十三、《Random Forest Regression for Magnetic Resonance Image Synthesis》\n\n十四、《Image-to-Image Translation with Conditional Adversarial Networks》\n\n十五、《Joint Reconstruction and Segmentation of 7T-like MR Images from ...》\n\n此外，从论文正文中可以看到，TISS-net还在具体方法部分引用了2.5D U-Net [27]、70×70 PatchGANs [15]等文献。需要注意的是，图谱补充中列出的部分条目（如作者简介类内容）可能并非严格意义上的学术参考文献，而是图谱构建时对元数据的关联标注。",
+          "metrics": {
+            "answer_correctness": 0.5,
+            "hallucination_rate": 0.6,
+            "answer_relevance": 3.0,
+            "completeness": 0.3,
+            "judge_reason": "系统回答部分正确列出了TISS-net引用的论文（如2.5D U-Net [27]、PatchGANs [15]及图谱中的少数文献），但大量列举了图谱中非标准的作者介绍条目（如'Shuojue Yang is an undergraduate...'等），这些并非实际学术引用，属于严重幻觉；同时回答未明确区分真正的参考文献和元数据关联，整体准确性和完整性不足。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 1,
+            "graph_edges": 15,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": true,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022029862: 4.2.2. Ablation Study"
+        }
+      }
+    },
+    {
+      "id": "VG1",
+      "category": "联合双链路",
+      "primary_link": "both",
+      "question": "TISS-net 在 BraTS 上用什么指标评测？它的核心方法是什么？",
+      "reference_answer": "BraTS 上：分割用 Dice，合成质量用 SSIM；核心方法为级联双任务网络，含双任务正则化生成器与双任务分割器，端到端完成缺失模态合成与脑肿瘤分割。",
+      "responses": {
+        "vector": {
+          "answer": "根据查询到的资料，TISS-Net在实验中评测了**合成质量**和**分割感知性能**两类指标。合成质量方面使用了全局SSIM、局部SSIM、全局PSNR和局部PSNR；感知性能（即分割效果）方面使用了Dice系数、ASSD和HD95。\n\nTISS-Net的核心方法是**面向分割的跨模态MRI图像合成与分割的联合框架**，它采用生成器与分割器共享的双分支网络结构，基于2.5D U-Net主干网络，并利用全局合成损失、局部合成损失、感知损失和分割感知损失等多种损失函数进行联合优化，使得合成图像更有利于后续的分割任务。",
+          "metrics": {
+            "answer_correctness": 0.75,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.7,
+            "judge_reason": "系统回答正确详细地列出了评测指标（SSIM、PSNR、Dice、ASSD、HD95）和核心方法（双分支网络、2.5D U-Net、多种损失函数），但未明确提到BraTS上分割指标为Dice、合成质量为SSIM，也未提及“级联双任务网络”和“端到端”等标准答案中的关键表述，因此部分扣分。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022083073: 4.2.5. Comparison wit"
+        },
+        "graph": {
+          "answer": "TISS-net 是一个基于 Transformer 的医学图像分割网络，专门用于脑肿瘤分割任务（如 BraTS 数据集）。\n\n## 评估指标（BraTS 上常用的指标）\n\n在 BraTS 数据集上，TISS-net 通常使用以下指标进行评测：\n\n1. **Dice 相似系数 (Dice Similarity Coefficient, DSC)**：衡量分割结果与真实标签的重叠程度，值越接近 1 越好。\n\n2. **Hausdorff 距离 (HD95)**：95% 的 Hausdorff 距离，用于评估分割边界的准确性，值越小越好。\n\n3. **敏感性 (Sensitivity)** 和 **特异性 (Specificity)**：补充评估分割性能。\n\nBraTS 通常评测三类区域：\n- **全肿瘤 (Whole Tumor, WT)**\n- **肿瘤核心 (Tumor Core, TC)**\n- **增强肿瘤 (Enhancing Tumor, ET)**\n\n## TISS-net 的核心方法\n\nTISS-net 的全称是 **Transformer-based Interactive Segmentation System**，其核心方法包括：\n\n1. **混合架构**：结合 **CNN**（编码器）和 **Transformer**（解码器/注意力模块），利用 CNN 提取局部特征，Transformer 捕获长距离上下文依赖关系。\n\n2. **多尺度特征融合**：通过 Transformer 的全局注意力机制，实现多尺度特征的深度融合，提升对肿瘤异质性区域的感知能力。\n\n3. **交互式分割机制**：支持用户点击或涂鸦（scribble）作为交互提示，利用提示点生成前景/背景种子，引导网络进行精细化分割。\n\n4. **自注意力增强**：在 Transformer 块中使用自注意力机制，增强对边界模糊区域和复杂形状（如小病灶、不规则肿瘤）的分割能力。\n\n5. **损失函数**：通常结合 **Dice Loss** 和 **交叉熵损失**，并在交互式版本中加入距离惩罚或点击损失。\n\n6. **训练策略**：采用模拟用户交互的迭代训练策略，在训练时随机模拟点击，使模型学会从用户反馈中逐步修正分割结果。\n\n---\n\n**总结**：  \n- 评测指标：Dice、HD95、敏感性/特异性（分 WT/TC/ET 三个区域）。  \n- 核心方法：CNN-Transformer 混合架构 + 多尺度特征融合 + 交互式点击引导 + 自注意力机制。",
+          "metrics": {
+            "answer_correctness": 0,
+            "hallucination_rate": 1,
+            "answer_relevance": 2.0,
+            "completeness": 0,
+            "judge_reason": "系统回答完全错误：将TISS-net描述为Transformer交互式分割网络，而标准答案是级联双任务网络用于合成+分割；评测指标和核心方法均与标准答案及检索上下文（无信息）相悖，全部为幻觉。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net",
+              "BraTS",
+              "指标"
+            ]
+          },
+          "context_preview": "TISS-net 在 BraTS 上用什么指标评测？它的核心方法是什么？"
+        },
+        "both": {
+          "answer": "根据查询到的资料，TISS-Net 在评测中使用的指标分为两部分：\n\n一、对合成图像质量的评测：包括低层合成质量的峰值信噪比（PSNR）和结构相似性指数（SSIM），这两个指标分别在全局图像区域和肿瘤局部区域进行计算；以及高层合成质量的感知性（perceptibility），即通过预训练的分割网络在合成图像上的表现来衡量。\n\n二、对分割性能的评测：包括 Dice 系数、平均对称表面距离（ASSD）以及 95% 豪斯多夫距离（HD95）。\n\n关于核心方法，TISS-Net 是一种用于脑肿瘤图像合成与分割的框架，它采用基于 2.5D U-Net 骨干网络的双分支结构，通过生成器和分割器协同工作，并在训练中采用了全局合成损失、局部合成损失、感知损失等多种损失函数的组合。该框架同时实现了目标模态图像合成和脑肿瘤分割两项任务，并在两个应用场景中得到验证：一是基于 T1、T2 和 ceT1 图像合成 FLAIR 图像用于全胶质瘤分割，二是基于 T2 图像合成 ceT1 图像进行前庭神经鞘瘤（VS）分割。",
+          "metrics": {
+            "answer_correctness": 0.5,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.3,
+            "judge_reason": "系统回答正确列出了评测指标（SSIM、PSNR、Dice、ASSD、HD95）并描述了核心方法的双分支结构，但未明确突出标准答案中的关键点——'级联双任务网络'、'双任务正则化生成器与双任务分割器'以及'端到端完成缺失模态合成与脑肿瘤分割'，导致核心方法描述不够精准，完整性不足。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 14,
+            "graph_edges": 13,
+            "graph_chunks": 3,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net",
+              "BraTS"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022083073: 4.2.5. Comparison wit"
+        }
+      }
+    },
+    {
+      "id": "VG2",
+      "category": "联合双链路",
+      "primary_link": "both",
+      "question": "脑肿瘤分割领域目前有哪些代表性模型？TISS-net 相比它们的主要创新是什么？",
+      "reference_answer": "代表性模型见 SOTA 列表（含 tissnet 等）；TISS-net 创新在于级联双任务框架，联合模态合成与分割，引入双任务正则化与 error-prediction consistency 等，区别于仅分割或仅合成的 prior work。",
+      "responses": {
+        "vector": {
+          "answer": "根据查询到的资料，脑肿瘤分割领域的代表性模型包括：G. Wang等提出的级联各向异性卷积神经网络（Cascaded Anisotropic Convolutional Neural Networks）、Isensee等提出的No New-Net（基于nnU-Net框架）、以及Hu等提出的互集成学习模型（Mutual Ensemble Learning）等。此外，还有基于知识蒸馏的方法（如Hu, Maillard等人的工作）和基于图像合成的方法。\n\n与这些模型相比，TISS-Net的主要创新在于：它将缺失模态的合成与脑肿瘤分割统一到一个端到端的双任务网络中，而不是传统的“先合成、后分割”两阶段方法。具体而言，TISS-Net采用双分支网络同时预测目标模态和粗分割结果，并提出肿瘤感知合成损失与可感知正则化，以提升肿瘤区域的图像质量并缩小合成图像与真实图像之间的高层域差距。此外，它还利用细分割与粗分割中误差预测之间的一致性损失进行正则化，从而进一步提高分割精度。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答准确列举了代表性模型并详细说明了TISS-Net的级联双任务框架、端到端联合合成与分割、双任务正则化及error-prediction consistency等创新点，与标准答案完全一致且无幻觉，全面切题。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601026682883: 492–504.\n[31] G. Wang, W. Li, S. Ourselin, T. Vercauteren, Automatic brain tumor segmentation using cascaded anisotropic convolutional neural networks, in: International MICCAI brainlesion workshop, Springer, 2017, pp. 178–190.\n[32] G. Wang, T. Song, Q. Dong, M. Cui, N. Huang, S. Zhang, Automatic ischemic stroke lesion segmentation from computed tomography perfusion images by image synthesis and attention-based deep neural networks, Medical Image Analysis 65 (2020).\n[33] Y. Wang, B. Yu, L. Wang, C. Zu, D.S. Lalush, W. Lin, X. Wu, J. Zhou, D. Shen, L. Zhou, 3D conditional generative adversarial networks for high-quality PET image estimation at low dose, NeuroImage 174 (2018) 550–562.\n[34] J. Wu, R. Gu, G. Dong, G. Wang, S. Zhang, Fpl-uda: Filtered pseudo label-based unsupervised cross-modal\n318601026600965: 5. Discussion\nAccurate segmentation of brain tumors relies on multi-modal images or high-contrast images, but the access to some modalities may be limited as it is expansive, time-consuming or faced with safety concerns with the use of contrast agents, which has been a crucial obstacle for developing deep learning methods for accurate segmentation o"
+        },
+        "graph": {
+          "answer": "根据提供的参考资料，脑肿瘤分割领域（2023年）的代表性模型包括：TISS-net、25dunet、patchgan、dualtaskgenerator、dualtasksegmentor、25ddbnet、globaldiscriminator、tumorfocuseddiscriminator以及s_p。这些模型在BRATS等数据集上进行训练和评估，使用的指标包括SSIM、PSNR、Dice、HD95和ASSD等。\n\nTISS-net的主要创新在于它是一个级联双任务网络，并且引入了误差预测一致性机制。具体来说，它通过一个生成器（dualtaskgenerator）和一个分割器（dualtasksegmentor）同时进行脑肿瘤图像合成和分割任务，再配合全局判别器（globaldiscriminator）和肿瘤聚焦判别器（tumorfocuseddiscriminator），利用误差预测一致性来提升合成图像质量和分割精度。这种将合成与分割任务级联并加入一致性约束的设计，是TISS-net相比其他模型的核心创新点。",
+          "metrics": {
+            "answer_correctness": 1,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 1,
+            "judge_reason": "系统回答准确列举了代表性模型，并正确说明了TISS-net的级联双任务框架、联合合成与分割、误差预测一致性等创新点，与标准答案完全一致，无错误信息，且回答紧扣用户问题。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 10,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": true,
+            "has_cite": false,
+            "entities": [
+              "TISS-net",
+              "脑肿瘤分割"
+            ]
+          },
+          "context_preview": "【图谱补充 · 领域SOTA】\ntissnet(2023) | 论文:TISS-net: Brain tumor image synthesis and segmentation using cascaded dual-task networks and error-prediction consistency | 数据集:brats, multimodalbraintumorsegmentationchallenge(brats)2020trainingset, vsdataset, brats2020, bratsdataset, flair, cet1, t1, t2 | 指标:ssim, structuralsimilarityindex(ssim), peaksignaltonoiseratio(psnr), 95%hausdorffdistance(hd95), averagesymmetricsurfacedistance(assd), 95%hausdorffdistance, averagesymmetricsurfacedistance, structuralsimilarityindex, peaksignaltonoiseratio, psnr, dice, assd, hd95\n25dunet(2023) | 论文:TISS-net: Brain tumor image synthesis and segmentation using cascaded dual-task networks and error-prediction consistency | 数据集:brats, multimodalbraintumorsegmentationchallenge(brats)2020trainingset, vsdataset, brats2020, bratsdataset, flair, cet1, t1, t2 | 指标:ssim, structuralsimilarityindex(ssim), peaksignaltonoiseratio(psnr), 95%hausdorffdistance(hd95), averagesymmetricsurfacedistance(assd), 95%hausdorffdistance, averagesymmetricsurfacedistance, structuralsimilarityindex, peaksignaltonoiseratio, psnr, dice, assd, hd95\npatchgan(2023) | 论文:TISS-net: Brain tumor image synthesis and segmentation using cascaded dual"
+        },
+        "both": {
+          "answer": "根据资料，脑肿瘤分割领域的代表性模型包括：3D条件生成对抗网络（用于低剂量PET图像估计）、级联各向异性卷积神经网络（用于自动脑肿瘤分割）、以及基于知识蒸馏的多模态到单模态分割网络等。此外，在TISS-net的对比方法中，还提到了pix2pix（Image-to-image translation with conditional adversarial networks）、2.5D U-Net、PatchGAN、2.5D DBNet等模型，它们都在BRATS等数据集上进行了评估。\n\nTISS-net相比这些方法的主要创新体现在三个方面：一、它提出了一个端到端的统一框架，将目标模态合成与脑肿瘤分割同时进行，而非传统的先合成后分割的两步法；二、它采用了双任务网络结构，包括一个共享编码器的目标模态生成器和脑肿瘤分割器，两者可以相互正则化，生成器能同时输出合成图像和粗分割结果，并受肿瘤感知可感知性损失约束；三、它引入了从粗到细的分割策略和误差预测一致性机制，分割器以粗分割、输入模态和合成模态为输入，一个分支直接预测精细分割，另一个分支预测粗分割中的误差以进行细化，从而提升了分割精度。",
+          "metrics": {
+            "answer_correctness": 0.8,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.9,
+            "judge_reason": "系统回答正确指出了脑肿瘤分割领域的代表性模型（如级联各向异性CNN等）以及TISS-net的创新点（端到端联合合成与分割、双任务网络、粗到细分割与误差预测一致性），与标准答案核心一致，且所有陈述均可从检索上下文推断，无幻觉；但未明确列出TISS-net本身作为代表性模型，略有遗漏。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 10,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": true,
+            "has_cite": false,
+            "entities": [
+              "TISS-net",
+              "脑肿瘤分割"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029839: 3. Methods\nFig. 2(d) is an overview of our TISS-Net for end-to-end target modality synthesis and brain tumor segmentation, where only partial modalities are given and the real target modality is not available at test time. Both the target-modality generator and brain tumor segmentor have two branches with a shared encoder for different tasks that can regularize each other. The dual-task generator obtains a synthesized target-modality image and a coarse segmentation simultaneously, and it is further regularized by a tumoraware perceptibility loss. The segmentor takes the coarse segmentation, the input modalities and the synthesized modality as input, and uses one branch to directly predict a fine segmentation, and another branch to predict errors in the coarse segmentation for refinement. A\n318601026600965: 5. Discussion\nAccurate segmentation of brain tumors relies on multi-modal images or high-contrast images, but the access to some modalities may be limited as it is expansive, time-consuming or faced with safety concerns with the use of contrast agents, which has been a crucial obstacle for developing deep learning methods for accurate segmentation o"
+        }
+      }
+    },
+    {
+      "id": "VG3",
+      "category": "联合双链路",
+      "primary_link": "both",
+      "question": "TISS-net 是在哪些前人工作基础上改进的？改进后架构有什么变化？",
+      "reference_answer": "前人工作由 IMPROVE_FROM 链给出；架构变化为引入级联双任务结构，将合成生成器与分割器端到端联合，相对前人仅分割或两阶段分离方案，实现模态缺失下的一体化合成—分割。",
+      "responses": {
+        "vector": {
+          "answer": "根据查询到的资料，TISS-Net是在2.5D U-Net [27]的基础上改进的。原始的2.5D U-Net具有编码器-解码器结构，包含五个分辨率级别，其中两个最高分辨率级别使用2D卷积，另外三个分辨率级别使用3D卷积。TISS-Net在其基础上增加了一个与原有解码器结构相同且带有跳跃连接的解码器，从而形成了双分支网络，称为2.5D DB-Net。这两个分支分别用于获得合成目标模态图像和粗分割结果，实现了目标模态合成与脑肿瘤分割的端到端联合学习，并且通过共享编码器使不同任务能够相互正则化。",
+          "metrics": {
+            "answer_correctness": 0.8,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.6,
+            "judge_reason": "回答正确指出了2.5D U-Net为基础并说明了架构变化（增加解码器形成双分支），但未提及标准答案中强调的‘级联双任务结构’和‘合成生成器与分割器端到端联合’这一核心改进点，也未概括前人工作的对比，因此完整性略有不足；无幻觉，高度切题。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022091267: 4.3.2. Ablation Study of the Synthesis Method\nTo demonstrate the effectiveness of our segmentation-aware ceT1 image synthesis, in this experiment we ignore segmentor (i.e., setting $\\lambda _ { S }$ to 0), and compared different combinations of $\\mathcal { L } _ { s y n - g } , \\mathcal { L } _ { s y n - t } , \\mathcal { L } _ { p }$ and $\\mathcal {"
+        },
+        "graph": {
+          "answer": "根据查询到的资料，TISS-Net是在25dunet、pix2pix、pgan、pscgan、uagan、wangetal等多个前人工作的基础上改进而来的，其改进自上述各个模型。在架构方面，TISS-Net采用了2.5D U-Net作为骨干网络，并在其基础上增加了一个与原有解码器结构相同的解码器，从而形成双分支网络（2.5D DB-Net），两个分支分别用于合成目标模态图像和获取粗分割结果。",
+          "metrics": {
+            "answer_correctness": 0.8,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.6,
+            "judge_reason": "系统回答正确指出了改进自哪些前人模型以及添加双解码器的架构变化，且无幻觉；但未提及标准答案中‘端到端联合’、‘一体化合成-分割’这一核心改进要点，导致完整性略有不足。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 7,
+            "graph_edges": 6,
+            "graph_chunks": 5,
+            "has_chain": true,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【图谱补充 · 模型时序链】\n25dunet(2023) → pix2pix(2023) → pgan(2023) → pscgan(2023) → uagan(2023) → wangetal(2023) → tissnet(2023)\n\n【图谱补充 · 关系】\ntissnet和25dunet的关系是改进自（模型演进：后者改进自前者）\ntissnet和pix2pix的关系是改进自（模型演进：后者改进自前者）\ntissnet和pgan的关系是改进自（模型演进：后者改进自前者）\ntissnet和wangetal的关系是改进自（模型演进：后者改进自前者）\ntissnet和pscgan的关系是改进自（模型演进：后者改进自前者）\ntissnet和uagan的关系是改进自（模型演进：后者改进自前者）\n\n【图谱补充 · 原文片段】\n318601022029839: 3. Methods\nFig. 2(d) is an overview of our TISS-Net for end-to-end target modality synthesis and brain tumor segmentation, where only partial modalities are given and the real target modality is not available at test time. Both the target-modality generator and brain tumor segmentor have two branches with a shared encoder for different tasks that can regularize each other. The dual-task generator obtains a synthesized target-modality image and a coarse segmentation simultaneously, and it is further regularized by a tumoraware perceptibility loss. The segmentor takes the coarse segmentation, th\n318601022029840: Theoretically, G can be implemented by any image-in and image-out CNNs. In this work, we use a 2.5D U-Net [27] as the backbone for the glioma and VS segmentation from 3D volumes due to the following r"
+        },
+        "both": {
+          "answer": "根据参考资料，TISS-net是在多个前人工作的基础上改进的，具体包括：2.5D U-Net、pix2pix、pGAN、pscGAN、uAGAN以及wang et al.的工作。这些模型演进关系明确显示，TISS-net是上述工作的后续改进模型。\n\n在架构变化方面，TISS-net采用了基于2.5D U-Net骨架的双分支网络结构（称为2.5D DB-Net）。具体来说，原始2.5D U-Net是一个编码器-解码器结构，具有五个分辨率级别，其中两个最高分辨率级别使用2D卷积，其余三个级别使用3D卷积。TISS-net在此基础上添加了一个与原解码器结构相同且带有跳跃连接的第二个解码器，从而形成了双分支网络。这两个分支分别用于生成合成的目标模态图像和粗分割结果，实现了目标模态合成与脑肿瘤分割的端到端联合训练。",
+          "metrics": {
+            "answer_correctness": 0.7,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.8,
+            "judge_reason": "系统回答正确指出了TISS-net改进自多个前人模型（可从图谱链推出），并描述了双分支架构变化，与标准答案的改进关系及级联双任务结构一致，但未明确提及'端到端联合'和'模态缺失下一体化合成-分割'这一更宏观的架构变化要点。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 7,
+            "graph_edges": 6,
+            "graph_chunks": 5,
+            "has_chain": true,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": [
+              "TISS-net"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029858: 4.1. Implementation Details\nAll the experiments were implemented with PyTorch, using an Ubuntu 20.04 Desktop with an Intel i9-10940X CPU and an NVIDIA GeForce RTX 2080Ti GPU. Both G and S used the dual-branch network structure illustrated in Fig. 3 based on the backbone of a 2.5D U-Net [27]. $D _ { g }$ and $D _ { t }$ were based on 16 70 70 PatchGANs [15], as they have been demonstrated with higher performance than only letting the discriminator output a scalar to judge the entire synthetic image as a whole. For both glioma and VS segmentation tasks, we used a batch size of 2, and the patch size was $1 6 \\times 1 2 8 \\times 1 2 8$ . Adam optimizer was used for training, and the learning rate for $G , S , D _ { g } , D _ { t }$ was initialized to $1 \\times 1 0 ^ { - 4 }$ in the first 100 e\n318601022029856: $$\nD _ { g } ^ { * } , D _ { t } ^ { * } = a r g m i n _ { D _ { g } , D _ { t } } ( \\mathcal { L } _ { D _ { g } } + \\mathcal { L } _ { D _ { t } } )\\tag{<sub>ð</sub><sup>11</sup><sub>Þ</sub>}\n$$\n\nWith Eq. (10) and Eq. (11), the generator G and segmentor S are trained end-to-end (i.e., the gradient of segmentation loss flows back to the synthesis n"
+        }
+      }
+    },
+    {
+      "id": "VG4",
+      "category": "联合双链路",
+      "primary_link": "both",
+      "question": "TISS-net 引用了哪些与 BraTS 或多模态分割相关的工作？本文与它们的关系是什么？",
+      "reference_answer": "References 与 CITE 边列出 BraTS benchmark、多模态分割相关文献；关系为：TISS-net 引用这些工作作为 benchmark、基线或方法对比，并在相同/task_similar 设定下提出级联双任务改进。",
+      "responses": {
+        "vector": {
+          "answer": "根据参考资料，TISS-Net引用了以下与BraTS或多模态分割相关的工作：\n\n1. 文献[38]：F. Ye等人提出的“并行通路密集神经网络与加权融合结构用于脑肿瘤分割”（Parallel pathway dense neural network with weighted fusion structure for brain tumor segmentation），发表于Neurocomputing 2021年。\n\n2. 文献[39]：Yu, B.等人2018年发表在ISBI上的“基于cGAN的跨模态MR图像合成用于脑肿瘤分割”（cGAN based cross-modality MR image synthesis for brain tumor segmentation）。\n\n3. 文献[40]：Q. Yu等人提出的“Crossover-net：利用垂直-水平交叉关系进行鲁棒医学图像分割”（Crossover-net: Leveraging vertical-horizontal crossover relation for robust medical image segmentation），发表于Pattern Recognition 2021年。\n\n4. 文献[41]：W. Yuan等人提出的“统一注意力生成对抗网络用于脑肿瘤分割”（Unified attentional generative adversarial network for brain tumor segmentation）。\n\n本文（TISS-Net）与这些工作的关系主要体现在：TISS-Net提出了一种新颖的级联双任务网络架构，用于在给定部分可用模态的情况下合成缺失模态并完成脑肿瘤分割。相比现有工作，TISS-Net的创新点在于：一是采用双分支网络同时预测目标模态和粗分割，并引入肿瘤感知合成损失和可感知正则化来提升肿瘤区域的图像质量；二是提出粗分割与精细分割之间的一致性损失作为正则化手段。该方法在胶质瘤和前庭神经鞘瘤图像上进行了实验验证，表现出良好的性能。",
+          "metrics": {
+            "answer_correctness": 0.8,
+            "hallucination_rate": 0,
+            "answer_relevance": 5,
+            "completeness": 0.9,
+            "judge_reason": "系统回答正确列出了引用文献，并与标准答案中引用的工作一致；但在阐述‘关系’时，未明确点出这些工作被用作benchmark/基线/方法对比的核心要点，而是主要描述了TISS-Net自身创新，稍欠针对标准答案中‘关系’部分的直接覆盖，但总体事实准确、无幻觉、高度切题。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 0,
+            "graph_edges": 0,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": false,
+            "entities": []
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022029862: 4.2.2. Ablation Study of the Synthesis Method\nTo evaluate the performance of our segmentation-aware targetmodality image synthesis, we first ignore the segmentor in TISS-Net (i.e., equals to setting k<sub>S</sub> to 0), and conducted an ablation study to investigate effectiveness of each of our proposed losses for the synthesis: tumor-aware synthesis loss ${ \\mathcal { L } } _ { s y n - }$ <sub>t</sub>, perceptibility regularization ${ \\mathcal { L } } _ { p }$ and using the coarse segmentation branch $( \\mathrm { i } . \\mathbf { e } . , \\mathcal { L } _ { c } )$ as regularization for the synthesis task. The baseline method was using global synthesis loss $\\mathcal { L } _ { s y n - g }$ only. The quantitative evaluation results of different synthesis loss configurations are shown in Table\n318601022029839: 3. Methods\nFig. 2(d) "
+        },
+        "graph": {
+          "answer": "根据参考资料，TISS-net 引用了多个与 BraTS 或多模态分割相关的工作，主要包括：**The Multimodal Brain Tumor Image Segmentation Benchmark (BRATS)**、**Brain Tumor Segmentation Using Convolutional Neural Networks in ...**、**HeMIS: Hetero-Modal Image Segmentation**，以及 **Random Forest Regression for Magnetic Resonance Image Synthesis**、**Image-to-Image Translation with Conditional Adversarial Networks** 和 **Joint Reconstruction and Segmentation of 7T-like MR Images from ...** 等。本文与这些参考文献的关系均为引用关系，即 TISS-net 在论文中引用了这些工作作为其研究背景、方法基础或对比依据。",
+          "metrics": {
+            "answer_correctness": 0.8,
+            "hallucination_rate": 0,
+            "answer_relevance": 4.0,
+            "completeness": 0.6,
+            "judge_reason": "回答正确列出了与BraTS和多模态分割相关的引用（如BRATS、HeMIS等），但与标准答案相比，缺少对关系具体描述（如作为基准、基线、方法对比及级联双任务改进），完整性略有不足。"
+          },
+          "retrieval": {
+            "kb_hits": 0,
+            "graph_nodes": 1,
+            "graph_edges": 15,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": true,
+            "entities": [
+              "TISS-net",
+              "BraTS"
+            ]
+          },
+          "context_preview": "【图谱补充 · 引用脉络（本文→参考文献）】\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Simulation and Synthesis in Medical Imaging\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Shuojue Yang is an undergraduate student at University of Electr...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Management of image registration and segmentation, its exploitat...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Jonathan's academic interest focuses on the application of medic...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Stereotaxis and image-guided neurosurgery for brain tumours, and...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → He is a Columbia University and Ecole Polytechnique graduate and...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → He then obtained his PhD degree of Medical and Biomedical Imagin...\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → European academy of otology and neurotology.\nTISS-net: Brain tumor image synthesis and segmentation using cas... → 引用 → Popul"
+        },
+        "both": {
+          "answer": "根据参考资料，TISS-net 引用了一些与 BraTS 或多模态分割相关的工作，包括：The Multimodal Brain Tumor Image Segmentation Benchmark (BRATS)、Brain Tumor Segmentation Using Convolutional Neural Networks in ...、HeMIS: Hetero-Modal Image Segmentation、Random Forest Regression for Magnetic Resonance Image Synthesis、Image-to-Image Translation with Conditional Adversarial Networks，以及 Joint Reconstruction and Segmentation of 7T-like MR Images from ... 等。本文与它们的关系均为引用关系，即 TISS-net 在研究中参考了这些文献的方法、基准或思路，用于支撑其提出的级联双任务网络方法，以实现缺失模态的合成和脑肿瘤分割。",
+          "metrics": {
+            "answer_correctness": 0.4,
+            "hallucination_rate": 0.6,
+            "answer_relevance": 3.0,
+            "completeness": 0.3,
+            "judge_reason": "系统回答列举了多个具体引用文献名称，但大部分（如HeMIS、Random Forest、Image-to-Image Translation、Joint Reconstruction等）在检索上下文中并无直接证据支持，存在明显幻觉；同时，标准答案强调的关系为'作为benchmark、基线或方法对比，并在此基础上提出级联双任务改进'，而系统回答仅笼统地说是'引用关系'，未准确点明具体关系，因此事实部分不够准确、完整性不足，但回答基本围绕用户问题展开。"
+          },
+          "retrieval": {
+            "kb_hits": 5,
+            "graph_nodes": 1,
+            "graph_edges": 15,
+            "graph_chunks": 0,
+            "has_chain": false,
+            "has_sota": false,
+            "has_cite": true,
+            "entities": [
+              "TISS-net",
+              "BraTS"
+            ]
+          },
+          "context_preview": "【主证据 · 知识库原文】\n318601022029857: 4. Experiments and Results\nWe validated our proposed TISS-Net for target-modality synthesis and brain tumor segmentation in two applications: 1) synthesizing FLAIR images using T1, T2 and ceT1 images for whole glioma segmentation, and 2) VS tumor segmentation based on synthesizing ceT1 images from T2 MR images.\n318601022029862: 4.2.2. Ablation Study of the Synthesis Method\nTo evaluate the performance of our segmentation-aware targetmodality image synthesis, we first ignore the segmentor in TISS-Net (i.e., equals to setting k<sub>S</sub> to 0), and conducted an ablation study to investigate effectiveness of each of our proposed losses for the synthesis: tumor-aware synthesis loss ${ \\mathcal { L } } _ { s y n - }$ <sub>t</sub>, perceptibility regularization ${ \\mathcal { L } } _ { p }$ and using the coarse segmentation branch $( \\mathrm { i } . \\mathbf { e } . , \\mathcal { L } _ { c } )$ as regularization for the synthesis task. The baseline method was using global synthesis loss $\\mathcal { L } _ { s y n - g }$ only. The quantitative evaluation results of different synthesis loss configurations are shown in Table\n318601022029839: 3. Methods\nFig. 2(d) "
+        }
+      }
+    }
+  ]
+}

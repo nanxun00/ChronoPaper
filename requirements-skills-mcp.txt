@@ -1,0 +1,5 @@
+# Nature 技能可选 MCP 子服务（ChronoPaper 主流程未挂载，仅 academic-search MCP 独立运行时需要）
+# 安装：pip install -r data/skills/user/nature-academic-search/mcp-server/requirements.txt
+mcp>=1.0.0,<2.0.0
+toml>=0.10.2,<2.0.0
+pybliometrics>=4.4.1,<5.0.0

@@ -1,0 +1,13 @@
+{
+    "databases": [],
+    "graph": {
+        "database_name": "neo4j",
+        "entity_count": 2,
+        "relationship_count": 1,
+        "triples_count": 1,
+        "labels": [
+            "Entity"
+        ],
+        "status": "open"
+    }
+}

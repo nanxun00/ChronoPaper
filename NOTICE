@@ -1,0 +1,13 @@
+ChronoPaper
+Copyright (c) ChronoPaper contributors
+
+This product includes software developed by OpenDataLab / MinerU Team.
+
+MinerU
+------
+Source: https://github.com/opendatalab/MinerU
+Location in this repository: src/third_party/mineru/
+License: Apache License 2.0 with additional terms (see src/third_party/mineru/LICENSE.md)
+
+If you provide online services based on MinerU, you must prominently indicate
+that MinerU is used, as required by the MinerU Open Source License.

@@ -1,0 +1,6 @@
+origins:
+  - http://localhost
+  - http://localhost:3000
+services:
+  translation: http://127.0.0.1:5001
+  consulting: http://127.0.0.1:5002
