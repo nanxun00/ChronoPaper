@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import { message } from "ant-design-vue";
 import Login from "./components/Login.vue";
 import Register from "./components/Register.vue";
+import ForgotPassword from "./components/ForgotPassword.vue";
 
 const status = ref("login");
 const route = useRoute();
@@ -31,6 +32,9 @@ onMounted(() => {
       @update:status="status = $event" />
     <Register
       v-else-if="status === 'register'"
+      @update:status="status = $event" />
+    <ForgotPassword
+      v-else-if="status === 'forgot'"
       @update:status="status = $event" />
       </div>
     </div>

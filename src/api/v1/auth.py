@@ -239,6 +239,68 @@ class register(BaseModel):
     email: str | None = None
     captcha: str | None = None
 
+class ForgotPasswordCaptcha(BaseModel):
+    userid: str
+    email: str
+
+class ResetPassword(BaseModel):
+    userid: str
+    email: str
+    captcha: str
+    new_password: str
+
+@login.post("/forgot-password/captcha")
+async def send_forgot_password_captcha(
+    background_tasks: BackgroundTasks,
+    data: ForgotPasswordCaptcha
+):
+    """发送找回密码验证码"""
+    # 1. 校验账号和邮箱是否匹配
+    user = SelectUserByUserID(data.userid)
+    if not user:
+        raise HTTPException(status_code=400, detail="该账号不存在")
+    
+    if user.email != data.email:
+        raise HTTPException(status_code=400, detail="账号与邮箱不匹配")
+
+    if _email_captcha_cache.is_full():
+        raise HTTPException(status_code=429, detail="系统繁忙，请稍后再试")
+    
+    # 2. 生成 6 位数字验证码
+    captcha = ''.join(random.choices(string.digits, k=6))
+    
+    # 3. 存入缓存（Key 使用 email + ":forgot" 以防和注册验证码冲突，或者直接用 email）
+    # 这里为了简单直接用 email，因为一个人同一时间通常只做一个操作
+    _email_captcha_cache.add(data.email, captcha)
+    
+    # 4. 异步发送邮件
+    background_tasks.add_task(send_email_captcha, data.email, captcha)
+    
+    return {"message": "验证码发送成功，请查收"}
+
+@login.post("/forgot-password/reset")
+async def reset_password(data: ResetPassword):
+    """重置密码"""
+    # 1. 校验验证码
+    err, cached_captcha = _email_captcha_cache.get(data.email)
+    if err != Error.OK:
+        raise HTTPException(status_code=400, detail="验证码已过期，请重新获取")
+    if cached_captcha != data.captcha:
+        raise HTTPException(status_code=400, detail="验证码错误")
+
+    # 2. 校验账号邮箱匹配（双重保险）
+    user = SelectUserByUserID(data.userid)
+    if not user or user.email != data.email:
+        raise HTTPException(status_code=400, detail="身份验证失败")
+
+    # 3. 更新密码
+    result = UpdateUser(data.userid, data.new_password)
+    if result:
+        logging.info(f"用户 {data.userid} 重置密码成功")
+        return {"message": "密码重置成功，请重新登录"}
+    else:
+        raise HTTPException(status_code=500, detail="密码重置失败，请稍后再试")
+
 @login.post("/register")
 async def register(register: register):
     # 1. 校验验证码（优先级最高，先验证身份）

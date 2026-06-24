@@ -55,6 +55,9 @@ const emit = defineEmits(['update:status']);
 const switchToRegister = () => {
     emit('update:status', 'register');
 };
+const switchToForgot = () => {
+    emit('update:status', 'forgot');
+};
 </script>
 
 <template>
@@ -71,7 +74,7 @@ const switchToRegister = () => {
     </el-form>
     <div class="link-container">
         <el-link class="link" @click="switchToRegister">注册账号</el-link>
-        <el-link class="link">忘记密码？</el-link>
+        <el-link class="link" @click="switchToForgot">忘记密码？</el-link>
     </div>
     <el-button class="login-button" :disabled="!loginData.account || !loginData.password" color="#3b82f6" size="large"
         @click="login">
