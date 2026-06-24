@@ -6,13 +6,13 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from src.integrations.xfyun_asr import transcribe_audio_file
-from src.settings import get_settings
+from src.settings import get_settings, PROJECT_ROOT
 from src.utils import setup_logger
 
 _settings = get_settings()
 logger = setup_logger("server-audio")
 
-UPLOAD_DIR = Path("src/saves/audio")
+UPLOAD_DIR = PROJECT_ROOT / "src/saves/audio"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 audio = APIRouter(prefix="/audio")

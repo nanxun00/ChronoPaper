@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     mineru_lang: str = "en"
     mineru_backend: str = ""  # 空=自动：有 GPU 用 hybrid-engine，否则 pipeline
 
+    # --- MemOS 云端 Hosted MCP 记忆服务 ---
+    memos_enabled: bool = Field(default=False, validation_alias="MEMOS_ENABLED")
+    memos_url: str = Field(default="", validation_alias="MEMOS_URL")
+    memos_auth_token: str = Field(default="", validation_alias="MEMOS_AUTH_TOKEN")
+
     @field_validator("mysql_profile", mode="before")
     @classmethod
     def _normalize_mysql_profile(cls, value):

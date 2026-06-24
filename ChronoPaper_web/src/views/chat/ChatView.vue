@@ -18,49 +18,24 @@
         </div>
       </div>
     </div>
-    <div class="chat-main-area">
-      <ChatComponent
-        v-if="activeConv"
-        ref="chatComponentRef"
-        :key="curConvId"
-        :conv="activeConv"
-        :state="state"
-        @rename-title="renameTitle"
-        @newconv="addNewConv"
-        @conv-created="onConvCreated"
-        @load-older="loadOlderMessages"
-        :virtual-human-enabled="virtualHumanEnabled"
-        :speaking-message-id="speakingMessageId"
-        @toggle-virtual-human="setVirtualHumanEnabled"
-        @speak-message="handleSpeakMessage"
-        @assistant-finished="handleAssistantFinished"
-      />
-      <VirtualHumanPanel
-        v-if="virtualHumanEnabled"
-        ref="virtualHumanRef"
-        :api-config="virtualHumanApiConfig"
-        :avatar-options="virtualHumanAvatarOptions"
-        :default-avatar-id="virtualHumanDefaults.defaultAvatarId"
-        :default-vcn="virtualHumanDefaults.defaultVcn"
-        @request-close="handleVirtualHumanClose"
-        @speech-end="clearSpeakingMessage"
-        @submit-question="handleVirtualHumanQuestion"
-      />
-    </div>
+    <ChatComponent
+      v-if="activeConv"
+      :key="curConvId"
+      :conv="activeConv"
+      :state="state"
+      @rename-title="renameTitle"
+      @newconv="addNewConv"
+      @conv-created="onConvCreated"
+      @load-older="loadOlderMessages"
+    />
   </div>
 </template>
 
 <script setup>
-import { reactive, ref, computed, nextTick, onMounted, onActivated, onUnmounted } from 'vue'
+import { reactive, ref, computed, onMounted, onActivated } from 'vue'
 import { MenuOutlined, DeleteOutlined, CommentOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import ChatComponent from '@/components/chat/ChatComponent.vue'
-import VirtualHumanPanel from '@/components/chat/VirtualHumanPanel.vue'
-import {
-  virtualHumanApiConfig,
-  virtualHumanAvatarOptions,
-  virtualHumanDefaults,
-} from '@/config/virtualHuman'
 import {
   listConversations,
   createConversation,
@@ -75,14 +50,7 @@ const state = reactive({
   loading: false,
 })
 const curConvId = ref(null)
-const chatComponentRef = ref(null)
-const virtualHumanRef = ref(null)
-const speakingMessageId = ref(null)
-const speechRequestId = ref(0)
-const virtualHumanReplyAutoSpeak = ref(false)
 const INITIAL_MESSAGE_LIMIT = 8
-const VIRTUAL_HUMAN_ENABLED_KEY = 'chat-virtual-human-enabled'
-const virtualHumanEnabled = ref(localStorage.getItem(VIRTUAL_HUMAN_ENABLED_KEY) === 'true')
 
 const emptyConv = () => ({
   conv_id: null,
@@ -99,159 +67,6 @@ const emptyConv = () => ({
 })
 
 const activeConv = computed(() => convs.find((c) => c.conv_id === curConvId.value) || null)
-
-const setVirtualHumanEnabled = (enabled) => {
-  const nextEnabled = Boolean(enabled)
-  virtualHumanEnabled.value = nextEnabled
-  localStorage.setItem(VIRTUAL_HUMAN_ENABLED_KEY, nextEnabled ? 'true' : 'false')
-}
-
-const stopBrowserSpeech = () => {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return
-  window.speechSynthesis.cancel()
-}
-
-const speakWithBrowser = (text, { onEnd } = {}) => {
-  if (
-    typeof window === 'undefined' ||
-    !window.speechSynthesis ||
-    typeof window.SpeechSynthesisUtterance !== 'function'
-  ) {
-    message.warning('Voice playback is not supported in this browser')
-    return false
-  }
-  stopBrowserSpeech()
-  const utterance = new window.SpeechSynthesisUtterance(text)
-  const voices = window.speechSynthesis.getVoices?.() || []
-  const voice = voices.find((item) => /^zh/i.test(item.lang)) || voices[0]
-  if (voice) {
-    utterance.voice = voice
-  }
-  utterance.lang = voice?.lang || 'zh-CN'
-  utterance.rate = 1
-  utterance.pitch = 1
-  utterance.volume = 1
-  utterance.onerror = (event) => {
-    console.warn('Browser speech playback failed:', event)
-    onEnd?.()
-  }
-  utterance.onend = () => onEnd?.()
-  window.speechSynthesis.speak(utterance)
-  window.speechSynthesis.resume?.()
-  return true
-}
-
-const clearSpeakingMessage = () => {
-  speakingMessageId.value = null
-}
-
-const handleVirtualHumanClose = () => {
-  clearSpeakingMessage()
-  setVirtualHumanEnabled(false)
-}
-
-const handleVirtualHumanQuestion = async (payload) => {
-  const text = String((typeof payload === 'string' ? payload : payload?.text) ?? '').trim()
-  const done = typeof payload?.done === 'function' ? payload.done : null
-  if (!text) {
-    done?.(false)
-    return
-  }
-
-  if (!activeConv.value) {
-    await addNewConv()
-    await nextTick()
-  }
-
-  const submitted = chatComponentRef.value?.submitExternalMessage?.(text) === true
-  if (submitted) {
-    virtualHumanReplyAutoSpeak.value = true
-  }
-  done?.(submitted)
-}
-
-const handleAssistantFinished = (assistantMessage) => {
-  if (!virtualHumanReplyAutoSpeak.value) return
-  virtualHumanReplyAutoSpeak.value = false
-  if (!virtualHumanEnabled.value) return
-
-  if (
-    assistantMessage?.role === 'received' &&
-    assistantMessage?.status === 'finished' &&
-    String(assistantMessage?.text || '').trim()
-  ) {
-    void handleSpeakMessage(assistantMessage)
-  }
-}
-
-const stopCurrentSpeech = async () => {
-  speechRequestId.value += 1
-  speakingMessageId.value = null
-  stopBrowserSpeech()
-
-  const player = virtualHumanRef.value
-  if (player?.stopPlay) {
-    try {
-      await player.stopPlay()
-    } catch (err) {
-      console.warn('Virtual human stopPlay failed:', err)
-    }
-  }
-}
-
-const getVirtualHumanPlayer = async () => {
-  if (!virtualHumanEnabled.value) {
-    setVirtualHumanEnabled(true)
-    await nextTick()
-  }
-  if (!virtualHumanRef.value) {
-    await nextTick()
-  }
-  return virtualHumanRef.value
-}
-
-const handleSpeakMessage = async (speakerMessage) => {
-  const text = String(speakerMessage?.text ?? '')
-  if (!text.trim()) return
-  const nextMessageId = speakerMessage?.id ?? null
-
-  if (nextMessageId != null && String(speakingMessageId.value) === String(nextMessageId)) {
-    await stopCurrentSpeech()
-    return
-  }
-
-  speechRequestId.value += 1
-  const requestId = speechRequestId.value
-  speakingMessageId.value = nextMessageId
-  stopBrowserSpeech()
-  const player = await getVirtualHumanPlayer()
-
-  if (requestId !== speechRequestId.value) return
-
-  if (player?.playText) {
-    try {
-      const played = await player.playText(text, { forceUnmute: true })
-      if (requestId !== speechRequestId.value) return
-      if (played) return
-      clearSpeakingMessage()
-      return
-    } catch (err) {
-      if (requestId !== speechRequestId.value) return
-      console.warn('Virtual human playText failed:', err)
-      clearSpeakingMessage()
-      return
-    }
-  }
-
-  if (requestId !== speechRequestId.value) return
-  speakWithBrowser(text, {
-    onEnd: () => {
-      if (requestId === speechRequestId.value) {
-        clearSpeakingMessage()
-      }
-    },
-  })
-}
 
 const mapConvSummary = (row) => ({
   conv_id: row.conv_id,
@@ -462,10 +277,6 @@ onActivated(() => {
     ensureActiveConversationLoaded()
   }
 })
-
-onUnmounted(() => {
-  stopBrowserSpeech()
-})
 </script>
 
 <style lang="less" scoped>
@@ -479,20 +290,6 @@ onUnmounted(() => {
   min-width: 0;
   overflow: hidden;
   position: relative;
-}
-
-.chat-main-area {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  overflow: hidden;
-}
-
-.chat-main-area :deep(.chat) {
-  flex: 1 1 auto;
-  min-width: 0;
 }
 
 .chat-container .conversations:not(.is-open) {

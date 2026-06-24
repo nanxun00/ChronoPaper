@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Body
 from pydantic import BaseModel
 from src.utils import setup_logger, hashstr
 from src.services.rag.startup import startup
-from src.settings import get_settings
+from src.settings import get_settings, PROJECT_ROOT
 from neo4j import GraphDatabase
 import json
 from pymilvus import connections, FieldSchema, CollectionSchema, DataType, Collection, utility, list_collections
@@ -575,7 +575,7 @@ def process_jsonl_file(filepath, neo4j_service, milvus_service):
             milvus_service.insert_vector(vector_r, {"entity": r, "type": "r"})
 
 milvus_service = MilvusService()
-UPLOAD_DIR = "src/saves/data/uploads"
+UPLOAD_DIR = PROJECT_ROOT / "src/saves/data/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # 上传文件并处理

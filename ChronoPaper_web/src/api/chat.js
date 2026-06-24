@@ -65,3 +65,7 @@ export async function callChat(query, meta = null) {
     body: JSON.stringify({ query, meta }),
   })
 }
+
+export async function fetchMemories() {
+  return apiJson('/api/chat/memories')
+}
