@@ -8,9 +8,6 @@
     <div class="content-wrapper">
       <!-- 用户信息头部卡片 -->
       <div class="user-header-card glass-card">
-        <div class="avatar-wrapper">
-          <div class="avatar-gradient">{{ userInitial }}</div>
-        </div>
         <div class="user-info">
           <h1 class="username">{{ userStore.username }}</h1>
           <p class="user-id">ID: {{ userStore.username || '未登录' }}</p>
@@ -172,10 +169,6 @@ onMounted(() => {
   setTimeout(() => {
     isLoaded.value = true;
   }, 50);
-});
-
-const userInitial = computed(() => {
-  return userStore.username ? userStore.username.charAt(0).toUpperCase() : 'U';
 });
 
 // 密码强度检测逻辑
@@ -340,22 +333,6 @@ const logout = () => {
   align-items: center;
   gap: 24px;
   margin-bottom: 32px;
-
-  .avatar-wrapper {
-    .avatar-gradient {
-      width: 72px;
-      height: 72px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, @primary, @primary-light);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-size: 28px;
-      font-weight: 600;
-      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.2);
-    }
-  }
 
   .user-info {
     .username {
