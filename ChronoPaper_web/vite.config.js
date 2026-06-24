@@ -14,12 +14,12 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '^/api': {
-          target: env.VITE_API_URL || 'http://localhost:8000',
+          target: env.VITE_API_URL || 'http://localhost:8081',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, '')
         },
         '^/uploads': {
-          target: env.VITE_API_URL || 'http://localhost:8000',
+          target: env.VITE_API_URL || 'http://localhost:8081',
           changeOrigin: true,
         },
       },

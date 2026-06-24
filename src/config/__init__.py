@@ -4,12 +4,13 @@ import json
 import yaml
 from pathlib import Path
 from src.utils.logging_config import setup_logger
-from src.settings import get_settings
+from src.settings import get_settings, PROJECT_ROOT
 
 logger = setup_logger("Config")
 
-# TODO
-with open('src/config/models.yaml', 'r', encoding='utf-8') as f:
+# 加载模型定义配置（不依赖进程 CWD）
+CONFIG_DIR = Path(__file__).parent
+with open(CONFIG_DIR / 'models.yaml', 'r', encoding='utf-8') as f:
     _models = yaml.safe_load(f)
 
 MODEL_NAMES = _models["MODEL_NAMES"]
@@ -85,7 +86,7 @@ class Config(SimpleConfig):
         # 可以在 config/base.yaml 中覆盖
         self.add_item("stream", default=True, des="是否开启流式输出")   # 流式输出
         # TODO
-        self.add_item("save_dir", default="src/saves", des="保存目录")   # 保存目录
+        self.add_item("save_dir", default=str(PROJECT_ROOT / "src" / "saves"), des="保存目录")   # 保存目录
         # 功能选项
         self.add_item("enable_reranker", default=True, des="是否开启重排序")
         self.add_item("enable_knowledge_base", default=False, des="是否开启知识库")
