@@ -316,10 +316,10 @@ div.header, #app-router-view {
 .header .nav {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   position: relative;
-  height: 45px;
+  height: auto;
   gap: 16px;
 }
 
