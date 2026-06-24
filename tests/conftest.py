@@ -1,0 +1,9 @@
+# ============================================================
+# Pytest 配置 - 设置 Python 路径以支持 src 模块导入
+# ============================================================
+import sys
+from pathlib import Path
+
+# 将项目根目录添加到 Python 路径
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
