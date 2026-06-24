@@ -38,6 +38,9 @@
           <div class="flex-center">
             流式输出 <div @click.stop><a-switch v-model:checked="meta.stream" /></div>
           </div>
+          <div class="flex-center" @click="setVirtualHumanEnabled(!virtualHumanEnabled)">
+            数字虚拟人 <div @click.stop><a-switch :checked="virtualHumanEnabled" @change="setVirtualHumanEnabled" /></div>
+          </div>
           <div class="flex-center" @click="meta.summary_title = !meta.summary_title">
             总结对话标题 <div @click.stop><a-switch v-model:checked="meta.summary_title" /></div>
           </div>
@@ -203,7 +206,9 @@
           v-if="message.role == 'received' && message.status == 'finished'"
           :message="message"
           :disabled="isStreaming"
+          :speaking-message-id="speakingMessageId"
           @delete-turn="deleteMessageTurn"
+          @speak-message="speakMessage"
         />
       </div>
     </div>
@@ -351,13 +356,29 @@ const userStore = useUserStore();
 // const openLoginModal = ref(false);
 const props = defineProps({
   conv: Object,
-  state: Object
+  state: Object,
+  virtualHumanEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  speakingMessageId: {
+    type: [String, Number],
+    default: null,
+  },
 })
 
-const emit = defineEmits(['rename-title', 'newconv', 'conv-created', 'load-older']);
+const emit = defineEmits([
+  'rename-title',
+  'newconv',
+  'conv-created',
+  'load-older',
+  'toggle-virtual-human',
+  'speak-message',
+  'assistant-finished',
+]);
 const configStore = useConfigStore()
 
-const { conv, state } = toRefs(props)
+const { conv, state, virtualHumanEnabled, speakingMessageId } = toRefs(props)
 const chatRoot = ref(null)
 const chatContainer = ref(null)
 const chatContent = ref(null)
@@ -562,6 +583,14 @@ const useDatabase = (index) => {
   meta.selectedKB = index
   meta.kbOptOut = false
   meta.db_name = selected?.metaname || null
+}
+
+const setVirtualHumanEnabled = (enabled) => {
+  emit('toggle-virtual-human', Boolean(enabled))
+}
+
+const speakMessage = (msg) => {
+  emit('speak-message', msg)
 }
 
 const handleKeyDown = (e) => {
@@ -943,6 +972,7 @@ const fetchTranslateResponse = (user_input, cur_res_id) => {
         updateMessage({ id: cur_res_id, status: 'finished', text: trimmed })
         conv.value.history = [...conv.value.history, [user_input, trimmed]]
         isStreaming.value = false
+        emit('assistant-finished', conv.value.messages.find((item) => item.id === cur_res_id))
         if (conv.value.messages.length === 2) {
           renameTitle()
         }
@@ -956,6 +986,7 @@ const fetchTranslateResponse = (user_input, cur_res_id) => {
     })
     isStreaming.value = false
     message.error(err.message || '翻译失败')
+    emit('assistant-finished', conv.value.messages.find((item) => item.id === cur_res_id))
   })
 }
 
@@ -963,6 +994,7 @@ const finishChatResponse = (cur_res_id) => {
   const message = conv.value.messages.find((item) => item.id === cur_res_id)
   if (message?.status === 'skill_code_approval' || message?.status === 'image_gen_confirm') {
     isStreaming.value = false
+    emit('assistant-finished', message)
     return
   }
   const useRetrieval = meta.enable_retrieval || message?.meta?.enable_retrieval
@@ -973,6 +1005,7 @@ const finishChatResponse = (cur_res_id) => {
       updateMessage({ id: cur_res_id, status: 'finished' })
     }
     isStreaming.value = false
+    emit('assistant-finished', message)
     if (conv.value.messages.length === 2) {
       renameTitle()
     }
@@ -1069,6 +1102,7 @@ const fetchChatResponse = (user_input, user_msg_id, cur_res_id, citedLiteratureP
         status: "error",
       });
       isStreaming.value = false;
+      emit('assistant-finished', conv.value.messages.find((item) => item.id === cur_res_id))
     });
 };
 
@@ -1232,10 +1266,26 @@ const retryMessage = (id) => {
   sendMessage();
 }
 
-const autoSend = (message) => {
-  conv.value.inputText = message
+const submitExternalMessage = (content) => {
+  const text = String(content || '').trim()
+  if (!text) return false
+  if (isStreaming.value) {
+    message.warning('当前回复尚未完成，请稍后再提问')
+    return false
+  }
+  conv.value.inputText = text
   sendMessage()
+  return true
 }
+
+const autoSend = (content) => {
+  return submitExternalMessage(content)
+}
+
+defineExpose({
+  submitExternalMessage,
+  autoSend,
+})
 
 // 图片上传
 let fileList = ref([]);

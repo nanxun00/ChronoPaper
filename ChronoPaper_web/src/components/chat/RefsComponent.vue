@@ -2,6 +2,10 @@
   <div class="refs" v-if="showRefs">
     <div class="tags">
       <span class="item btn" @click="copyText(msg.text)"><CopyOutlined /></span>
+      <span class="item btn" :class="{ active: isSpeaking }" @click="speakThisResponse(msg)">
+        <PauseOutlined v-if="isSpeaking" />
+        <SoundOutlined v-else />
+      </span>
       <span class="item btn" @click="likeThisResponse(msg)"><LikeOutlined /></span>
       <span class="item btn" @click="dislikeThisResponse(msg)"><DislikeOutlined /></span>
       <span class="item btn delete-btn" @click="deleteThisTurn(msg)">
@@ -114,6 +118,8 @@ import {
   GlobalOutlined,
   FileTextOutlined,
   CopyOutlined,
+  PauseOutlined,
+  SoundOutlined,
   LikeOutlined,
   DislikeOutlined,
   DeleteOutlined,
@@ -131,11 +137,19 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  speakingMessageId: {
+    type: [String, Number],
+    default: null,
+  },
 })
 
-const emit = defineEmits(['delete-turn'])
+const emit = defineEmits(['delete-turn', 'speak-message'])
 
 const msg = computed(() => props.message || {})
+const isSpeaking = computed(() => {
+  if (props.speakingMessageId == null || msg.value?.id == null) return false
+  return String(props.speakingMessageId) === String(msg.value.id)
+})
 
 const groupedResults = computed(() => msg.value.groupedResults || {})
 
@@ -209,6 +223,11 @@ const copyText = async (text) => {
 }
 
 // 其他方法
+const speakThisResponse = (target) => {
+  if (props.disabled) return
+  emit('speak-message', target)
+}
+
 const likeThisResponse = (msg) => {
   console.log('Like this response:', msg)
 }
@@ -292,6 +311,11 @@ const getPercent = (value) => {
       }
       &:active {
         background: var(--gray-300);
+      }
+
+      &.active {
+        background: var(--main-light-3);
+        color: var(--main-700);
       }
     }
 
