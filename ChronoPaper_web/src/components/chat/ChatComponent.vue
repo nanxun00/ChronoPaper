@@ -289,6 +289,12 @@
             v-model:target-lang="meta.translate_target_lang"
           />
           <PromptPicker @select="insertPrompt" />
+          <PromptEnhancer
+            :current-input="conv.inputText"
+            :context-info="promptEnhancerContext"
+            :is-streaming="isStreaming"
+            @apply="handlePromptEnhancerApply"
+          />
           <MemoryToggle v-model="meta.enable_memory" />
           <button
             type="button"
@@ -349,6 +355,7 @@ import SkillPicker from '@/components/chat/SkillPicker.vue'
 import ImageGenToggle from '@/components/chat/ImageGenToggle.vue'
 import TranslateToggle from '@/components/chat/TranslateToggle.vue'
 import PromptPicker from '@/components/chat/PromptPicker.vue'
+import PromptEnhancer from '@/components/chat/PromptEnhancer.vue'
 import MemoryToggle from '@/components/chat/MemoryToggle.vue'
 import MCPDocumentDialog from '@/components/chat/MCPDocumentDialog.vue'
 import MessageImages from '@/components/chat/MessageImages.vue'
@@ -552,6 +559,23 @@ const kbDisplayName = computed(() => {
     return '不使用'
   }
   return opts.databases[meta.selectedKB]?.name || '不使用'
+})
+
+const promptEnhancerContext = computed(() => {
+  const selectedDb = opts.databases[meta.selectedKB]
+  return {
+    retrievalEnabled: Boolean(meta.enable_retrieval),
+    knowledgeBaseActive: Boolean(meta.enable_retrieval && !meta.kbOptOut && selectedDb),
+    knowledgeBaseName: selectedDb?.name || '',
+    useGraph: Boolean(meta.enable_retrieval && meta.use_graph),
+    useWeb: Boolean(meta.enable_retrieval && meta.use_web),
+    memoryEnabled: Boolean(meta.enable_memory),
+    citations: citedLiterature.value.map((item) => ({
+      arxiv_id: item.arxiv_id,
+      title: item.title,
+      year: item.year || item.published_year || item.published_at,
+    })),
+  }
 })
 
 const marked = new Marked(
@@ -1212,6 +1236,35 @@ const insertPrompt = (content) => {
   const text = String(content || '').trim()
   if (!text) return
   conv.value.inputText = text
+  nextTick(() => {
+    const el = document.querySelector('.input-box .user-input textarea')
+    el?.focus?.()
+  })
+}
+
+const handlePromptEnhancerApply = ({ mode, content }) => {
+  const text = String(content || '').trim()
+  if (!text) return
+
+  if (mode === 'send') {
+    if (isStreaming.value) {
+      message.warning('当前回复尚未完成，请稍后再发送')
+      return
+    }
+    conv.value.inputText = text
+    sendMessage()
+    return
+  }
+
+  if (mode === 'insert') {
+    const current = String(conv.value.inputText || '').trim()
+    conv.value.inputText = current ? `${current}\n\n${text}` : text
+    message.success('已插入增强提示词')
+  } else {
+    conv.value.inputText = text
+    message.success('已替换为增强提示词')
+  }
+
   nextTick(() => {
     const el = document.querySelector('.input-box .user-input textarea')
     el?.focus?.()
