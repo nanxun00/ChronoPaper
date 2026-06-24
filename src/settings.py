@@ -121,6 +121,11 @@ class Settings(BaseSettings):
     memos_url: str = Field(default="", validation_alias="MEMOS_URL")
     memos_auth_token: str = Field(default="", validation_alias="MEMOS_AUTH_TOKEN")
 
+    # --- WebSearch 云端 Hosted MCP 搜索服务 ---
+    web_search_enabled: bool = Field(default=True, validation_alias="WEB_SEARCH_ENABLED")
+    web_search_url: str = Field(default="https://modelscope.cn/mcp/servers/slcatwujian/bing-cn-mcp-server", validation_alias="WEB_SEARCH_URL")
+    web_search_auth_token: str = Field(default="", validation_alias="WEB_SEARCH_AUTH_TOKEN")
+
     @field_validator("mysql_profile", mode="before")
     @classmethod
     def _normalize_mysql_profile(cls, value):

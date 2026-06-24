@@ -79,13 +79,15 @@ class ChatOpenAIBase():
     def _execute_tool_calls(self, tool_calls, *, user_id: str = "", session_id: str = ""):
         """执行模型的 tool_calls 并返回 ToolMessage 列表。
 
-        MemOS 实际工具名称：add_message / search_memory / delete_memory。
-        user_id/session_id 从上下文注入，不依赖工具 schema 参数。
+        支持 MemOS 工具 (add_message, search_memory, delete_memory)
+        以及 Web Search 工具 (bing_search, fetch_web_page 等)。
         """
         from langchain_core.messages import ToolMessage
         from src.services.memos import get_memory_service
+        from src.services.web_search import get_web_search_service
 
         memos_service = get_memory_service()
+        web_search_service = get_web_search_service()
         results = []
 
         for tc in tool_calls:
@@ -95,10 +97,8 @@ class ChatOpenAIBase():
 
             content = ""
             try:
+                # ── 记忆工具 (MemOS) ──────────────────────────────────
                 if tool_name == "add_message":
-                    # MemOS 的 add_message：conversation_first_message + messages
-                    # 强制使用 session_id 作为 conversation_first_message，
-                    # 确保所有记忆都存储在统一的会话标识下，便于后续检索。
                     messages = tool_args.get("messages", [])
                     msg_text = ""
                     if isinstance(messages, list):
@@ -110,7 +110,7 @@ class ChatOpenAIBase():
                         session_id=session_id,
                         content=msg_text.strip(),
                     )
-                    content = result.content or result.error
+                    content = result.get("content") or result.get("error")
                 elif tool_name == "search_memory":
                     query = tool_args.get("query", "")
                     result = memos_service.search_memory(
@@ -118,19 +118,25 @@ class ChatOpenAIBase():
                         session_id=session_id,
                         query=query,
                     )
-                    content = result.content or result.error
+                    content = result.get("content") or result.get("error")
                 elif tool_name == "delete_memory":
                     result = memos_service.clear_session_memory(
                         user_id=user_id,
                         session_id=session_id,
                     )
-                    content = result.content or result.error
+                    content = result.get("content") or result.get("error")
+                
+                # ── 联网搜索工具 (Hosted MCP) ─────────────────────────
+                # 如果不是记忆工具，尝试调用 WebSearch 服务（MCP 动态工具名）
                 else:
-                    content = f"未知工具: {tool_name}"
+                    result = web_search_service.call_tool(tool_name, tool_args)
+                    content = result.get("content") or result.get("error")
+                    if not content and not result.get("ok"):
+                        content = f"工具执行失败或返回为空: {tool_name}"
             except Exception as exc:
-                content = f"工具执行失败: {exc}"
+                content = f"工具执行异常: {exc}"
 
-            results.append(ToolMessage(content=content, tool_call_id=tool_id))
+            results.append(ToolMessage(content=str(content), tool_call_id=tool_id))
 
         return results
 

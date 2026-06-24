@@ -251,6 +251,17 @@ def _get_memory_tools(enable_memory: bool) -> list:
     return memos_service.get_tools_schema(enable_memory=True)
 
 
+def _get_web_search_tools(enable_web_search: bool) -> list:
+    """根据 enable_web_search 开关获取联网搜索工具 Schema。"""
+    if not enable_web_search:
+        return []
+    from src.services.web_search import get_web_search_service
+    web_search_service = get_web_search_service()
+    if not web_search_service.is_enabled:
+        return []
+    return web_search_service.get_tools_schema(enable_web_search=True)
+
+
 def _apply_image_gen_result(
     *,
     img: dict,
@@ -597,28 +608,25 @@ def chat_post(
             response_content = {"reasoning_content": "", "content": content}
         else:
             memory_tools = _get_memory_tools(meta.get("enable_memory", False))
-            # 启用记忆时，注入系统提示词引导模型调用记忆工具
-            if memory_tools:
-                from langchain_core.messages import SystemMessage
-                memory_system_prompt = SystemMessage(
-                    content=(
-                        "【记忆功能已启用】你拥有长期记忆工具。当用户分享以下信息时，"
-                        "请务必调用 add_message 工具将关键信息存入长期记忆：\n"
-                        "1. 用户的个人偏好（喜欢的食物、颜色、音乐、运动、书籍、电影等）\n"
-                        "2. 用户的研究方向、研究领域、研究兴趣\n"
-                        "3. 用户的学习目标、职业规划\n"
-                        "4. 用户的工作信息（职位、公司、项目等）\n"
-                        "5. 用户的生活习惯（作息时间、运动习惯等）\n"
-                        "6. 用户的知识获取方式偏好\n"
-                        "7. 用户分享的任何重要个人信息或需求\n\n"
-                        "调用 add_message 时，messages 参数格式为：\n"
-                        '[{"role": "user", "content": "用户说的话"}, {"role": "assistant", "content": "你的回复"}]\n\n'
-                        "如果用户没有分享新的关键信息，则不需要调用记忆工具。"
-                    )
+            web_search_tools = _get_web_search_tools(meta.get("enable_web_search", False))
+            all_tools = (memory_tools or []) + (web_search_tools or [])
+
+            # 注入系统提示词强制引导模型直接调用工具
+            system_instructions = []
+            if web_search_tools:
+                system_instructions.append(
+                    "【强制指令】联网搜索功能已开启。当用户询问实时信息时，你必须立即调用 `bing_search` 工具。"
                 )
-                messages = [memory_system_prompt] + messages
+            if memory_tools:
+                system_instructions.append(
+                    "【强制指令】记忆功能已开启。当用户提到个人信息时，请调用 `add_message` 存入记忆。"
+                )
+
+            if system_instructions:
+                messages = [{"role": "system", "content": "\n".join(system_instructions)}] + messages
+
             message = startup.model.predict(
-                messages, stream=False, tools=memory_tools or None,
+                messages, stream=False, tools=all_tools or None,
                 user_id=user_id, session_id=conv_id,
             )
             response_content, content = _message_to_response_content(message)
@@ -765,12 +773,31 @@ def chat_post(
                 )
                 yield chunk
         else:
-            # 如果启用了记忆工具，使用非流式调用（Function Calling 需要完整响应处理工具调用）
+            # 如果启用了记忆工具或联网搜索工具，使用非流式调用（Function Calling 需要完整响应处理工具调用）
             memory_tools = _get_memory_tools(meta.get("enable_memory", False))
-            if memory_tools:
+            web_search_tools = _get_web_search_tools(meta.get("enable_web_search", False))
+            all_tools = (memory_tools or []) + (web_search_tools or [])
+
+            if all_tools:
+                # 注入系统提示词强制引导模型直接调用工具，禁止废话
+                system_instructions = []
+                if web_search_tools:
+                    system_instructions.append(
+                        "【强制指令】联网搜索功能已开启。当用户询问实时信息（如：今天的新闻、最新的论文、当前日期等）时，"
+                        "你必须立即调用 `bing_search` 工具。禁止回答你无法获取实时信息，禁止在调用前进行任何解释。"
+                    )
+                if memory_tools:
+                    system_instructions.append(
+                        "【强制指令】记忆功能已开启。当用户提到个人信息、偏好或研究背景时，请调用 `add_message` 存入记忆。"
+                    )
+                
+                if system_instructions:
+                    # 统一使用 dict 格式，确保与 history 格式一致
+                    messages = [{"role": "system", "content": "\n".join(system_instructions)}] + messages
+
                 # 使用非流式调用，支持工具调用循环
                 message = startup.model.predict(
-                    messages, stream=False, tools=memory_tools,
+                    messages, stream=False, tools=all_tools,
                     user_id=user_id, session_id=conv_id,
                 )
                 response_content, content = _message_to_response_content(message)

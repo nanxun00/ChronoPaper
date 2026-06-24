@@ -296,6 +296,7 @@
             @apply="handlePromptEnhancerApply"
           />
           <MemoryToggle v-model="meta.enable_memory" />
+          <WebSearchToggle v-model="meta.enable_web_search" />
           <button
             type="button"
             class="tool-chip tool-chip--doc-gen"
@@ -357,6 +358,7 @@ import TranslateToggle from '@/components/chat/TranslateToggle.vue'
 import PromptPicker from '@/components/chat/PromptPicker.vue'
 import PromptEnhancer from '@/components/chat/PromptEnhancer.vue'
 import MemoryToggle from '@/components/chat/MemoryToggle.vue'
+import WebSearchToggle from '@/components/chat/WebSearchToggle.vue'
 import MCPDocumentDialog from '@/components/chat/MCPDocumentDialog.vue'
 import MessageImages from '@/components/chat/MessageImages.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
@@ -542,6 +544,7 @@ const DEFAULT_CHAT_META = {
   translate_mode: false,
   translate_target_lang: 'zh',
   enable_memory: false,
+  enable_web_search: false,
 }
 
 const meta = reactive({
