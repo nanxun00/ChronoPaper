@@ -13,7 +13,58 @@ const registerData = ref({
   username: '',
   password1: '',
   password2: '',
+  email: '',
+  captcha: '',
 });
+
+const countdown = ref(0);
+const isSending = ref(false);
+
+const sendCaptcha = async () => {
+  if (!registerData.value.email) {
+    message.error('请先输入邮箱');
+    return;
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(registerData.value.email)) {
+    message.error('请输入有效的邮箱地址');
+    return;
+  }
+
+  // 立即开始倒计时
+  countdown.value = 60;
+  const timer = setInterval(() => {
+    countdown.value--;
+    if (countdown.value <= 0) {
+      clearInterval(timer);
+    }
+  }, 1000);
+
+  isSending.value = true;
+  try {
+    const response = await fetch('/api/register/captcha', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: registerData.value.email })
+    });
+    
+    if (response.ok) {
+      message.success('验证码发送请求已提交，请注意查收');
+    } else {
+      const data = await response.json();
+      message.error(data.detail || '验证码发送失败');
+      // 如果后端报错（如邮箱已注册），重置倒计时
+      countdown.value = 0;
+      clearInterval(timer);
+    }
+  } catch (error) {
+    message.error('网络请求失败');
+    countdown.value = 0;
+    clearInterval(timer);
+  } finally {
+    isSending.value = false;
+  }
+};
 
 const imageUrl = ref('');
 const beforeAvatarUpload = (rawFile) => {
@@ -48,20 +99,19 @@ const register = async () => {
       body: JSON.stringify({
         username: registerData.value.account,
         userid: registerData.value.username,
-        password: registerData.value.password1
+        password: registerData.value.password1,
+        email: registerData.value.email,
+        captcha: registerData.value.captcha
       })
     });
     if (response.ok) {
       const data = await response.json();
       console.log(data)
-      if (data.status_code == 200) {
-        message.success(data.detail);
-        switchToLogin();
-      } else {
-        message.error(data.detail || '注册失败');
-      }
+      message.success(data.message || '注册成功');
+      switchToLogin();
     } else {
-      message.error('注册失败');
+      const data = await response.json();
+      message.error(data.detail || '注册失败');
     }
   } catch (error) {
     message.error('注册请求失败');
@@ -86,11 +136,24 @@ const switchToLogin = () => {
     </el-form-item>
     <el-form-item class="form-item">
       <label class="form-label">设置密码：</label>
-      <el-input v-model="registerData.password1" placeholder="请输入登录密码" />
+      <el-input v-model="registerData.password1" placeholder="请输入登录密码" type="password" show-password />
     </el-form-item>
     <el-form-item class="form-item">
       <label class="form-label">确认密码：</label>
-      <el-input v-model="registerData.password2" placeholder="请再次输入登录密码" />
+      <el-input v-model="registerData.password2" placeholder="请再次输入登录密码" type="password" show-password />
+    </el-form-item>
+    <el-form-item class="form-item">
+      <label class="form-label">邮箱：</label>
+      <el-input v-model="registerData.email" placeholder="请输入邮箱地址" />
+    </el-form-item>
+    <el-form-item class="form-item">
+      <label class="form-label">验证码：</label>
+      <div style="display: flex; gap: 8px; width: 100%;">
+        <el-input v-model="registerData.captcha" placeholder="6位验证码" style="flex: 1;" />
+        <el-button :disabled="countdown > 0 || isSending" @click="sendCaptcha" style="width: 120px;">
+          {{ countdown > 0 ? `${countdown}s` : '获取验证码' }}
+        </el-button>
+      </div>
     </el-form-item>
   </el-form>
   <div class="link-container">
@@ -99,7 +162,7 @@ const switchToLogin = () => {
         <span></span>
   </div>
   <el-button class="register-button"
-    :disabled="!registerData.username || !registerData.account || !registerData.password1 || !registerData.password2"
+    :disabled="!registerData.username || !registerData.account || !registerData.password1 || !registerData.password2 || !registerData.email || !registerData.captcha"
     color="#3b82f6" size="large" @click="register">
     <span class="button-text">注册</span>
   </el-button>

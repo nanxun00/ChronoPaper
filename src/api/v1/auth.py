@@ -1,6 +1,6 @@
 import logging
 from io import BytesIO
-from fastapi import Body, Depends, FastAPI, HTTPException, status, Request, APIRouter
+from fastapi import Body, Depends, FastAPI, HTTPException, status, Request, APIRouter, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -9,7 +9,7 @@ from typing import Annotated
 from openai import BaseModel
 
 from src.login.config import config
-from src.models.auth import InsertUser, UpdateUser, SelectUserByUserID
+from src.models.auth import InsertUser, UpdateUser, SelectUserByUserID, select_user_by_email
 
 ACCESS_TOKEN_EXPIRE_MINUTES = config["token"]["expires_time"]
 ACCESS_TOKEN_DEFAULT_MINUTES = config["token"]["default_expires_time"]
@@ -47,9 +47,37 @@ async def log_request_details(request: Request):
 '''
 from src.utils.captcha import generate_captcha
 from src.utils.ttlcache import Cache, Error
+from src.utils.email import send_email_captcha
+import random
+import string
 
 _cache = Cache(max_size=300, ttl=300)  # 300个缓存，每个缓存5分钟
+_email_captcha_cache = Cache(max_size=500, ttl=300) # 邮箱验证码缓存 5分钟
 
+@login.post("/register/captcha")
+async def send_register_captcha(
+    background_tasks: BackgroundTasks,
+    email: str = Body(..., embed=True)
+):
+    """发送邮箱注册验证码"""
+    # 校验邮箱是否已被占用
+    existing_user = select_user_by_email(email)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="该邮箱已被注册")
+
+    if _email_captcha_cache.is_full():
+        raise HTTPException(status_code=429, detail="系统繁忙，请稍后再试")
+    
+    # 生成 6 位数字验证码
+    captcha = ''.join(random.choices(string.digits, k=6))
+    
+    # 存入缓存
+    _email_captcha_cache.add(email, captcha)
+    
+    # 异步发送邮件
+    background_tasks.add_task(send_email_captcha, email, captcha)
+    
+    return {"message": "验证码发送请求已提交，请注意查收"}
 
 @login.get("/captcha")
 def get_captcha():
@@ -208,15 +236,43 @@ class register(BaseModel):
     username: str
     userid: str
     password: str
+    email: str | None = None
+    captcha: str | None = None
 
 @login.post("/register")
 async def register(register: register):
-    result = InsertUser(username=register.username, userid=register.userid, password=register.password)
+    # 1. 校验验证码（优先级最高，先验证身份）
+    if register.email and register.captcha:
+        err, cached_captcha = _email_captcha_cache.get(register.email)
+        if err != Error.OK:
+            raise HTTPException(status_code=400, detail="验证码已过期，请重新获取")
+        if cached_captcha != register.captcha:
+            raise HTTPException(status_code=400, detail="验证码错误")
+
+    # 2. 校验账号是否已存在
+    existing_user_id = SelectUserByUserID(register.userid)
+    if existing_user_id:
+        raise HTTPException(status_code=400, detail="该账号已被占用，请更换")
+
+    # 3. 校验邮箱是否已被占用
+    if register.email:
+        existing_email = select_user_by_email(register.email)
+        if existing_email:
+            raise HTTPException(status_code=400, detail="该邮箱已被注册，请直接登录")
+
+    # 4. 执行插入
+    result = InsertUser(
+        username=register.username, 
+        userid=register.userid, 
+        password=register.password,
+        email=register.email
+    )
     if result:
-        logging.info("注册成功")
-        return HTTPException(status_code=200, detail="注册成功！")
+        logging.info(f"用户 {register.userid} 注册成功")
+        return {"message": "注册成功！"}
     else:
-        return HTTPException(status_code=500, detail="用户已存在！")
+        # 兜底错误，通常是数据库连接问题或未预料的冲突
+        raise HTTPException(status_code=500, detail="注册失败，请稍后再试")
 
 
 class change(BaseModel):

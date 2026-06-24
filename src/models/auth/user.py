@@ -3,6 +3,9 @@ from sqlalchemy import Column, Integer, String
 
 from src.models.base import Base, SessionLocal
 from src.utils.password import get_password_hash
+import logging
+
+logger = logging.getLogger("ChronoPaper.user")
 
 ADMIN_BCRYPT_HASH = "$2b$12$XbGyrM6BlwUSENpc0lXxIOlFsNSXJIrN/dCoa2LVOZS/SMXXIkPri"
 
@@ -12,25 +15,27 @@ class UserModel(Base):
 
     userid = Column(String(255), primary_key=True)
     username = Column(String(255), nullable=False)
-    email = Column(String(255))
+    email = Column(String(255), unique=True)
     full_name = Column(String(255))
     password = Column(String(255), nullable=False)
     roleid = Column(Integer, default=0)
 
 
-def insert_user(username: str, userid: str, password: str) -> bool:
+def insert_user(username: str, userid: str, password: str, email: str = None) -> bool:
     session = SessionLocal()
     try:
         user = UserModel(
             userid=userid,
             username=username,
+            email=email,
             password=get_password_hash(password),
             roleid=0,
         )
         session.add(user)
         session.commit()
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error inserting user: {str(e)}")
         session.rollback()
         return False
     finally:
@@ -101,9 +106,19 @@ def ensure_default_admin() -> None:
         session.close()
 
 
+def select_user_by_email(email: str):
+    session = SessionLocal()
+    try:
+        user = session.query(UserModel).filter_by(email=email).first()
+        return _detach_user(session, user)
+    finally:
+        session.close()
+
+
 # Backward-compatible aliases
 InsertUser = insert_user
 UpdateUser = update_user
 SelectUserByUserID = select_user_by_userid
+SelectUserByEmail = select_user_by_email
 SelectUserByUserName = select_user_by_username
 DbSession = SessionLocal
