@@ -29,6 +29,11 @@ from src.services.chat import (
 from src.services.rag import HistoryManager
 from src.services.rag.startup import startup
 from src.services.memos import get_memory_service
+from src.integrations.native_tools.intent import (
+    is_simple_datetime_query,
+    query_needs_datetime,
+    query_needs_native_tools,
+)
 from src.utils.logging_config import setup_logger
 
 chat = APIRouter(prefix="/chat")
@@ -327,34 +332,6 @@ def _build_tool_system_instructions(meta: dict) -> list[str]:
     return instructions
 
 
-def _query_needs_native_tools(query: str) -> bool:
-    """判断问题是否需要日期/天气原生 Tool。"""
-    q = (query or "").strip()
-    if not q:
-        return False
-    keywords = (
-        "天气", "气温", "温度", "下雨", "下雪", "降雨", "风力", "湿度",
-        "几点", "几号", "多少号", "星期", "周几", "礼拜", "今天", "明天",
-        "现在几", "当前时间", "现在时间", "今天日期", "今天是哪天", "哪天",
-        "what time", "what date", "weather",
-    )
-    q_lower = q.casefold()
-    return any((kw in q) if any("\u4e00" <= c <= "\u9fff" for c in kw) else (kw in q_lower) for kw in keywords)
-
-
-def _query_needs_datetime(query: str) -> bool:
-    q = (query or "").strip()
-    if not q:
-        return False
-    keywords = (
-        "几点", "几号", "多少号", "星期", "周几", "礼拜", "今天", "明天",
-        "现在几", "当前时间", "现在时间", "今天日期", "今天是哪天", "哪天",
-        "what time", "what date", "日期",
-    )
-    q_lower = q.casefold()
-    return any((kw in q) if any("\u4e00" <= c <= "\u9fff" for c in kw) else (kw in q_lower) for kw in keywords)
-
-
 def _needs_tool_calling_route(meta: dict, query: str = "") -> bool:
     """是否走 Function Calling（非流式整段返回）路径。"""
     if not _is_stream_enabled(meta):
@@ -363,7 +340,7 @@ def _needs_tool_calling_route(meta: dict, query: str = "") -> bool:
     web_search_tools = _get_web_search_tools(meta.get("enable_web_search", False))
     if memory_tools or web_search_tools:
         return True
-    return _query_needs_native_tools(query)
+    return query_needs_native_tools(query)
 
 
 def _runtime_context_lines(query: str = "") -> list[str]:
@@ -378,7 +355,7 @@ def _runtime_context_lines(query: str = "") -> list[str]:
         lines.append(
             f"当前服务器时间（{dt['timezone']}）：{dt['formatted']}，{dt['weekday']}。"
         )
-    if _query_needs_datetime(query):
+    if query_needs_datetime(query):
         lines.append(
             "【强制指令】用户正在询问日期或时间，你必须先调用 get_current_datetime，"
             "并严格依据工具返回的 date / weekday / formatted 字段回答，禁止凭记忆猜测。"
@@ -395,10 +372,44 @@ def _prepend_system_instructions(messages: list, instructions: list[str]) -> lis
     if not instructions:
         return messages
     content = "\n".join(instructions)
-    if messages and messages[0].get("role") == "system":
-        merged = f"{messages[0].get('content', '').strip()}\n\n{content}".strip()
-        return [{"role": "system", "content": merged}, *messages[1:]]
+    if messages:
+        first = messages[0]
+        role = first.get("role") if isinstance(first, dict) else getattr(first, "type", None)
+        if role in ("system", "systemmessage"):
+            existing = first.get("content") if isinstance(first, dict) else getattr(first, "content", "")
+            merged = f"{str(existing or '').strip()}\n\n{content}".strip()
+            if isinstance(first, dict):
+                return [{"role": "system", "content": merged}, *messages[1:]]
+            from langchain_core.messages import SystemMessage
+
+            return [SystemMessage(content=merged), *messages[1:]]
     return [{"role": "system", "content": content}, *messages]
+
+
+def _answer_via_datetime_tool(query: str) -> str | None:
+    """服务端直接调用 get_current_datetime，避免模型编造日期。"""
+    if not is_simple_datetime_query(query):
+        return None
+    import json
+
+    from src.services.native_tools import get_native_tool_service
+
+    result = get_native_tool_service().call_tool(
+        "get_current_datetime",
+        {"timezone": "Asia/Shanghai"},
+    )
+    if not result.get("ok"):
+        return None
+    dt = json.loads(result.get("content") or "{}")
+    if not dt.get("ok"):
+        return None
+    date_part = str(dt.get("formatted") or dt.get("date") or "").split(" ")[0]
+    weekday = dt.get("weekday") or ""
+    if date_part and weekday:
+        return f"今天是 {date_part}（{weekday}）。"
+    if date_part:
+        return f"今天是 {date_part}。"
+    return None
 
 
 def _apply_image_gen_result(
@@ -742,7 +753,11 @@ def chat_post(
         messages = _inject_skill_system(messages, skill_system)
         history_manager.add_user(query)
         skill_id = (refs or {}).get("skill", {}).get("skill_id")
-        if _should_use_skill_agent(meta, skill_system, refs) and skill_id:
+        direct_content = _answer_via_datetime_tool(query)
+        if direct_content and not (_should_use_skill_agent(meta, skill_system, refs) and skill_id):
+            content = direct_content
+            response_content = {"reasoning_content": "", "content": content}
+        elif _should_use_skill_agent(meta, skill_system, refs) and skill_id:
             content = _run_skill_agent(startup.model, messages, skill_id)
             response_content = {"reasoning_content": "", "content": content}
         else:
@@ -860,7 +875,17 @@ def chat_post(
         # 与前端「流式输出」开关一致：关则整段返回，开则逐 token 推送 loading
         llm_stream = use_stream
 
-        if use_agent:
+        direct_content = _answer_via_datetime_tool(query)
+        if direct_content and not use_agent:
+            content = direct_content
+            response_content["content"] = content
+            chunk = make_chunk(
+                response_content,
+                "loading",
+                history=history_manager.update_ai(content),
+            )
+            yield chunk
+        elif use_agent:
             from src.services.skills.agent import iter_skill_agent
             from src.services.skills.registry import get_skill_registry
 

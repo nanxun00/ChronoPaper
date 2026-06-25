@@ -54,6 +54,9 @@ class ChatOpenAIBase():
 
         # 如果模型没有调用工具，直接返回
         if not getattr(response, "tool_calls", None):
+            forced = self._maybe_force_datetime_tool(messages, tools, bound_client)
+            if forced is not None:
+                return forced
             return response
 
         # 执行工具调用并循环
@@ -75,6 +78,55 @@ class ChatOpenAIBase():
                 break
 
         return response
+
+    def _maybe_force_datetime_tool(self, messages, tools, bound_client):
+        """模型未主动调用日期工具时，服务端补执行一次。"""
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        from src.integrations.native_tools.intent import query_needs_datetime
+        from src.services.native_tools import get_native_tool_service
+
+        tool_names = {
+            (t.get("function") or {}).get("name")
+            for t in (tools or [])
+            if isinstance(t, dict)
+        }
+        if "get_current_datetime" not in tool_names:
+            return None
+
+        last_user = ""
+        for item in reversed(messages or []):
+            if isinstance(item, dict):
+                if item.get("role") == "user":
+                    last_user = str(item.get("content") or "")
+                    break
+            else:
+                role = getattr(item, "type", "") or item.__class__.__name__.lower()
+                if "human" in role or role == "user":
+                    last_user = str(getattr(item, "content", "") or "")
+                    break
+        if not query_needs_datetime(last_user):
+            return None
+
+        result = get_native_tool_service().call_tool(
+            "get_current_datetime",
+            {"timezone": "Asia/Shanghai"},
+        )
+        tool_text = result.get("content") or result.get("error") or ""
+        if not tool_text:
+            return None
+
+        followup = list(messages) + [
+            SystemMessage(
+                content=(
+                    "用户正在询问日期或时间。以下是 get_current_datetime 的返回，"
+                    "请严格据此回答，不要修改日期和星期：\n"
+                    f"{tool_text}"
+                )
+            ),
+            HumanMessage(content=last_user),
+        ]
+        return bound_client.invoke(followup, stream=False)
 
     def _execute_tool_calls(self, tool_calls, *, user_id: str = "", session_id: str = ""):
         """执行模型的 tool_calls 并返回 ToolMessage 列表。
