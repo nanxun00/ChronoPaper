@@ -29,6 +29,14 @@
         <PictureOutlined v-else />
         {{ artifact.name }}
       </span>
+      <span
+        v-if="documentArtifact"
+        class="item btn filetag skill-artifact-tag"
+        @click="openArtifact(documentArtifact)"
+      >
+        <FileTextOutlined />
+        {{ documentArtifact.name }}
+      </span>
       <span class="filetag item btn"
         v-for="(results, filename) in groupedResults"
         :key="filename"
@@ -156,6 +164,18 @@ const groupedResults = computed(() => msg.value.groupedResults || {})
 const skillArtifacts = computed(() => {
   const list = msg.value?.refs?.skill?.artifacts
   return Array.isArray(list) ? list : []
+})
+
+const documentArtifact = computed(() => {
+  const doc = msg.value?.refs?.document
+  if (!doc || typeof doc !== 'object') return null
+  const url = doc.url || doc.download_url
+  if (!url) return null
+  return {
+    name: doc.name || doc.title || 'document.docx',
+    url,
+    kind: doc.kind || 'file',
+  }
 })
 
 const artifactPreviewOpen = ref(false)

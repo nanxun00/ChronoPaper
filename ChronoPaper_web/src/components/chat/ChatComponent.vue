@@ -144,6 +144,10 @@
           <LoadingOutlined spin class="searching-msg-spinner" />
           <span>正在生成图像，请稍候…</span>
         </div>
+        <div v-else-if="message.status == 'document_generating' && isStreaming" class="searching-msg">
+          <LoadingOutlined spin class="searching-msg-spinner" />
+          <span>正在整理并生成文档，请稍候…</span>
+        </div>
         <div v-else-if="message.status == 'translating' && isStreaming && !message.text" class="searching-msg">
           <LoadingOutlined spin class="searching-msg-spinner" />
           <span>正在翻译…</span>
@@ -298,22 +302,8 @@
           />
           <MemoryToggle v-model="meta.enable_memory" />
           <WebSearchToggle v-model="meta.enable_web_search" />
-          <button
-            type="button"
-            class="tool-chip tool-chip--doc-gen"
-            :class="{ 'tool-chip--active': showDocDialog }"
-            @click="showDocDialog = true"
-            title="点击生成 DOCX/PDF 文档并自动下载"
-          >
-            <FileTextOutlined />
-            <span> 文档生成</span>
-          </button>
+          <DocumentGenToggle v-model="meta.document_gen_mode" />
         </div>
-
-        <MCPDocumentDialog
-          v-model:visible="showDocDialog"
-          @generate-document="handleGenerateDocument"
-        />
 
       </div>
       <p class="note">请注意辨别内容的可靠性 模型供应商：{{ configStore.config?.model_provider }}: {{ configStore.config?.model_name }}
@@ -360,7 +350,7 @@ import PromptPicker from '@/components/chat/PromptPicker.vue'
 import PromptEnhancer from '@/components/chat/PromptEnhancer.vue'
 import MemoryToggle from '@/components/chat/MemoryToggle.vue'
 import WebSearchToggle from '@/components/chat/WebSearchToggle.vue'
-import MCPDocumentDialog from '@/components/chat/MCPDocumentDialog.vue'
+import DocumentGenToggle from '@/components/chat/DocumentGenToggle.vue'
 import MessageImages from '@/components/chat/MessageImages.vue'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
 import { postChat, fetchChatRefs, callChat, deleteMessageTurn as deleteMessageTurnApi } from '@/api/chat'
@@ -498,7 +488,6 @@ const scrollToBottomIfNeeded = () => {
   }
 }
 const citedLiterature = ref([])
-const showDocDialog = ref(false)
 const canSend = computed(() => {
   return Boolean(conv.value.inputText?.trim()) || citedLiterature.value.length > 0
 })
@@ -548,6 +537,7 @@ const DEFAULT_CHAT_META = {
   translate_target_lang: 'zh',
   enable_memory: false,
   enable_web_search: false,
+  document_gen_mode: false,
 }
 
 const meta = reactive({
@@ -1281,111 +1271,6 @@ const handlePromptEnhancerApply = ({ mode, content }) => {
   })
 }
 
-const handleGenerateDocument = (docPayload) => {
-  const { title, content, format, template, fontFamily, fontSize, lineSpacing, includeToc, includePageNumbers } = docPayload
-  
-  // 使用相对路径走 Vite 代理
-  const api_url = '/tool'
-  
-  const requestBody = {
-    title,
-    content,
-    format: format.toLowerCase(),
-    template: template || 'academic',
-    font_family: fontFamily || 'Times New Roman',
-    font_size: fontSize || 12,
-    line_spacing: lineSpacing || 1.5,
-    include_toc: includeToc || false,
-    include_page_numbers: includePageNumbers || true,
-  }
-  
-  console.log('📝 文档生成请求:', JSON.stringify(requestBody, null, 2))
-  console.log('📡 请求地址:', '/tool/generate-document')
-    
-  fetch('/tool/generate-document', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody)
-  })
-  .then(async response => {
-    console.log(' 响应状态:', response.status, response.statusText)
-    const text = await response.text()
-    console.log('📦 原始响应文本:', text)
-    
-    try {
-      const data = JSON.parse(text)
-      console.log('📦 解析后的数据:', data)
-      console.log(' 所有字段:', Object.keys(data))
-      console.log('🔍 download_url 存在吗?', 'download_url' in data)
-      return data
-    } catch (e) {
-      console.error('❌ JSON 解析失败:', e)
-      throw new Error('响应不是有效的 JSON 格式')
-    }
-  })
-  .then(data => {
-    if (data.download_url) {
-      message.success('文档已生成，正在下载...')
-      // download_url 已经是完整路径，不需要再加前缀
-      const downloadUrl = data.download_url
-      console.log(' 下载链接:', downloadUrl)
-      
-      // 使用 fetch 获取文件 blob，避免被 Vue Router 拦截
-      fetch(downloadUrl, { method: 'GET' })
-        .then(async response => {
-          if (!response.ok) {
-            console.warn('️ 下载请求返回非 200 状态:', response.status)
-            return null // 静默处理，不显示错误
-          }
-          const blob = await response.blob()
-          const url = window.URL.createObjectURL(blob)
-          
-          const link = document.createElement('a')
-          link.href = url
-          link.download = data.filename || 'document.docx'
-          link.style.display = 'none'
-          document.body.appendChild(link)
-          link.click()
-          
-          setTimeout(() => {
-            document.body.removeChild(link)
-            window.URL.revokeObjectURL(url)
-          }, 100)
-        })
-        .catch(err => {
-          // 静默处理下载错误，不显示错误提示
-          console.warn('⚠️ 下载文件时出现错误（可能已成功）:', err.message)
-        })
-      
-      appendAiMessage(`**文档生成成功**\n\n- 标题: ${title}\n- 格式: ${format}\n- 文件大小: ${Math.round(data.file_size / 1024)} KB\n\n✅ 文档已自动下载，请查看浏览器下载目录。`)
-    } else if (data.doc_id) {
-      // 如果有 doc_id 但没有 download_url，构造下载链接
-      const downloadUrl = `${api_url}/tool/download-document/${data.doc_id}`
-      console.log('🔗 构造下载链接:', downloadUrl)
-      
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = `${data.doc_id}.${format.toLowerCase()}`
-      link.style.display = 'none'
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      
-      appendAiMessage(`**文档生成成功**\n\n- 标题: ${title}\n- 格式: ${format}\n\n✅ 文档已自动下载。`)
-    } else {
-      const errorMsg = data.detail || data.message || '文档生成失败'
-      console.error('❌ 生成失败:', errorMsg, data)
-      message.error(errorMsg)
-      appendAiMessage(`❌ 文档生成失败：${errorMsg}`)
-    }
-  })
-  .catch(err => {
-    console.error('❌ 请求失败:', err)
-    message.error(`请求失败：${err.message}`)
-    appendAiMessage(` 请求错误：${err.message}`)
-  })
-}
-
 // 更新后的 sendMessage 函数
 const sendMessage = () => {
   const user_input = conv.value.inputText.trim();
@@ -1719,6 +1604,16 @@ watch(
   () => meta.image_gen_mode,
   (enabled) => {
     if (enabled) meta.translate_mode = false
+  },
+)
+
+watch(
+  () => meta.document_gen_mode,
+  (enabled) => {
+    if (enabled) {
+      meta.image_gen_mode = false
+      meta.translate_mode = false
+    }
   },
 )
 

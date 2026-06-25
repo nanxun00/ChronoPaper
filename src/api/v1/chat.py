@@ -231,6 +231,37 @@ def _will_generate_image(query: str, meta: dict, user_id: str, conv_id: str) -> 
     return is_confirm_text(query)
 
 
+def _maybe_attach_generated_document(
+    *,
+    query: str,
+    assistant_content: str,
+    meta: dict,
+    model,
+    user_id: str,
+    cur_res_id: str,
+    refs: dict | None,
+) -> dict | None:
+    if not meta.get("document_gen_mode"):
+        return refs
+    if not (assistant_content or "").strip():
+        return refs
+
+    from src.services.document_gen.service import try_generate_document_from_turn
+
+    artifact = try_generate_document_from_turn(
+        query=query,
+        assistant_content=assistant_content,
+        model=model,
+    )
+    if not artifact:
+        return refs
+
+    merged = dict(refs or {})
+    merged["document"] = artifact
+    _refs_set(user_id, cur_res_id, merged)
+    return merged
+
+
 def _get_memory_tools(enable_memory: bool) -> list:
     """根据 enable_memory 开关获取 MemOS 工具 Schema。
 
@@ -631,6 +662,16 @@ def chat_post(
             )
             response_content, content = _message_to_response_content(message)
         refs = _refs_get(user_id, cur_res_id)
+        if meta.get("document_gen_mode") and content.strip():
+            refs = _maybe_attach_generated_document(
+                query=query,
+                assistant_content=content,
+                meta=meta,
+                model=startup.model,
+                user_id=user_id,
+                cur_res_id=cur_res_id,
+                refs=refs,
+            )
         updated_history = persist_turn(
             content,
             reasoning_content=response_content.get("reasoning_content") or "",
@@ -832,6 +873,17 @@ def chat_post(
                     yield chunk
 
         refs = _refs_get(user_id, cur_res_id)
+        if meta.get("document_gen_mode") and content.strip():
+            yield make_chunk("", "document_generating", history=None)
+            refs = _maybe_attach_generated_document(
+                query=query,
+                assistant_content=content,
+                meta=meta,
+                model=startup.model,
+                user_id=user_id,
+                cur_res_id=cur_res_id,
+                refs=refs,
+            )
         updated_history = persist_turn(
             content,
             reasoning_content=response_content.get("reasoning_content") or "",

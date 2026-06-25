@@ -237,6 +237,15 @@ def _slim_refs(refs) -> dict | None:
     for key in ("entities", "triples"):
         if refs.get(key):
             out[key] = refs[key]
+    document = refs.get("document")
+    if isinstance(document, dict) and document.get("url"):
+        out["document"] = {
+            "name": document.get("name") or document.get("title") or "document.docx",
+            "url": document.get("url"),
+            "kind": document.get("kind") or "file",
+            "format": document.get("format"),
+            "file_size": document.get("file_size"),
+        }
     return out or None
 
 
