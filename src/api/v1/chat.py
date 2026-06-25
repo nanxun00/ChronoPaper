@@ -293,6 +293,114 @@ def _get_web_search_tools(enable_web_search: bool) -> list:
     return web_search_service.get_tools_schema(enable_web_search=True)
 
 
+def _get_native_tools() -> list:
+    """原生 Tool（日期、天气），对话默认始终注入。"""
+    from src.services.native_tools import get_native_tool_service
+
+    return get_native_tool_service().get_tools_schema()
+
+
+def _assemble_chat_tools(meta: dict) -> list:
+    memory_tools = _get_memory_tools(meta.get("enable_memory", False))
+    web_search_tools = _get_web_search_tools(meta.get("enable_web_search", False))
+    return _get_native_tools() + (memory_tools or []) + (web_search_tools or [])
+
+
+def _build_tool_system_instructions(meta: dict) -> list[str]:
+    memory_tools = _get_memory_tools(meta.get("enable_memory", False))
+    web_search_tools = _get_web_search_tools(meta.get("enable_web_search", False))
+    instructions = [
+        "【环境工具】已启用原生 Tool：get_current_datetime、get_weather。"
+        "用户询问当前日期、时间、星期几时调用 get_current_datetime；"
+        "询问某地天气时调用 get_weather。"
+        "与日期/天气无关的问题不要调用这些工具。",
+    ]
+    if web_search_tools:
+        instructions.append(
+            "【强制指令】联网搜索功能已开启。当用户询问实时新闻、最新论文等需联网的信息时，"
+            "你必须立即调用 `bing_search` 工具。"
+        )
+    if memory_tools:
+        instructions.append(
+            "【强制指令】记忆功能已开启。当用户提到个人信息时，请调用 `add_message` 存入记忆。"
+        )
+    return instructions
+
+
+def _query_needs_native_tools(query: str) -> bool:
+    """判断问题是否需要日期/天气原生 Tool。"""
+    q = (query or "").strip()
+    if not q:
+        return False
+    keywords = (
+        "天气", "气温", "温度", "下雨", "下雪", "降雨", "风力", "湿度",
+        "几点", "几号", "多少号", "星期", "周几", "礼拜", "今天", "明天",
+        "现在几", "当前时间", "现在时间", "今天日期", "今天是哪天", "哪天",
+        "what time", "what date", "weather",
+    )
+    q_lower = q.casefold()
+    return any((kw in q) if any("\u4e00" <= c <= "\u9fff" for c in kw) else (kw in q_lower) for kw in keywords)
+
+
+def _query_needs_datetime(query: str) -> bool:
+    q = (query or "").strip()
+    if not q:
+        return False
+    keywords = (
+        "几点", "几号", "多少号", "星期", "周几", "礼拜", "今天", "明天",
+        "现在几", "当前时间", "现在时间", "今天日期", "今天是哪天", "哪天",
+        "what time", "what date", "日期",
+    )
+    q_lower = q.casefold()
+    return any((kw in q) if any("\u4e00" <= c <= "\u9fff" for c in kw) else (kw in q_lower) for kw in keywords)
+
+
+def _needs_tool_calling_route(meta: dict, query: str = "") -> bool:
+    """是否走 Function Calling（非流式整段返回）路径。"""
+    if not _is_stream_enabled(meta):
+        return True
+    memory_tools = _get_memory_tools(meta.get("enable_memory", False))
+    web_search_tools = _get_web_search_tools(meta.get("enable_web_search", False))
+    if memory_tools or web_search_tools:
+        return True
+    return _query_needs_native_tools(query)
+
+
+def _runtime_context_lines(query: str = "") -> list[str]:
+    """注入服务器实时上下文，避免模型凭训练数据编造日期。"""
+    import json
+
+    from src.integrations.native_tools.datetime_tool import get_current_datetime
+
+    lines: list[str] = []
+    dt = get_current_datetime("Asia/Shanghai")
+    if dt.get("ok"):
+        lines.append(
+            f"当前服务器时间（{dt['timezone']}）：{dt['formatted']}，{dt['weekday']}。"
+        )
+    if _query_needs_datetime(query):
+        lines.append(
+            "【强制指令】用户正在询问日期或时间，你必须先调用 get_current_datetime，"
+            "并严格依据工具返回的 date / weekday / formatted 字段回答，禁止凭记忆猜测。"
+        )
+        if dt.get("ok"):
+            lines.append(
+                "get_current_datetime 工具结果（可直接引用）："
+                + json.dumps(dt, ensure_ascii=False)
+            )
+    return lines
+
+
+def _prepend_system_instructions(messages: list, instructions: list[str]) -> list:
+    if not instructions:
+        return messages
+    content = "\n".join(instructions)
+    if messages and messages[0].get("role") == "system":
+        merged = f"{messages[0].get('content', '').strip()}\n\n{content}".strip()
+        return [{"role": "system", "content": merged}, *messages[1:]]
+    return [{"role": "system", "content": content}, *messages]
+
+
 def _apply_image_gen_result(
     *,
     img: dict,
@@ -638,26 +746,12 @@ def chat_post(
             content = _run_skill_agent(startup.model, messages, skill_id)
             response_content = {"reasoning_content": "", "content": content}
         else:
-            memory_tools = _get_memory_tools(meta.get("enable_memory", False))
-            web_search_tools = _get_web_search_tools(meta.get("enable_web_search", False))
-            all_tools = (memory_tools or []) + (web_search_tools or [])
-
-            # 注入系统提示词强制引导模型直接调用工具
-            system_instructions = []
-            if web_search_tools:
-                system_instructions.append(
-                    "【强制指令】联网搜索功能已开启。当用户询问实时信息时，你必须立即调用 `bing_search` 工具。"
-                )
-            if memory_tools:
-                system_instructions.append(
-                    "【强制指令】记忆功能已开启。当用户提到个人信息时，请调用 `add_message` 存入记忆。"
-                )
-
-            if system_instructions:
-                messages = [{"role": "system", "content": "\n".join(system_instructions)}] + messages
+            all_tools = _assemble_chat_tools(meta)
+            system_instructions = _build_tool_system_instructions(meta) + _runtime_context_lines(query)
+            messages = _prepend_system_instructions(messages, system_instructions)
 
             message = startup.model.predict(
-                messages, stream=False, tools=all_tools or None,
+                messages, stream=False, tools=all_tools,
                 user_id=user_id, session_id=conv_id,
             )
             response_content, content = _message_to_response_content(message)
@@ -814,39 +908,20 @@ def chat_post(
                 )
                 yield chunk
         else:
-            # 如果启用了记忆工具或联网搜索工具，使用非流式调用（Function Calling 需要完整响应处理工具调用）
-            memory_tools = _get_memory_tools(meta.get("enable_memory", False))
-            web_search_tools = _get_web_search_tools(meta.get("enable_web_search", False))
-            all_tools = (memory_tools or []) + (web_search_tools or [])
+            if _needs_tool_calling_route(meta, query):
+                all_tools = _assemble_chat_tools(meta)
+                system_instructions = _build_tool_system_instructions(meta) + _runtime_context_lines(query)
+                messages = _prepend_system_instructions(messages, system_instructions)
 
-            if all_tools:
-                # 注入系统提示词强制引导模型直接调用工具，禁止废话
-                system_instructions = []
-                if web_search_tools:
-                    system_instructions.append(
-                        "【强制指令】联网搜索功能已开启。当用户询问实时信息（如：今天的新闻、最新的论文、当前日期等）时，"
-                        "你必须立即调用 `bing_search` 工具。禁止回答你无法获取实时信息，禁止在调用前进行任何解释。"
-                    )
-                if memory_tools:
-                    system_instructions.append(
-                        "【强制指令】记忆功能已开启。当用户提到个人信息、偏好或研究背景时，请调用 `add_message` 存入记忆。"
-                    )
-                
-                if system_instructions:
-                    # 统一使用 dict 格式，确保与 history 格式一致
-                    messages = [{"role": "system", "content": "\n".join(system_instructions)}] + messages
-
-                # 使用非流式调用，支持工具调用循环
                 message = startup.model.predict(
                     messages, stream=False, tools=all_tools,
                     user_id=user_id, session_id=conv_id,
                 )
                 response_content, content = _message_to_response_content(message)
-                # 生成一个包含完整内容的块
                 chunk = make_chunk(response_content, "loading", history=history_manager.update_ai(content))
                 yield chunk
             else:
-                # 正常的流式调用
+                messages = _prepend_system_instructions(messages, _runtime_context_lines(query))
                 for delta in startup.model.predict(messages, stream=llm_stream):
                     if not delta.content:
                         continue

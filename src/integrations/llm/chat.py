@@ -80,14 +80,17 @@ class ChatOpenAIBase():
         """执行模型的 tool_calls 并返回 ToolMessage 列表。
 
         支持 MemOS 工具 (add_message, search_memory, delete_memory)
-        以及 Web Search 工具 (bing_search, fetch_web_page 等)。
+        以及 Web Search 工具 (bing_search, fetch_web_page 等)
+        以及原生 Tool (get_current_datetime, get_weather)。
         """
         from langchain_core.messages import ToolMessage
         from src.services.memos import get_memory_service
+        from src.services.native_tools import NATIVE_TOOL_NAMES, get_native_tool_service
         from src.services.web_search import get_web_search_service
 
         memos_service = get_memory_service()
         web_search_service = get_web_search_service()
+        native_tool_service = get_native_tool_service()
         results = []
 
         for tc in tool_calls:
@@ -125,9 +128,16 @@ class ChatOpenAIBase():
                         session_id=session_id,
                     )
                     content = result.get("content") or result.get("error")
-                
+
+                # ── 原生 Tool（日期 / 天气）──────────────────────────
+                elif tool_name in NATIVE_TOOL_NAMES:
+                    result = native_tool_service.call_tool(tool_name, tool_args)
+                    content = result.get("content") or result.get("error")
+                    if not content and not result.get("ok"):
+                        content = f"工具执行失败或返回为空: {tool_name}"
+
                 # ── 联网搜索工具 (Hosted MCP) ─────────────────────────
-                # 如果不是记忆工具，尝试调用 WebSearch 服务（MCP 动态工具名）
+                # 如果不是记忆/原生工具，尝试调用 WebSearch 服务（MCP 动态工具名）
                 else:
                     result = web_search_service.call_tool(tool_name, tool_args)
                     content = result.get("content") or result.get("error")
