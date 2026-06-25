@@ -8,7 +8,7 @@ PDF 解析能力来自 [MinerU](https://github.com/opendatalab/MinerU)（Apache 
 - 许可全文：`src/third_party/mineru/LICENSE.md`
 - 项目级说明：`NOTICE`（仓库根目录）
 
-ChronoPaper 通过 `src/third_party/mineru_bootstrap.py` 加载该包，无需依赖仓库根目录下的 `MinerU/` 子目录。
+ChronoPaper 通过 `src/third_party/mineru_bootstrap.py` 加载该包。
 
 运行依赖（按需安装）：
 

@@ -30,13 +30,31 @@ def _normalize_auth_token(token: str) -> str:
 def _format_request_error(exc: Exception) -> str:
     """将 requests 异常转为前端可读的提示。"""
     response = getattr(exc, "response", None)
-    if response is not None and response.status_code == 401:
-        return (
-            "ModelScope MCP 认证失败（401）。请在项目根目录 .env 中配置有效的 "
-            "MEMOS_AUTH_TOKEN（魔搭访问令牌：https://modelscope.cn/my/myaccesstoken），"
-            "保存后点击「重启服务」并再次刷新记忆。若暂不使用长期记忆，可将 MEMOS_ENABLED 设为 false。"
-        )
+    if response is not None:
+        status = response.status_code
+        body = (response.text or "")[:500]
+        if status == 401:
+            return (
+                "ModelScope MCP 认证失败（401）。请在项目根目录 .env 中配置有效的 "
+                "MEMOS_AUTH_TOKEN，"
+                "保存后点击「重启服务」并再次刷新记忆。若暂不使用长期记忆，可将 MEMOS_ENABLED 设为 false。"
+            )
+        if status == 410 or "Url is expired" in body or "url is expired" in body.lower():
+            return (
+                "MemOS地址已过期（410）。请重新部署/刷新 MemOS 服务，"
+                "将新的 MEMOS_URL 写入 .env 后重启后端。Hosted MCP 链接有时效，过期后必须更换。"
+            )
     return str(exc)
+
+
+def _is_url_expired_error(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return False
+    if response.status_code == 410:
+        return True
+    body = (response.text or "").lower()
+    return "url is expired" in body
 
 
 @dataclass
@@ -77,14 +95,28 @@ class MemosMCPClient:
         self._mcp_session_id: str | None = None
         self._tools: list[dict] = []
         self._last_error: str = ""
+        self._url_expired: bool = False
+
+    @property
+    def url_expired(self) -> bool:
+        return self._url_expired
+
+    def _mark_disconnected(self, exc: Exception | None = None) -> None:
+        self._mcp_session_id = None
+        self._tools = []
+        if exc is not None:
+            self._last_error = _format_request_error(exc)
+            if _is_url_expired_error(exc):
+                self._url_expired = True
 
     # ── 连接与会话管理 ──────────────────────────────────────────────
 
     def connect(self) -> list[dict]:
         """初始化 MCP 连接，获取可用工具列表。"""
+        if self._url_expired:
+            return []
         try:
             headers = self._headers()
-            # 初始化会话
             init_payload = {
                 "jsonrpc": "2.0",
                 "id": str(uuid.uuid4()),
@@ -103,20 +135,17 @@ class MemosMCPClient:
             )
             resp.raise_for_status()
 
-            # 保存服务器返回的 Mcp-Session-Id
             mcp_session_id = resp.headers.get("Mcp-Session-Id", "")
             if mcp_session_id:
                 self._mcp_session_id = mcp_session_id
                 logger.info("MemOS MCP session established: %s", mcp_session_id[:20])
 
-            # 发送 initialized 通知
             notif = {
                 "jsonrpc": "2.0",
                 "method": "notifications/initialized",
             }
             requests.post(self.url, headers=self._headers(), json=notif, timeout=10)
 
-            # 获取工具列表
             tools_resp = requests.post(
                 self.url,
                 headers=self._headers(),
@@ -131,13 +160,18 @@ class MemosMCPClient:
             tools_resp.raise_for_status()
             result = tools_resp.json()
             self._tools = result.get("result", {}).get("tools", [])
+            self._last_error = ""
             logger.info("MemOS MCP connected, tools: %s", [t["name"] for t in self._tools])
             return self._tools
         except Exception as exc:
             logger.warning("MemOS MCP connect failed: %s", exc)
             if hasattr(exc, "response") and exc.response is not None:
-                logger.warning("MemOS MCP error response: %s %s", exc.response.status_code, exc.response.text[:500])
-            self._last_error = _format_request_error(exc)
+                logger.warning(
+                    "MemOS MCP error response: %s %s",
+                    exc.response.status_code,
+                    exc.response.text[:500],
+                )
+            self._mark_disconnected(exc)
             return []
 
     def new_session(self) -> str:
@@ -152,8 +186,15 @@ class MemosMCPClient:
     # ── MCP 工具调用 ────────────────────────────────────────────────
 
     def call_tool(self, tool_name: str, arguments: dict) -> MemosToolResult:
-        """调用 MemOS MCP 工具。401 时自动重连。"""
+        """调用 MemOS MCP 工具。401 时自动重连；410 时标记 URL 过期并停止重试。"""
         start = time.time()
+        if self._url_expired:
+            return MemosToolResult(
+                tool_name=tool_name,
+                ok=False,
+                error=self._last_error or "MemOS MCP 地址已过期，请更新 MEMOS_URL",
+                latency_ms=0,
+            )
         try:
             if not self._mcp_session_id and not self._tools:
                 self.connect()
@@ -161,7 +202,7 @@ class MemosMCPClient:
                 return MemosToolResult(
                     tool_name=tool_name,
                     ok=False,
-                    error="MemOS MCP 未连接，请检查 MEMOS_URL 与网络",
+                    error=self._last_error or "MemOS MCP 未连接，请检查 MEMOS_URL 与网络",
                     latency_ms=(time.time() - start) * 1000,
                 )
             headers = self._headers()
@@ -180,11 +221,9 @@ class MemosMCPClient:
                 json=payload,
                 timeout=30,
             )
-            # 401 表示会话过期，自动重连后重试一次
             if resp.status_code == 401:
                 logger.info("MemOS MCP session expired (401), reconnecting...")
-                self._mcp_session_id = None
-                self._tools = []
+                self._mark_disconnected()
                 self.connect()
                 if self._mcp_session_id:
                     headers = self._headers()
@@ -194,6 +233,15 @@ class MemosMCPClient:
                         json=payload,
                         timeout=30,
                     )
+            if resp.status_code == 410:
+                err = requests.HTTPError(response=resp)
+                self._mark_disconnected(err)
+                return MemosToolResult(
+                    tool_name=tool_name,
+                    ok=False,
+                    error=self._last_error,
+                    latency_ms=(time.time() - start) * 1000,
+                )
             resp.raise_for_status()
             result = resp.json()
             content = self._extract_content(result)
@@ -209,7 +257,7 @@ class MemosMCPClient:
         except Exception as exc:
             latency = (time.time() - start) * 1000
             logger.warning("MemOS call_tool %s failed: %s", tool_name, exc)
-            self._last_error = _format_request_error(exc)
+            self._mark_disconnected(exc)
             return MemosToolResult(
                 tool_name=tool_name,
                 ok=False,
@@ -305,13 +353,29 @@ class MemosMCPClient:
             },
         )
 
-        # 检测认证失败（401），直接返回错误
-        if not profile_result.ok and ("401" in (profile_result.error or "") or "Unauthorized" in (profile_result.error or "")):
-            return MemosToolResult(
-                tool_name="list_all_memories",
-                ok=False,
-                error=f"MemOS 认证失败（401）：{profile_result.error}。请检查 .env 中 MEMOS_AUTH_TOKEN 是否有效，或到 https://modelscope.cn/my/myaccesstoken 重新获取 Token。",
-            )
+        if not profile_result.ok:
+            err = profile_result.error or ""
+            if "401" in err or "Unauthorized" in err:
+                return MemosToolResult(
+                    tool_name="list_all_memories",
+                    ok=False,
+                    error=(
+                        f"MemOS 认证失败（401）：{err}。"
+                        "请检查 .env 中 MEMOS_AUTH_TOKEN 是否有效。"
+                    ),
+                )
+            if self._url_expired or "410" in err or "过期" in err:
+                return MemosToolResult(
+                    tool_name="list_all_memories",
+                    ok=False,
+                    error=err or self._last_error,
+                )
+            if not self._mcp_session_id:
+                return MemosToolResult(
+                    tool_name="list_all_memories",
+                    ok=False,
+                    error=err or self._last_error or "MemOS MCP 未连接",
+                )
 
         # 解析偏好数据
         preferences = []
@@ -362,13 +426,13 @@ class MemosMCPClient:
     # ── 工具 Schema（供 Function Calling 注入） ─────────────────────
 
     def get_tools_schema(self) -> list[dict]:
-        """返回 MemOS 工具的 OpenAI Function Calling Schema。
-
-        开关开启后注入模型的 tools 数组；开关关闭时不返回任何工具，
-        实现硬隔离，模型完全感知不到记忆读写能力。
-        """
+        """返回 MemOS 工具的 OpenAI Function Calling Schema。"""
+        if self._url_expired:
+            return []
         if not self._tools:
             self.connect()
+        if not self._tools:
+            return []
         return [
             {
                 "type": "function",

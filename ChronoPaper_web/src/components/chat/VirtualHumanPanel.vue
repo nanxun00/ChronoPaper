@@ -189,6 +189,7 @@ import {
 } from '@ant-design/icons-vue'
 import AvatarPlatform from '@/vendor/avatar-sdk-web_3.2.3.1002/esm/index.js'
 import { audioBlobToWav16k } from '@/utils/audioPcm'
+import { getXrtcProxyTargetHost, virtualHumanStreamProxy } from '@/config/virtualHuman'
 
 const DEFAULT_AVATAR_ID = '201353001'
 const DEFAULT_VCN = 'x4_chaoge'
@@ -245,6 +246,8 @@ const stageRef = ref(null)
 const questionInputRef = ref(null)
 const platform = shallowRef(null)
 const initPromise = shallowRef(null)
+const playerPlaybackReady = ref(false)
+let playerListenerTarget = null
 const manualStop = ref(false)
 const temporaryPlayerMuted = ref(false)
 const mediaRecorder = shallowRef(null)
@@ -472,11 +475,11 @@ const statusText = computed(() => {
 })
 
 const placeholderText = computed(() => {
-  if (state.resourceLoading) return '资源加载中.....'
-  if (state.sdkHidden) return 'SDK unavailable'
-  if (state.loading) return 'Initializing SDK'
+  if (state.resourceLoading) return '资源加载中...'
   if (state.errorMessage) return state.errorMessage
-  return 'Waiting for SDK'
+  if (state.sdkHidden) return '数字人服务不可用'
+  if (state.loading) return '正在连接讯飞数字人...'
+  return '等待加载数字人形象'
 })
 
 const showPlaceholder = computed(() => (
@@ -490,8 +493,33 @@ const voiceStatusText = computed(() => {
 })
 
 const formatError = (err) => {
-  if (!err) return 'Virtual human SDK error'
-  return err.message || err.msg || String(err)
+  if (!err) return '数字人 SDK 异常'
+  const raw = err.message || err.msg || String(err)
+  const code = err.code ?? err.retcode ?? ''
+  const text = `${raw} ${code}`.toLowerCase()
+
+  if (text.includes('missing virtual human config')) {
+    return '缺少数字人配置，请在 ChronoPaper_web/.env 填写 VITE_VH_APP_ID、VITE_VH_API_KEY、VITE_VH_API_SECRET、VITE_VH_SCENE_ID 后重启前端'
+  }
+  if (text.includes('401') || text.includes('auth') || text.includes('鉴权')) {
+    return '讯飞鉴权失败：请检查 VITE_VH_APP_ID / API_KEY / API_SECRET 是否与控制台一致'
+  }
+  if (text.includes('scene') || text.includes('场景')) {
+    return '场景 ID 无效：请检查 VITE_VH_SCENE_ID 是否与讯飞虚拟人控制台一致'
+  }
+  if (text.includes('avatar') || text.includes('形象')) {
+    return '虚拟人形象不可用：请检查 VITE_VH_DEFAULT_AVATAR_ID 是否已授权给当前场景'
+  }
+  if (text.includes('network') || text.includes('websocket') || text.includes('connect')) {
+    return '无法连接讯飞数字人服务，请检查网络或 XRTC 代理配置'
+  }
+  if (text.includes('20481') || text.includes('29008') || text.includes('29002') || text.includes('29003')) {
+    return 'XRTC 视频流连接失败：当前网络可能无法访问 xrtc-*.xf-yun.com。请配置 VITE_VH_XRTC_PROXY_PATH 并重启前端，或更换网络/VPN 后重试'
+  }
+  if (text.includes('stream not found') || text.includes('player not found')) {
+    return '视频流尚未建立，通常是 XRTC WebSocket 连接失败。请查看 Console 是否有 xrtc-cn-*.xf-yun.com 报错'
+  }
+  return raw
 }
 
 const isConfigError = (err) => formatError(err).startsWith('Missing virtual human config')
@@ -504,7 +532,9 @@ const validateApiConfig = () => {
   }
 }
 
-const buildGlobalParams = (avatarId = state.currentAvatarId) => ({
+const buildGlobalParams = (avatarId = state.currentAvatarId) => {
+  const xrtcTargetHost = getXrtcProxyTargetHost()
+  const params = {
   stream: {
     protocol: 'xrtc',
     fps: 25,
@@ -540,7 +570,13 @@ const buildGlobalParams = (avatarId = state.currentAvatarId) => ({
     subtitle: 0,
     font_color: '#FFFFFF',
   },
-})
+  }
+  if (xrtcTargetHost && virtualHumanStreamProxy.originHost) {
+    params.originHost = virtualHumanStreamProxy.originHost
+    params.targetHost = xrtcTargetHost
+  }
+  return params
+}
 
 const buildPlayExtend = () => ({
   nlp: false,
@@ -677,8 +713,63 @@ const applyPlayerMuted = (muted) => {
   }
 }
 
+const attachPlayerListeners = () => {
+  const player = platform.value?.player
+  if (!player || player === playerListenerTarget) return
+  playerListenerTarget = player
+
+  player
+    .on('playing', () => {
+      playerPlaybackReady.value = true
+      state.errorMessage = ''
+      stopResourceLoading()
+      refreshPlayerLayout()
+    })
+    .on('not-allowed', () => {
+      void ensurePlayerPlayback()
+    })
+    .on('error', (err) => {
+      console.warn('[virtualHuman] player error', err)
+    })
+}
+
+const ensurePlayerPlayback = async () => {
+  attachPlayerListeners()
+  const player = platform.value?.player
+  if (!player) return false
+
+  try {
+    player.renderAlign = 'bottom'
+    player.defaultMuted = true
+    player.muted = true
+    if (typeof player.resume === 'function') {
+      await player.resume()
+    }
+    refreshPlayerLayout()
+    playerPlaybackReady.value = true
+    return true
+  } catch (err) {
+    console.warn('[virtualHuman] ensurePlayerPlayback failed', err)
+    return false
+  }
+}
+
 const syncMutedState = () => {
-  applyPlayerMuted(state.muted || temporaryPlayerMuted.value)
+  const player = platform.value?.player
+  if (!player) return
+
+  const wantMuted = state.muted || temporaryPlayerMuted.value
+  try {
+    player.defaultMuted = wantMuted
+    // 播放尚未就绪时保持静音，避免浏览器拦截导致画面空白
+    if (!playerPlaybackReady.value && !wantMuted) {
+      player.muted = true
+      return
+    }
+    applyPlayerMuted(wantMuted)
+  } catch (err) {
+    console.warn('[virtualHuman] sync mute failed', err)
+  }
 }
 
 const applyPlayAudioOptions = (options = {}) => {
@@ -710,6 +801,8 @@ const destroyPlatform = async () => {
     }
   } finally {
     platform.value = null
+    playerPlaybackReady.value = false
+    playerListenerTarget = null
     temporaryPlayerMuted.value = false
     state.ready = false
     state.speaking = false
@@ -767,18 +860,26 @@ const attachPlatformListeners = (instance) => {
   instance
     .on('connected', () => {
       if (!isCurrentPlatform(instance)) return
+      stopResourceLoading()
       state.loading = false
       state.ready = true
       state.sdkHidden = false
       state.status = 'ready'
       syncMutedState()
+      nextTick(() => refreshPlayerLayout())
+      void ensurePlayerPlayback()
     })
     .on('stream_start', () => {
       if (!isCurrentPlatform(instance)) return
+      stopResourceLoading()
       state.loading = false
       state.ready = true
       state.status = 'streaming'
       syncMutedState()
+      nextTick(() => {
+        refreshPlayerLayout()
+        void ensurePlayerPlayback()
+      })
     })
     .on('frame_start', () => {
       if (!isCurrentPlatform(instance)) return
@@ -847,10 +948,14 @@ const startPlatform = async () => {
   state.errorMessage = ''
   state.status = 'initializing'
   await instance.start({ wrapper: stageRef.value })
+  await ensurePlayerPlayback()
+  stopResourceLoading()
   state.loading = false
   state.ready = true
   state.status = 'ready'
   syncMutedState()
+  await nextTick()
+  refreshPlayerLayout()
   return instance
 }
 
@@ -1684,21 +1789,46 @@ defineExpose({
   min-height: 320px;
   border: 1px solid var(--main-light-3);
   border-radius: 8px;
-  background: #f8fafc;
+  background: transparent;
   overflow: hidden;
 }
 
 .vh-stage__mount {
   position: absolute;
   inset: 0;
+  z-index: 1;
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background: transparent;
+}
+
+.vh-stage__mount :deep(#xvideo) {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100%;
+  min-height: 100%;
+  background: transparent !important;
+}
+
+.vh-stage__mount :deep(#xvideo > div) {
+  background: transparent !important;
+}
+
+.vh-stage__mount :deep(video),
+.vh-stage__mount :deep(canvas) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: transparent !important;
 }
 
 .vh-placeholder {
   position: absolute;
   inset: 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;

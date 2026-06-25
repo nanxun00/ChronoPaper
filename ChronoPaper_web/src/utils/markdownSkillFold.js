@@ -1,7 +1,7 @@
 /** 技能对话 Markdown：将中间 Python 脚本折叠为 details */
 import { Marked } from 'marked'
 import hljs from 'highlight.js'
-import { wrapCopyableBlock } from '@/utils/copyBlock'
+import { wrapCopyableBlock, wrapMarkdownTable } from '@/utils/copyBlock'
 
 const FOLD_MIN_LINES = 3
 
@@ -125,27 +125,39 @@ function getFoldMarked() {
   return _foldMarked
 }
 
+/** 为表格加工具栏（标题 + 复制）与滚动容器 */
+export function enhanceMarkdownTables(html) {
+  return String(html ?? '').replace(
+    /<table>([\s\S]*?)<\/table>/gi,
+    (_, inner) => wrapMarkdownTable(inner),
+  )
+}
+
 export function parseChatMarkdown(text, message) {
   const raw = String(text ?? '')
   const fold = shouldCollapseSkillCode(message)
   const md = fold ? getFoldMarked() : getDefaultMarked()
+  let parsed = ''
   if (raw.length >= LITE_PARSE_THRESHOLD && !fold) {
     try {
-      return getLiteMarked().parse(raw)
+      parsed = getLiteMarked().parse(raw)
     } catch {
       return escapeHtml(raw).replace(/\n/g, '<br>')
     }
-  }
-  try {
-    return md.parse(raw)
-  } catch {
-    if (fold) {
-      try {
-        return getFoldMarked().parse(raw)
-      } catch {
-        /* fall through */
+  } else {
+    try {
+      parsed = md.parse(raw)
+    } catch {
+      if (fold) {
+        try {
+          parsed = getFoldMarked().parse(raw)
+        } catch {
+          parsed = getLiteMarked().parse(raw)
+        }
+      } else {
+        parsed = getLiteMarked().parse(raw)
       }
     }
-    return getLiteMarked().parse(raw)
   }
+  return enhanceMarkdownTables(parsed)
 }

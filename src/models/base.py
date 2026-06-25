@@ -169,6 +169,10 @@ def migrate_schema(engine, log) -> None:
         alters.append("ALTER TABLE papers ADD COLUMN pdf_download_next_retry_at DATETIME NULL")
     if "pdf_download_last_error" not in paper_cols:
         alters.append("ALTER TABLE papers ADD COLUMN pdf_download_last_error VARCHAR(512) NULL")
+    if "graph_index_status" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN graph_index_status VARCHAR(32) NULL")
+    if "graph_index_error" not in paper_cols:
+        alters.append("ALTER TABLE papers ADD COLUMN graph_index_error VARCHAR(512) NULL")
 
     arxiv_col = next((c for c in inspector.get_columns("papers") if c["name"] == "arxiv_id"), None)
     if arxiv_col and str(arxiv_col.get("type")).endswith("64"):

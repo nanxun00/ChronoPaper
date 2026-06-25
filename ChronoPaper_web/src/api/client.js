@@ -2,10 +2,25 @@ import { message } from 'ant-design-vue'
 import { useUserStore } from '@/stores'
 
 let redirecting401 = false
+let authVersion = 0
+
+export function notifyAuthSessionChanged() {
+  authVersion += 1
+  redirecting401 = false
+}
+
+export function saveAuthSession(token, roleid) {
+  sessionStorage.setItem('token', token)
+  if (roleid != null && roleid !== '') {
+    sessionStorage.setItem('roleid', String(roleid))
+  }
+  notifyAuthSessionChanged()
+}
 
 export function clearAuthSession() {
   sessionStorage.removeItem('token')
   sessionStorage.removeItem('roleid')
+  notifyAuthSessionChanged()
   try {
     useUserStore().logout()
   } catch {
@@ -62,8 +77,13 @@ function parseErrorMessage(data, status) {
   return errMsg
 }
 
+function handleStaleUnauthorized(versionAtStart) {
+  return versionAtStart !== authVersion
+}
+
 /** 带鉴权头的 fetch，仅真实鉴权失败时强制回登录页 */
 export async function authFetch(url, options = {}) {
+  const versionAtStart = authVersion
   const response = await fetch(url, {
     ...options,
     headers: authHeaders(options.headers || {}),
@@ -72,6 +92,9 @@ export async function authFetch(url, options = {}) {
     const data = await response.clone().json().catch(() => ({}))
     const errMsg = parseErrorMessage(data, response.status)
     if (shouldForceLogin(response.status, url, errMsg)) {
+      if (handleStaleUnauthorized(versionAtStart)) {
+        throw new Error('登录状态已更新，请重试')
+      }
       handleUnauthorized(errMsg.includes('登录') ? errMsg : '登录已过期，请重新登录')
       throw new Error('登录已过期，请重新登录')
     }
@@ -80,6 +103,7 @@ export async function authFetch(url, options = {}) {
 }
 
 export async function apiJson(url, options = {}) {
+  const versionAtStart = authVersion
   const response = await fetch(url, {
     ...options,
     headers: authHeaders({
@@ -91,7 +115,9 @@ export async function apiJson(url, options = {}) {
   if (!response.ok) {
     const errMsg = parseErrorMessage(data, response.status)
     if (shouldForceLogin(response.status, url, errMsg)) {
-      handleUnauthorized(errMsg.includes('登录') ? errMsg : '登录已过期，请重新登录')
+      if (!handleStaleUnauthorized(versionAtStart)) {
+        handleUnauthorized(errMsg.includes('登录') ? errMsg : '登录已过期，请重新登录')
+      }
     }
     throw new Error(errMsg)
   }

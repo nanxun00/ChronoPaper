@@ -1,0 +1,97 @@
+/* Markdown 表格 — 对话消息、思考链等 v-html 渲染区域共用 */
+
+.message-md .md-table-wrap,
+.ponder .md-table-wrap {
+  margin: 12px 0;
+}
+
+.message-md .md-table-wrap .copyable-block__lang.md-table__label,
+.ponder .md-table-wrap .copyable-block__lang.md-table__label {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.message-md .md-table-wrap .md-table-scroll,
+.ponder .md-table-wrap .md-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--gray-0);
+  -webkit-overflow-scrolling: touch;
+}
+
+.message-md table,
+.message-md .md-table,
+.ponder table,
+.ponder .md-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--gray-900);
+}
+
+.message-md th,
+.message-md td,
+.ponder th,
+.ponder td {
+  border: 1px solid var(--gray-300);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.message-md thead th,
+.ponder thead th {
+  background: transparent;
+  font-weight: 600;
+  color: var(--gray-900);
+  white-space: nowrap;
+}
+
+.message-md tbody tr:nth-child(even) td,
+.ponder tbody tr:nth-child(even) td {
+  background: var(--gray-50);
+}
+
+.message-md tbody tr:hover td,
+.ponder tbody tr:hover td {
+  background: var(--main-10);
+}
+
+.message-md td:first-child,
+.message-md th:first-child,
+.ponder td:first-child,
+.ponder th:first-child {
+  border-left: none;
+}
+
+.message-md td:last-child,
+.message-md th:last-child,
+.ponder td:last-child,
+.ponder th:last-child {
+  border-right: none;
+}
+
+.message-md thead tr:first-child th,
+.ponder thead tr:first-child th {
+  border-top: none;
+}
+
+.message-md tbody tr:last-child td,
+.ponder tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* 无 thead 时首行仍作表头样式 */
+.message-md table:not(:has(thead)) tr:first-child td,
+.ponder table:not(:has(thead)) tr:first-child td {
+  background: transparent;
+  font-weight: 600;
+  color: var(--gray-900);
+}

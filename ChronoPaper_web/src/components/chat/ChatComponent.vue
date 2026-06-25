@@ -107,7 +107,8 @@
       <div v-else-if="conv.messagesHasMore" class="messages-load-hint">上滑加载更早消息</div>
       <div v-for="(message, index) in conv.messages" :key="message.id" class="message-box" :class="message.role">
         <!-- 思考过程 -->
-        <div v-if="message.role == 'received' && message.ponder" class="ponder" v-html="ponderrenderMarkdown(message)">
+        <div v-if="message.role == 'received' && message.ponder" class="ponder" v-html="ponderrenderMarkdown(message)"
+          @click="onMarkdownToolbarClick">
         </div>
         <MessageImages v-if="message.images && message.images.length > 0" :images="message.images" />
         <div v-if="message.citations && message.citations.length" class="message-citations">
@@ -368,6 +369,8 @@ import { approveSkillCodegen } from '@/api/skills'
 import hljs from 'highlight.js';
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
+import { enhanceMarkdownTables } from '@/utils/markdownSkillFold'
+import { handleCopyableBlockClick } from '@/utils/copyBlock'
 import 'highlight.js/styles/github.css';
 // import login from '@/components/login.vue'
 
@@ -603,9 +606,13 @@ const messageRenderPriority = (index) => {
 onClickOutside(panel, () => setTimeout(() => opts.showPanel = false, 30))
 onClickOutside(modelCard, () => setTimeout(() => opts.showModelCard = false, 30))
 
+const onMarkdownToolbarClick = (event) => {
+  handleCopyableBlockClick(event)
+}
+
 const ponderrenderMarkdown = (message) => {
   if (!message?.ponder) return ''
-  return marked.parse(message.ponder)
+  return enhanceMarkdownTables(marked.parse(message.ponder))
 }
 
 const useDatabase = (index) => {
@@ -2584,13 +2591,6 @@ watch(
   video {
     max-width: 100%;
     height: auto;
-  }
-
-  table {
-    display: block;
-    max-width: 100%;
-    overflow-x: auto;
-    border-collapse: collapse;
   }
 
   pre {

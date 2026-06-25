@@ -1,6 +1,7 @@
 import { message } from 'ant-design-vue'
 
 export const COPYABLE_BLOCK_BTN_CLASS = 'copyable-block__btn'
+export const MD_TABLE_BLOCK_CLASS = 'md-table-block'
 
 export const COPY_BLOCK_ICON_SVG = `<svg class="copyable-block__icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>`
 
@@ -57,11 +58,45 @@ export async function copyTextToClipboard(text) {
   }
 }
 
+export function tableElementToTsv(table) {
+  if (!table) return ''
+  const rows = []
+  table.querySelectorAll('tr').forEach((tr) => {
+    const cells = []
+    tr.querySelectorAll('th, td').forEach((cell) => {
+      cells.push(String(cell.textContent || '').replace(/\s+/g, ' ').trim())
+    })
+    if (cells.length) rows.push(cells.join('\t'))
+  })
+  return rows.join('\n')
+}
+
+export function wrapMarkdownTable(tableInnerHtml) {
+  return `<div class="md-table-wrap ${MD_TABLE_BLOCK_CLASS} copyable-block">
+<div class="copyable-block__toolbar">
+<span class="copyable-block__lang md-table__label">表格</span>
+<div class="copyable-block__actions">
+<button type="button" class="${COPYABLE_BLOCK_BTN_CLASS}" title="复制表格" aria-label="复制表格">
+${COPY_BLOCK_ICON_SVG}
+<span class="copyable-block__tooltip">复制</span>
+</button>
+</div>
+</div>
+<div class="md-table-scroll"><table class="md-table">${tableInnerHtml}</table></div>
+</div>`
+}
+
 export function handleCopyableBlockClick(event) {
   const btn = event.target.closest?.(`.${COPYABLE_BLOCK_BTN_CLASS}`)
   if (!btn) return false
   event.preventDefault()
   event.stopPropagation()
+  const tableBlock = btn.closest(`.${MD_TABLE_BLOCK_CLASS}`)
+  if (tableBlock) {
+    const table = tableBlock.querySelector('table')
+    void copyTextToClipboard(tableElementToTsv(table))
+    return true
+  }
   const block = btn.closest('.copyable-block')
   if (!block) return true
   const codeEl = block.querySelector('code') || block.querySelector('pre')

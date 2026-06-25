@@ -48,6 +48,8 @@ import { useUserStore } from '@/stores'
 import { useRouter, useRoute } from "vue-router";
 import { message } from 'ant-design-vue';
 import { UserOutlined, LockOutlined } from '@ant-design/icons-vue';
+import { saveAuthSession } from '@/api/client';
+import { resolvePostLoginRedirect } from '@/composables/useAuth';
 
 const userStore = useUserStore();
 const router = useRouter();
@@ -74,15 +76,21 @@ const login = async () => {
 
         if (response.ok) {
             const data = await response.json();
-            const token = data.Token.access_token;
-            const roleid = data.roleid; 
-            sessionStorage.setItem('token', token);
-            sessionStorage.setItem('roleid', roleid); 
-            if (data.Token.access_token) {
+            const token = data?.Token?.access_token ?? data?.access_token;
+            const roleid = data?.roleid;
+            if (token) {
+                saveAuthSession(token, roleid);
                 userStore.login(loginData.value.account, loginData.value.password);
                 message.success("登录成功");
-                const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/chat';
-                router.push(redirect);
+                const redirect = resolvePostLoginRedirect(
+                    typeof route.query.redirect === 'string' ? route.query.redirect : '',
+                );
+                try {
+                    await router.replace(redirect);
+                } catch (navErr) {
+                    console.error('登录后跳转失败，使用硬跳转', navErr);
+                    window.location.assign(redirect);
+                }
             } else {
                 message.error(data.detail || '登录失败');
             }

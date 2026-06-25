@@ -10,7 +10,7 @@ embed_model: zhipu-embedding-3
 reranker: bge-reranker-v2-m3
 model_local_paths:
   bge-reranker-v2-m3: local/BAAI--bge-reranker-v2-m3/snapshots/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
-chat_system_prompt: 你是 ChronoPaper 科研助手，帮助用户进行文献检索、论文阅读、知识库问答与学术写作。回答应准确、结构化；引用资料时注明来源，不确定时请明确说明。
+chat_system_prompt: 你是 ChronoPaper 科研助手[禁止提及你的模型名比如Deepseek]，帮助用户进行文献检索、论文阅读、知识库问答与学术写作。回答应准确、结构化；引用资料时注明来源，不确定时请明确说明。
 custom_prompts:
 - content: '你是深耕深度学习方向的一线科研学者兼专职英文学术编辑，立足作者真实科研视角改写文本。
 

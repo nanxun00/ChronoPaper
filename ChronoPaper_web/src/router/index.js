@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { resolvePostLoginRedirect } from '@/composables/useAuth'
 
 import authRoutes from './modules/auth'
 import chatRoutes from './modules/chat'
@@ -33,11 +34,17 @@ router.beforeEach((to) => {
   const needsAuth = to.matched.some((record) => record.meta.requiresAuth)
 
   if (needsAuth && !token) {
-    return {
-      path: '/',
-      query: { redirect: to.fullPath },
-    }
+    const redirect = to.fullPath === '/' ? undefined : to.fullPath
+    return redirect
+      ? { path: '/', query: { redirect } }
+      : { path: '/' }
   }
+
+  if (to.path === '/' && token) {
+    const rawRedirect = typeof to.query.redirect === 'string' ? to.query.redirect : ''
+    return resolvePostLoginRedirect(rawRedirect)
+  }
+
   return true
 })
 

@@ -51,11 +51,11 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed, nextTick, onMounted, onActivated, onUnmounted } from 'vue'
+import { reactive, ref, computed, nextTick, onMounted, onActivated, onUnmounted, defineAsyncComponent } from 'vue'
 import { MenuOutlined, DeleteOutlined, CommentOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import ChatComponent from '@/components/chat/ChatComponent.vue'
-import VirtualHumanPanel from '@/components/chat/VirtualHumanPanel.vue'
+const VirtualHumanPanel = defineAsyncComponent(() => import('@/components/chat/VirtualHumanPanel.vue'))
 import {
   virtualHumanApiConfig,
   virtualHumanAvatarOptions,

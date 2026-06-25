@@ -57,10 +57,13 @@ class MemoryService:
             tools = self._client.connect()
             if not tools:
                 last_error = getattr(self._client, "_last_error", "")
-                logger.warning(
-                    "MemOS MCP client connected but no tools available: %s",
-                    last_error or "unknown error",
-                )
+                if getattr(self._client, "url_expired", False):
+                    logger.warning("MemOS MCP URL expired, memory disabled until MEMOS_URL is updated: %s", last_error)
+                else:
+                    logger.warning(
+                        "MemOS MCP client connected but no tools available: %s",
+                        last_error or "unknown error",
+                    )
                 return None
         return self._client
 
