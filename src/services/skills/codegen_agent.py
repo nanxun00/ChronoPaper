@@ -57,9 +57,13 @@ def codegen_loop_context_block(loop: CodegenLoopResult) -> str:
         "脚本已由服务端执行；下方含**真实产物解析摘要**（页数/字数/章节等），请据此回答用户。",
     ]
 
-    if loop.succeeded:
+    if loop.succeeded and loop.artifacts:
         lines.append(
             "**文件已生成且通过产物质检**——说明产物名称与下载方式，勿声称「环境无法生成文件」。"
+        )
+    elif loop.succeeded and not loop.artifacts:
+        lines.append(
+            "质检通过但未收集到可下载产物，**禁止**声称 PPT/文件已生成或提供虚假下载路径。"
         )
     elif loop.last_inspection_feedback:
         lines.append("最后一轮产物质检未达标，请如实说明不足与可下载的半成品（如有）。")

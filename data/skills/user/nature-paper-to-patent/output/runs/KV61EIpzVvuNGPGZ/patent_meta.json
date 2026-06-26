@@ -1,0 +1,11 @@
+{
+  "run_id": "KV61EIpzVvuNGPGZ",
+  "patent_title": "基于非对称多智能体辩论的可靠可维护代码生成方法及系统",
+  "claims_count": 10,
+  "figures": [
+    "图1: DeepDebateCoder框架总体架构图",
+    "图2: 三层迭代去噪过程示意图",
+    "图3: 非对称辩论工作流示意图"
+  ],
+  "output_file": "output\\runs\\KV61EIpzVvuNGPGZ\\patent_deepdebatecoder.docx"
+}

@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     image_gen_api_key: str = ""
     image_gen_model: str = "gpt-image-2-2026-04-21"
 
+    # --- 聊天图片 OCR（云端 Vision API）---
+    image_ocr_provider: str = Field(default="mimo", validation_alias="IMAGE_OCR_PROVIDER")
+    image_ocr_model: str = Field(default="", validation_alias="IMAGE_OCR_MODEL")
+
     # --- MySQL（MYSQL_PROFILE=local|remote 切换）---
     mysql_profile: str = Field(default="local", validation_alias="MYSQL_PROFILE")
 

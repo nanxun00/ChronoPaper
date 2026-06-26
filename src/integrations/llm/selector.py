@@ -10,9 +10,9 @@ def select_model(config):
     if model_provider == "deepseek":
         from src.integrations.llm.chat import DeepSeekNew
         return DeepSeekNew(model_name)
-    if model_provider == "deepseekNew":
-        from src.integrations.llm.chat import DeepSeekLocal
-        return DeepSeekLocal(model_name)
+    if model_provider == "ollama":
+        from src.integrations.llm.chat import Ollama
+        return Ollama(model_name)
     if model_provider == "zhipu":
         from src.integrations.llm.chat import ZhipuNew
         return ZhipuNew(model_name)

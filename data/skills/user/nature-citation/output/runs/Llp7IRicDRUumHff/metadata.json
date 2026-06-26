@@ -1,0 +1,14 @@
+{
+  "run_id": "Llp7IRicDRUumHff",
+  "skill": "nature-citation",
+  "paper_title": "MorphoMask: Bright-Field Organoid Instance Segmentation and Morphological Quantitative Analysis",
+  "output_files": [
+    "E:\\TYUT\\大三下\\人工智能方向实习\\ChronoPaper\\data\\skills\\user\\nature-citation\\output\\runs\\Llp7IRicDRUumHff\\paper_summary.md",
+    "E:\\TYUT\\大三下\\人工智能方向实习\\ChronoPaper\\data\\skills\\user\\nature-citation\\references\\runs\\Llp7IRicDRUumHff\\paper_summary.md"
+  ],
+  "key_contributions": [
+    "Proposed WT-DPE: detail enhancement and cross-path fusion for small targets, subtle boundaries, and adherent regions.",
+    "Proposed SLAC: spatial orientation modeling for dense instance separation.",
+    "Integrated workflow: segmentation masks -> morphological indicators for organoid culture monitoring and automated phenotypic analysis."
+  ]
+}

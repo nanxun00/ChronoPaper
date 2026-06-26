@@ -265,20 +265,12 @@ class DeepSeekNew(ChatOpenAIBase):
         base_url = "https://api.deepseek.com"
         super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
 
-class DeepSeekLocal(ChatOpenAIBase):
+class Ollama(ChatOpenAIBase):
     def __init__(self, model_name=None):
-        model_name = model_name or "deepseek-r1:14b"
+        model_name = model_name or "llama3:latest"
         from src.settings import get_settings
         s = get_settings()
         super().__init__(api_key=s.ollama_api_key, base_url=s.ollama_api_base, model_name=model_name)
-
-# class DeepSeekLocal(OpenAIBase):
-#     def __init__(self, model_name=None):
-#         model_name = model_name or "deepseek-r1:14b"
-#         # api_key = os.getenv("DEEPSEEKNEW_API_KEY")
-#         api_key = 'ollama'
-#         base_url = "http://47.103.8.209:19020/v1/"
-#         super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
 
 class Zhipu(OpenAIBase):
     def __init__(self, model_name=None):
@@ -439,8 +431,7 @@ if __name__ == "__main__":    #chatopenai的测试接口
         'content': ''
     }
 
-    model = DeepSeekLocal("deepseek-r1:14b")
-    # model = DeepSeekLocal("deepseek-r1:14b")
+    model = Ollama("llama3:latest")
 
     text=""" """
     for delta in model.predict("1+1=?", stream=True):

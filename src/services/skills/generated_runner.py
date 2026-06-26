@@ -37,6 +37,9 @@ _FILE_OUTPUT_SKILLS = frozenset(
     }
 )
 
+# 已有正式 scripts/，禁止 LLM 临时写 Python 替代（如 nature_citation.py）
+_BUILTIN_ONLY_SKILLS = frozenset({"nature-citation"})
+
 _FILE_HINTS = (
     "pptx",
     "ppt",
@@ -94,6 +97,8 @@ class GeneratedRunRecord:
 def should_attempt_codegen(query: str, record: SkillRecord, *, builtin_ran: bool) -> bool:
     """内置脚本未执行时，判断是否需要尝试生成代码。"""
     if builtin_ran:
+        return False
+    if record.id in _BUILTIN_ONLY_SKILLS:
         return False
     if record.id in _FILE_OUTPUT_SKILLS:
         return True

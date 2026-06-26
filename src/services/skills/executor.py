@@ -34,6 +34,12 @@ _PLATFORM_NOTE = """## ChronoPaper 平台说明
 """
 
 _SKILL_PLATFORM_OVERRIDES: dict[str, str] = {
+    "nature-paper2ppt": """## ChronoPaper × nature-paper2ppt（覆盖 SKILL 路由器）
+- 主路径：后台 codegen 生成 `output/runs/{run_id}/final_presentation_cn.pptx`。
+- **保底路径**：codegen 失败时平台会自动用 `scripts/build_pptx.py` + JSON 大纲再试一次。
+- **仅当**下方「技能生成的文件」含 `.pptx` 时，才可提示点击下载；文件名以 chip 为准（通常为 `final_presentation_cn.pptx`）。
+- 若下方无 `.pptx` chip：如实说明失败，**禁止**虚构 MorphoMask_IEEE_Presentation.pptx 等路径或 12 页结构表。
+""",
     "nature-figure": """## ChronoPaper × nature-figure（覆盖 SKILL 路由器）
 - manifest / contract / stance 已由服务端注入；需要更深层 reference 时用 **read 工具**（相对路径），勿向用户展示绝对路径。
 - 本平台固定用 **Python + matplotlib** 在后台写脚本出图；**不要**问「Python 还是 R？」。
@@ -47,10 +53,11 @@ _SKILL_PLATFORM_OVERRIDES: dict[str, str] = {
 - format-converter 示例：`--doi 10.xxxx/yyyy --format ris`（输出到 references/）。
 """,
     "nature-citation": """## ChronoPaper × nature-citation（覆盖 SKILL 路由器）
-- 分段找引文可依赖对话推理；**批量导出 RIS/BibTeX** 时，平台可自动调用 `nature-academic-search` 包内的 `format-converter.py`（按 DOI 列表）。
-- **禁止**说「由于环境限制无法调用脚本 / 无法生成引用文件」；若下方有「技能脚本执行结果」且成功，提示用户在消息下方点击 `.ris`/`.bib` 下载。
-- 若消息中含多个 DOI 且用户要导出：后台会用 `--doi doi1,doi2,...` 批量下载；勿让用户手动逐条复制 BibTeX 充数。
-- 完整分段检索 + HTML 浏览器流程需 `scripts/nature_citation.py`；长文稿可提示用户粘贴段落或 DOI 列表。
+- **禁止** LLM 临时写 Python；平台固定调用 `scripts/nature_citation.py` 做分段检索与引用导出（禁止 codegen 替代）。
+- 用户粘贴引言/正文时：脚本自动分段搜索 Crossref 并导出 RIS/ENW 等到 `output/runs/{run_id}/`。
+- **仅当**下方「技能生成的文件」列表中出现 `.ris` / `.enw` / `.rdf` 时，才可提示点击下载；**禁止**编造路径（如 `/用户目录/...`）。
+- 若下方无引用导出文件：如实说明检索未产出或输入过短，**勿谎称**已生成 RIS。
+- 纯 DOI 批量导出仍走 `nature-academic-search` 包内 `format-converter.py`（`.bib`/`.ris`/`.nbib`）。
 """,
     "nature-reader": """## ChronoPaper × nature-reader（覆盖 SKILL 路由器）
 - 引用文献的 PDF 与 **MinerU 解析配图** 已在对话前同步到技能目录（见「已同步文献资源」中的 `output/assets/figures/*_mineru_*`）。
@@ -70,6 +77,30 @@ _SKILL_PLATFORM_OVERRIDES: dict[str, str] = {
 
 def _platform_skill_override(skill_id: str) -> str:
     return _SKILL_PLATFORM_OVERRIDES.get(skill_id, "")
+
+
+def _artifacts_contain_suffix(artifacts: list[dict[str, Any]], suffix: str) -> bool:
+    suffix = suffix.lower()
+    for item in artifacts:
+        name = str(item.get("name") or item.get("path") or "").lower()
+        if name.endswith(suffix):
+            return True
+    return False
+
+
+def _append_missing_deliverable_notice(
+    system: str,
+    skill_id: str,
+    artifacts: list[dict[str, Any]],
+) -> str:
+    if skill_id == "nature-paper2ppt" and not _artifacts_contain_suffix(artifacts, ".pptx"):
+        return (
+            f"{system}\n\n## 产物状态（必读）\n"
+            "本轮**未**收集到 `final_presentation_cn.pptx` 下载文件。"
+            "请向用户如实说明 PPT 尚未生成或生成失败，并根据「技能多轮代码执行」中的错误/质检信息给出原因；"
+            "**禁止**虚构幻灯片目录或下载链接。"
+        )
+    return system
 
 
 def _chat_final_role(skill_id: str) -> str:
@@ -196,6 +227,12 @@ def prepare_skill_turn(
             "本轮未注入执行结果（可能尚未跑完或全部失败）。"
             "请如实告知用户图表/文件尚未生成，建议重试；**禁止**输出技能 manifest/contract 路径充数。"
         )
+
+    artifacts_for_notice: list[dict[str, Any]] = []
+    if script_runs:
+        for run in script_runs:
+            artifacts_for_notice.extend(run.get("artifacts") or [])
+    system = _append_missing_deliverable_notice(system, skill_id, artifacts_for_notice)
 
     if skill_id in _FILE_OUTPUT_SKILLS or allow_codegen:
         system = f"{system}\n\n{_chat_final_role(skill_id)}"

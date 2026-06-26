@@ -1371,28 +1371,39 @@ const uploadHeaders = computed(() => {
     Authorization: `Bearer ${sessionStorage.getItem('token')}` 
   };
 });
-const handleSuccess = (response, file, localFileList) => {
-  console.log(response)
-  if (!response) {
-    // 如果响应为null，显示错误消息并通知管理员
-    message.error('图片上传失败，请重试或联系管理员');
-    return;
+const parseUploadErrorDetail = (error) => {
+  const raw = error?.message || error?.response || ''
+  if (!raw) return '图片上传失败，请重试'
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (typeof parsed?.detail === 'string') return parsed.detail
+    if (Array.isArray(parsed?.detail)) return parsed.detail.map((item) => item?.msg || item).join('；')
+  } catch (_) {
+    if (typeof raw === 'string' && raw.trim()) return raw
   }
-  const imageUrl = response.image_path;
-  console.log(imageUrl);
+  return '图片上传失败，请重试'
+}
+
+const handleSuccess = (response, file, localFileList) => {
+  if (!response || typeof response !== 'object') {
+    message.error('图片上传失败，请重试或联系管理员')
+    return
+  }
+  const imageUrl = response.image_path
   if (response.ocr_text) {
-    ocrText.value = response.ocr_text; 
+    ocrText.value = response.ocr_text
+    message.success('图片识别成功，可直接提问')
+  } else {
+    message.warning('图片已上传，但未识别到文字')
   }
 
-  if (Array.isArray(fileList.value)) {
-    fileList.value.push({ url: imageUrl });
-  } else {
-    console.error('fileList is not an array.');
+  if (imageUrl && Array.isArray(fileList.value)) {
+    fileList.value.push({ url: imageUrl })
   }
-  scrollToBottom(); 
+  scrollToBottom()
 };
-const handleerror = () => {
-  console.log('error')
+const handleerror = (error) => {
+  message.error(parseUploadErrorDetail(error))
 }
 
 // 语音识别功能

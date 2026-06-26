@@ -20,15 +20,14 @@ MODEL_NAMES:
     models:
       - deepseek-chat
 
-  deepseekNew:
-    name: DeepSeek (Local)
+  ollama:
+    name: Ollama (Local)
     url: http://localhost:11434/v1/
-    default: deepseek-r1:14b
+    default: llama3:latest
     env:
-      - DEEPSEEKNEW_API_KEY
+      - OLLAMA_API_KEY
     models:
-      - deepseek-r1:32b
-      - deepseek-r1:14b
+      - llama3:latest
 
   zhipu:
     name: 智谱AI (Zhipu)

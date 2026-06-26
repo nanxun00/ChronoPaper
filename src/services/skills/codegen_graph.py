@@ -9,6 +9,10 @@ from langgraph.graph import END, StateGraph
 
 from src.services.skills.artifact_collector import collect_skill_artifacts, snapshot_output_files
 from src.services.skills.artifact_inspection import inspect_skill_deliverables, skill_supports_artifact_inspection
+from src.services.skills.artifact_inspection.registry import (
+    get_deliverable_spec,
+    resolve_deliverable_paths,
+)
 from src.services.skills.codegen_common import CodegenLoopResult, request_codegen_code
 from src.services.skills.codegen_progress import (
     CodegenProgressEvent,
@@ -346,10 +350,9 @@ def _node_inspect(state: CodegenGraphState, config: dict) -> CodegenGraphState:
     }
 
 
-def _finalize_success(
-    ctx: CodegenGraphContext,
-    gen_rec: GeneratedRunRecord | None,
-) -> CodegenGraphState:
+def _collect_codegen_artifacts(ctx: CodegenGraphContext) -> list[dict[str, Any]]:
+    """收集本轮 codegen 可下载产物；无 user/run 时仅检查交付物文件是否存在。"""
+    artifacts: list[dict[str, Any]] = []
     if ctx.user_id and ctx.run_id:
         artifacts = collect_skill_artifacts(
             ctx.record.path,
@@ -366,16 +369,44 @@ def _finalize_success(
                 ctx.run_id,
                 since_ts=ctx.started - 2.0,
             )
-        if artifacts:
-            ctx.loop_result.artifacts = artifacts
-            ctx.loop_result.succeeded = True
-            if gen_rec is not None:
-                gen_rec.artifacts = artifacts
-            return {"route": "success"}
+    if artifacts:
+        return artifacts
 
-    if gen_rec is not None and gen_rec.result.returncode == 0:
+    spec = get_deliverable_spec(ctx.record.id)
+    if spec is None:
+        return []
+
+    safe_run = sanitize_run_id(ctx.run_id or "run")
+    for rel in resolve_deliverable_paths(spec, safe_run):
+        path = ctx.record.path / rel.replace("\\", "/")
+        if path.is_file() and ctx.user_id and ctx.run_id:
+            return collect_skill_artifacts(
+                ctx.record.path,
+                {},
+                ctx.user_id,
+                ctx.run_id,
+            )
+    return []
+
+
+def _finalize_success(
+    ctx: CodegenGraphContext,
+    gen_rec: GeneratedRunRecord | None,
+) -> CodegenGraphState:
+    artifacts = _collect_codegen_artifacts(ctx)
+    if artifacts:
+        ctx.loop_result.artifacts = artifacts
         ctx.loop_result.succeeded = True
+        if gen_rec is not None:
+            gen_rec.artifacts = artifacts
         return {"route": "success"}
+
+    logger.warning(
+        "Codegen round succeeded in inspection but no downloadable artifacts for %s run %s",
+        ctx.record.id,
+        ctx.run_id,
+    )
+    ctx.loop_result.succeeded = False
     return {"route": "failed"}
 
 
@@ -478,24 +509,12 @@ def run_codegen_graph(
         for gen_rec in reversed(ctx.loop_result.rounds):
             if gen_rec.result.returncode != 0:
                 continue
-            artifacts = collect_skill_artifacts(
-                ctx.record.path,
-                ctx.before_snapshot,
-                ctx.user_id,
-                ctx.run_id,
-                since_ts=ctx.started - 2.0,
-            )
-            if not artifacts:
-                artifacts = collect_skill_artifacts(
-                    ctx.record.path,
-                    {},
-                    ctx.user_id,
-                    ctx.run_id,
-                    since_ts=ctx.started - 2.0,
-                )
+            artifacts = _collect_codegen_artifacts(ctx)
             if artifacts:
                 ctx.loop_result.artifacts = artifacts
-                if gen_rec is not None:
-                    gen_rec.artifacts = artifacts
+                ctx.loop_result.succeeded = True
+                gen_rec.artifacts = artifacts
                 break
+    if ctx.loop_result.succeeded and not ctx.loop_result.artifacts:
+        ctx.loop_result.succeeded = False
     return ctx.loop_result

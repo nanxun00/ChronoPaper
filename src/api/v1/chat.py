@@ -222,7 +222,39 @@ def _should_use_skill_agent(meta: dict, skill_system: str | None, refs: dict | N
         return False
     if (meta.get("skill_mode") or "auto").strip().lower() == "off":
         return False
+    from src.services.skills.generated_runner import _FILE_OUTPUT_SKILLS
+
+    # 文件型技能依赖 codegen 产物注入 system；Skill Agent 易忽略下载链接并编造交付物
+    if skill.get("skill_id") in _FILE_OUTPUT_SKILLS:
+        return False
     return True
+
+
+def _skill_artifacts_include_pptx(refs: dict | None) -> bool:
+    skill = (refs or {}).get("skill") or {}
+    for art in skill.get("artifacts") or []:
+        name = str(art.get("name") or art.get("path") or "").lower()
+        if name.endswith(".pptx"):
+            return True
+    return False
+
+
+def _guard_paper2ppt_response(content: str, refs: dict | None) -> str:
+    """无 .pptx 产物时在前端正文顶部标注，避免用户误以为已可下载。"""
+    text = (content or "").strip()
+    if not text:
+        return content or ""
+    skill = (refs or {}).get("skill") or {}
+    if skill.get("skill_id") != "nature-paper2ppt":
+        return content
+    if _skill_artifacts_include_pptx(refs):
+        return content
+    banner = (
+        "⚠️ **注意：本轮未生成可下载的 `.pptx` 文件**（codegen 与保底脚本均未成功）。"
+        "下方「PPT 已生成 / 下载链接」等内容**不可信**，仅为模型文本；"
+        "请确认后端已启动、已安装 `python-pptx`，或稍后重试。\n\n---\n\n"
+    )
+    return banner + text
 
 
 def _will_generate_image(query: str, meta: dict, user_id: str, conv_id: str) -> bool:
@@ -614,8 +646,8 @@ async def chat_get():
 
 @chat.post("/")
 def chat_post(
-    query: str = Body(...),
-    meta: dict = Body(None),
+        query: str = Body(...),
+        meta: dict = Body(None),
     history: list = Body(default=[]),
     cur_res_id: str = Body(...),
     conv_id: str | None = Body(None),
@@ -781,6 +813,8 @@ def chat_post(
                 cur_res_id=cur_res_id,
                 refs=refs,
             )
+        content = _guard_paper2ppt_response(content, refs)
+        response_content["content"] = content
         updated_history = persist_turn(
             content,
             reasoning_content=response_content.get("reasoning_content") or "",
@@ -984,6 +1018,8 @@ def chat_post(
                 cur_res_id=cur_res_id,
                 refs=refs,
             )
+        content = _guard_paper2ppt_response(content, refs)
+        response_content["content"] = content
         updated_history = persist_turn(
             content,
             reasoning_content=response_content.get("reasoning_content") or "",

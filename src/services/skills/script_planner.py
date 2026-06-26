@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -14,7 +15,12 @@ from src.services.skills.artifact_collector import (
     snapshot_output_files,
 )
 from src.services.skills.codegen_progress import ProgressCallback
-from src.services.skills.generated_runner import _FILE_OUTPUT_SKILLS
+from src.services.skills.generated_runner import (
+    _BUILTIN_ONLY_SKILLS,
+    _FILE_OUTPUT_SKILLS,
+    sanitize_run_id,
+)
+from src.services.skills.paper2ppt_fallback import run_paper2ppt_outline_fallback, runs_contain_pptx
 from src.services.skills.registry import SkillRecord
 from src.services.skills.script_runner import ScriptRunResult, list_skill_scripts, run_skill_script
 from src.utils.logging_config import setup_logger
@@ -24,6 +30,16 @@ logger = setup_logger("SkillScriptPlanner")
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 _CODE_FENCE_RE = re.compile(r"^```(?:python)?\s*\n(.*?)```\s*$", re.DOTALL | re.IGNORECASE)
 _DOI_RE = re.compile(r"\b(10\.\d{4,9}/[-._;()/:A-Z0-9]+)\b", re.IGNORECASE)
+_NATURE_CITATION_TIMEOUT_SEC = 300
+_CITATION_META_HINTS = (
+    "什么是",
+    "是什么",
+    "怎么用",
+    "如何使用",
+    "使用说明",
+    "help",
+    "介绍",
+)
 _DOWNLOAD_KEYS = (
     "下载",
     "导出",
@@ -146,6 +162,139 @@ def _infer_citation_format(query: str) -> str:
     return "ris"
 
 
+def _infer_nature_citation_format(query: str) -> str:
+    q = (query or "").lower()
+    if "enw" in q or "endnote" in q:
+        return "enw"
+    if "rdf" in q or "zotero rdf" in q:
+        return "zotero-rdf"
+    if "ris" in q:
+        return "ris"
+    return "ris"
+
+
+def _infer_citation_scope(query: str) -> str:
+    q = (query or "").lower()
+    if "nature系列" in query or "nature portfolio" in q:
+        return "nature"
+    if "science family" in q or ("science" in q and "cell press" not in q and "cns" not in q):
+        return "science"
+    if "cell press" in q or "cell及" in query:
+        return "cell"
+    if "旗舰" in query or "flagship" in q:
+        return "flagship"
+    return "cns"
+
+
+def _is_citation_meta_query(query: str) -> bool:
+    q = (query or "").strip()
+    if len(q) > 120:
+        return False
+    ql = q.lower()
+    if not any(h in ql for h in _CITATION_META_HINTS):
+        return False
+    return not any(
+        token in ql
+        for token in (
+            "引用",
+            "citation",
+            "ris",
+            "zotero",
+            "doi",
+            "引言",
+            "introduction",
+            "导出",
+            "endnote",
+        )
+    )
+
+
+def _nature_citation_plan(
+    query: str,
+    record: SkillRecord,
+    *,
+    context_text: str = "",
+    run_id: str | None = None,
+) -> dict[str, Any] | None:
+    """nature-citation 固定走 nature_citation.py，写入 input 文件避免 CLI 长度限制。"""
+    if record.id != "nature-citation":
+        return None
+    if "scripts/nature_citation.py" not in set(list_skill_scripts(record.path)):
+        return None
+
+    combined = f"{context_text}\n{query}".strip()
+    if not combined:
+        return None
+    if _is_citation_meta_query(query):
+        return None
+
+    dois = _extract_dois(combined)
+    if len(combined) < 80 and not dois:
+        return None
+
+    safe_run = sanitize_run_id(run_id or "run")
+    input_rel = f"input/runs/{safe_run}/manuscript.txt"
+    input_path = record.path / input_rel
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    input_path.write_text(combined, encoding="utf-8")
+
+    outdir_rel = f"output/runs/{safe_run}"
+    args = [
+        "--text-file",
+        input_rel,
+        "--scope",
+        _infer_citation_scope(query),
+        "--format",
+        _infer_nature_citation_format(query),
+        "--outdir",
+        outdir_rel,
+        "--with-artifacts",
+    ]
+    if len(combined) > 3000:
+        args.extend(["--batch-size", "10"])
+    for doi in dois[:20]:
+        args.extend(["--doi", doi])
+
+    mailto = os.environ.get("CROSSREF_MAILTO") or os.environ.get("OPENALEX_MAILTO")
+    if mailto:
+        args.extend(["--mailto", mailto])
+
+    return {
+        "script": "scripts/nature_citation.py",
+        "args": args,
+        "_timeout_sec": _NATURE_CITATION_TIMEOUT_SEC,
+    }
+
+
+def _resolve_builtin_plan(
+    query: str,
+    record: SkillRecord,
+    model,
+    *,
+    context_text: str = "",
+    run_id: str | None = None,
+) -> dict[str, Any] | None:
+    """解析本轮应执行的内置脚本；nature-citation 跳过 LLM 规划。"""
+    if record.id == "nature-citation":
+        plan = _nature_citation_plan(
+            query,
+            record,
+            context_text=context_text,
+            run_id=run_id,
+        )
+        if plan:
+            return plan
+        return _format_converter_plan(query, record, context_text=context_text)
+
+    scripts = list_skill_scripts(record.path)
+    if not scripts:
+        return None
+    plan = plan_skill_script(query, record, model) if model is not None else None
+    if not plan:
+        plan = _keyword_script_plan(query, record, context_text=context_text)
+    return plan
+
+
 def _format_converter_root(record: SkillRecord):
     """format-converter 位于 academic-search；citation 技能可跨包调用。"""
     local = record.path / "scripts" / "format-converter.py"
@@ -235,8 +384,14 @@ def _run_builtin_script(
     if plan.get("_script_root"):
         script_root = Path(str(plan["_script_root"]))
     before = snapshot_output_files(script_root)
+    timeout_sec = int(plan.get("_timeout_sec") or 120)
     try:
-        result = run_skill_script(script_root, plan["script"], plan.get("args"))
+        result = run_skill_script(
+            script_root,
+            plan["script"],
+            plan.get("args"),
+            timeout_sec=timeout_sec,
+        )
     except ValueError as exc:
         logger.warning("Skill script rejected: %s", exc)
         safe_plan = {k: v for k, v in plan.items() if not str(k).startswith("_")}
@@ -267,6 +422,17 @@ def _run_builtin_script(
     artifact_block = artifacts_context_block(artifacts)
     if artifact_block:
         context = f"{context}\n\n{artifact_block}"
+
+    if record.id == "nature-citation" and result.returncode == 0:
+        export_suffixes = {".ris", ".enw", ".rdf"}
+        has_export = any(
+            Path(str(a.get("path", ""))).suffix.lower() in export_suffixes for a in artifacts
+        )
+        if not has_export:
+            context = (
+                f"{context}\n\n**注意**：nature_citation.py 已运行，但未检测到 RIS/ENW/RDF 导出文件。"
+                "请勿向用户声称引用文件已生成；请根据 stdout 说明原因或建议用户补充正文/DOI。"
+            )
 
     if run_id and result.returncode == 0:
         from src.services.skills.artifact_inspection import (
@@ -342,18 +508,45 @@ def maybe_run_skill_scripts(
             return None, [], None
         return codegen_loop_context_block(loop), runs, None
 
+    def _finalize_paper2ppt(
+        gen_ctx: str | None,
+        runs: list[dict[str, Any]],
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
+        if runs_contain_pptx(runs):
+            return gen_ctx, runs, None
+        fb_ctx, fb_run = run_paper2ppt_outline_fallback(
+            query,
+            record,
+            model,
+            user_id=user_id,
+            run_id=run_id,
+            input_context=input_context,
+        )
+        if fb_run:
+            runs.append(fb_run)
+        if fb_ctx:
+            return fb_ctx, runs, None
+        return gen_ctx, runs, None
+
     # 文件型技能优先走「模型写代码」多轮循环（对齐 SKILL 原设计）
     if allow_codegen and record.id in _FILE_OUTPUT_SKILLS:
         gen_ctx, gen_runs, pending = _codegen_result()
+        runs.extend(gen_runs)
         if pending:
-            return None, gen_runs, pending
+            return None, runs, pending
+        if record.id == "nature-paper2ppt":
+            return _finalize_paper2ppt(gen_ctx, runs)
         if gen_ctx:
-            return gen_ctx, gen_runs, None
+            return gen_ctx, runs, None
 
-    if scripts:
-        plan = plan_skill_script(query, record, model)
-        if not plan:
-            plan = _keyword_script_plan(query, record, context_text=script_context)
+    if scripts or record.id in _BUILTIN_ONLY_SKILLS:
+        plan = _resolve_builtin_plan(
+            query,
+            record,
+            model,
+            context_text=script_context,
+            run_id=run_id,
+        )
         if plan:
             context, run_record = _run_builtin_script(
                 record,
@@ -367,7 +560,7 @@ def maybe_run_skill_scripts(
             if context:
                 return context, runs, None
 
-    if allow_codegen:
+    if allow_codegen and record.id not in _BUILTIN_ONLY_SKILLS:
         gen_ctx, gen_runs, pending = _codegen_result()
         if pending:
             return None, gen_runs, pending
